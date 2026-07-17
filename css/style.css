@@ -1,0 +1,121 @@
+:root {
+  --steel-900: #14171b;
+  --olive-400: #8faf6a;
+  --olive-200: #c8d9ae;
+  --sand-100: #e8e4d8;
+  --grid-line: rgba(200, 217, 174, 0.14);
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--steel-900);
+  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--sand-100);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app, #app canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+/* HUD panels carry the same dev-grid the whole world is textured with */
+.hud {
+  position: fixed;
+  z-index: 2;
+  padding: 10px 14px;
+  border: 1px solid rgba(200, 217, 174, 0.22);
+  border-radius: 4px;
+  background:
+    linear-gradient(rgba(20, 23, 27, 0.78), rgba(20, 23, 27, 0.78)),
+    repeating-linear-gradient(0deg, transparent 0 11px, var(--grid-line) 11px 12px),
+    repeating-linear-gradient(90deg, transparent 0 11px, var(--grid-line) 11px 12px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+  user-select: none;
+}
+
+.brand { top: 14px; left: 14px; }
+
+.brand h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  color: var(--olive-200);
+}
+
+.brand p {
+  margin: 3px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.55);
+}
+
+.controls {
+  left: 14px;
+  bottom: 14px;
+  display: grid;
+  gap: 7px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.82);
+}
+
+.keys { display: inline-flex; gap: 4px; }
+
+kbd {
+  font: inherit;
+  font-size: 11px;
+  color: var(--olive-200);
+  border: 1px solid rgba(200, 217, 174, 0.4);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 2px 6px;
+  min-width: 22px;
+  text-align: center;
+  background: rgba(200, 217, 174, 0.08);
+}
+
+.stats {
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 20px;
+}
+
+.stat { display: grid; justify-items: end; }
+
+.stat span {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--olive-200);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat label {
+  margin-top: 3px;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.5);
+}
+
+@media (max-width: 640px) {
+  .controls { display: none; }
+}

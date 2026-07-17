@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tank Remake — prototype 0.1</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%231b1f24'/><rect x='1.5' y='8' width='10' height='4.5' rx='1' fill='%238faf6a'/><rect x='3.5' y='4.5' width='5' height='4' rx='1' fill='%23c8d9ae'/><rect x='8.5' y='5.6' width='6' height='1.6' fill='%23c8d9ae'/></svg>" />
+  <link rel="stylesheet" href="./css/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <header class="hud brand">
+    <h1>TANK REMAKE</h1>
+    <p>prototype 0.1 &middot; free to win</p>
+  </header>
+
+  <section class="hud controls" aria-label="Controls">
+    <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span><span>drive / reverse</span></div>
+    <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span><span>pivot hull</span></div>
+    <div class="row"><span class="keys"><kbd>J</kbd><kbd>K</kbd></span><span>rotate turret</span></div>
+  </section>
+
+  <section class="hud stats" aria-label="Telemetry">
+    <div class="stat"><span id="speed">0</span><label>km/h</label></div>
+    <div class="stat"><span id="fps">&mdash;</span><label>fps</label></div>
+  </section>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
