@@ -1,16 +1,16 @@
-# Tank Remake — prototype 0.3
+# Tank Remake — prototype 0.4
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js loaded from a CDN — no build step, no dependencies to install. The whole thing deploys as static files.
 
 ## Controls
 
-W / S drive and reverse, A / D pivot the hull. Click the canvas to take aim: the mouse then steers the turret and left click fires — one shot every 2.5 seconds. Esc releases the mouse. The turret has a limited traverse speed, so the crosshair (which marks exactly where the barrel is pointing) swings to catch up when you whip the mouse around. Barrel elevation is minimal, so the mouse is limited vertically.
+W / S drive and reverse, A / D pivot the hull. Click the canvas to take aim: the crosshair sits fixed at the center of the screen and the camera is locked to it — move the mouse and the view swings instantly, while the turret traverses to catch up underneath. The game finds the exact point under the crosshair (ground, wall, or enemy armor) and the turret converges on it, so settled shots land where the crosshair sits. Barrel elevation is minimal, so the mouse is limited vertically. Left click fires — one shot every 2.5 seconds. Esc releases the mouse.
 
 ## What's in the arena
 
 A raised platform sits in the middle of the map with a drive-up ramp on each side. An identical enemy tank holds the top: 1000 HP with a floating health bar, firing straight ahead on its interval — it doesn't track you, so its lane is the dangerous place to be. Shells do 100 damage per hit; you also have 1000 HP. Destroy it and it explodes into a black smoking husk that burns for 5 seconds before it respawns and starts shooting again. The same happens to you.
 
-Hit detection uses the tanks' real shapes (hull box plus a rotating turret box), and the hulls follow the terrain properly — climbing ramps, tipping over crests, never sinking into the geometry — and can't drive through each other.
+Hit detection uses the tanks' real shapes (hull box plus a rotating turret box), and the hulls are proper physics bodies: they climb ramps, tip and fall off edges under gravity (hard landings scrub speed), never sink into the geometry, and can't drive through each other.
 
 ## Sound
 

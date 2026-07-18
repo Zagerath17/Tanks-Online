@@ -1,13 +1,15 @@
 import * as THREE from 'three';
-import { createArena, SPAWN, heightAt } from './map.js';
+import { createArena, SPAWN, heightAt, ARENA } from './map.js';
 import { createTankModel, SPEC } from './tank.js';
-import { createPlayerController } from './player.js';
+import { createPlayerController, AIM_PITCH } from './player.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { readInput } from './controls.js';
 
 const FIRE_INTERVAL = 2.5;
+const YAW_SENS = 0.0032;
+const PITCH_SENS = 0.002;
 
 // ---------------------------------------------------------------------------
 // Renderer + scene
@@ -140,8 +142,6 @@ const elFps = document.getElementById('fps');
 const elHpFill = document.getElementById('hpfill');
 const elHpNum = document.getElementById('hpnum');
 const elReload = document.getElementById('reload');
-const elReloadWrap = document.getElementById('reloadwrap');
-const elCross = document.getElementById('crosshair');
 const elHint = document.getElementById('lockhint');
 const elDeath = document.getElementById('deathmsg');
 let fpsTime = 0;
@@ -159,8 +159,12 @@ function updateHpHud() {
 updateHpHud();
 
 // ---------------------------------------------------------------------------
-// Pointer lock: click to take aim, LMB to fire
+// Mouse aim: the camera IS the crosshair. Moving the mouse swings the view
+// immediately; the turret lags behind, catching up at its traverse rate.
 // ---------------------------------------------------------------------------
+let viewYaw = SPAWN.player.heading;
+let viewPitch = 0;
+
 const canvas = renderer.domElement;
 
 canvas.addEventListener('mousedown', (e) => {
@@ -179,7 +183,10 @@ document.addEventListener('pointerlockchange', () => {
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
   if (!playerUnit.alive) return;
-  player.addAim(e.movementX, e.movementY);
+  viewYaw -= e.movementX * YAW_SENS;
+  viewPitch = THREE.MathUtils.clamp(
+    viewPitch - e.movementY * PITCH_SENS, AIM_PITCH.min, AIM_PITCH.max
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -258,6 +265,10 @@ function respawn(unit) {
   unit.model.gun.position.x = 0;
   if (unit.isPlayer) {
     player.reset();
+    viewYaw = SPAWN.player.heading;
+    viewPitch = 0;
+    camYaw = viewYaw;
+    camPitch = 0;
     updateHpHud();
     elDeath.style.display = 'none';
   } else {
@@ -316,9 +327,11 @@ function resolveTankCollision() {
 }
 
 // ---------------------------------------------------------------------------
-// Camera: hangs behind the mouse aim; the turret catches up underneath
+// Camera: locked to the crosshair at screen center. The view aims where the
+// mouse says; the tank and turret do their best underneath it.
 // ---------------------------------------------------------------------------
-let camYaw = 0;
+let camYaw = viewYaw;
+let camPitch = 0;
 const camPos = new THREE.Vector3(SPAWN.player.x - 10.5, 5.6, SPAWN.player.z);
 const _desired = new THREE.Vector3();
 const _lookAt = new THREE.Vector3();
@@ -330,41 +343,55 @@ function lerpAngle(a, b, t) {
 
 function updateCamera(dt) {
   camKick = Math.max(0, camKick - camKick * 7 * dt - 0.05 * dt);
-  camYaw = lerpAngle(camYaw, player.aimAngle(), 1 - Math.exp(-5.5 * dt));
-  const fx_ = Math.cos(camYaw);
-  const fz_ = -Math.sin(camYaw);
-  const tp = playerModel.root.position;
-  const dist = 10.5 + camKick * 2.4;
+  camYaw = lerpAngle(camYaw, viewYaw, 1 - Math.exp(-16 * dt));
+  camPitch += (viewPitch - camPitch) * (1 - Math.exp(-16 * dt));
 
-  _desired.set(tp.x - fx_ * dist, tp.y + 5.6, tp.z - fz_ * dist);
+  const cy = Math.cos(camYaw);
+  const sy = -Math.sin(camYaw);
+  const cp = Math.cos(camPitch);
+  const sp = Math.sin(camPitch);
+  const tp = playerModel.root.position;
+
+  // Far focus point along the aim direction, from turret height
+  const D = 45;
+  _lookAt.set(
+    tp.x + cp * cy * D,
+    tp.y + 2.0 + sp * D,
+    tp.z + cp * sy * D
+  );
+
+  const dist = 10.5 + camKick * 2.4;
+  _desired.set(tp.x - cy * dist, tp.y + 5.6, tp.z - sy * dist);
   camPos.lerp(_desired, 1 - Math.exp(-9 * dt));
   camera.position.copy(camPos);
-
-  _lookAt.set(tp.x + fx_ * 6, tp.y + 1.6, tp.z + fz_ * 6);
   camera.lookAt(_lookAt);
 }
 
-// ---------------------------------------------------------------------------
-// Crosshair: projected from the barrel, so it marks exactly where the
-// turret is looking — it swings to catch up when you whip the mouse
-// ---------------------------------------------------------------------------
-const _cPos = new THREE.Vector3();
-const _cDir = new THREE.Vector3();
-const _cPt = new THREE.Vector3();
+updateCamera(0.02);
 
-function updateCrosshair() {
-  muzzleWorld(playerUnit, _cPos, _cDir);
-  _cPt.copy(_cPos).addScaledVector(_cDir, 60);
-  _cPt.project(camera);
-  if (_cPt.z > 1) {
-    elCross.style.transform = 'translate(-100px, -100px)';
-    elReloadWrap.style.transform = 'translate(-100px, -100px)';
-    return;
+// ---------------------------------------------------------------------------
+// Aim: march the crosshair's center ray into the world to find the exact
+// point under it — ground, wall, or enemy armor. The turret converges on
+// that point, so settled shots land on the crosshair.
+// ---------------------------------------------------------------------------
+const _rayDir = new THREE.Vector3();
+const _rayPt = new THREE.Vector3();
+const _aimPoint = new THREE.Vector3();
+const _pivot = new THREE.Vector3();
+
+function aimRaycast(out) {
+  _rayDir.copy(_lookAt).sub(camera.position).normalize();
+  for (let d = 2; d < 150; d += 0.6) {
+    _rayPt.copy(camera.position).addScaledVector(_rayDir, d);
+    if (
+      Math.abs(_rayPt.x) > ARENA.half ||
+      Math.abs(_rayPt.z) > ARENA.half ||
+      _rayPt.y <= heightAt(_rayPt.x, _rayPt.z) ||
+      (dummyUnit.alive && dummyModel.hitTest(_rayPt)) ||
+      _rayPt.y > 60
+    ) break;
   }
-  const sx = (_cPt.x * 0.5 + 0.5) * window.innerWidth;
-  const sy = (-_cPt.y * 0.5 + 0.5) * window.innerHeight;
-  elCross.style.transform = `translate(${sx - 13}px, ${sy - 13}px)`;
-  elReloadWrap.style.transform = `translate(${sx - 28}px, ${sy + 16}px)`;
+  out.copy(_rayPt);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,8 +403,19 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   const input = readInput();
 
+  // where is the crosshair pointing, and what angles does the turret need?
+  aimRaycast(_aimPoint);
+  playerModel.pitchGroup.getWorldPosition(_pivot);
+  const adx = _aimPoint.x - _pivot.x;
+  const adz = _aimPoint.z - _pivot.z;
+  const aimWorldYaw = Math.atan2(-adz, adx);
+  const aimPitch = Math.atan2(
+    _aimPoint.y - _pivot.y,
+    Math.max(1, Math.hypot(adx, adz))
+  );
+
   if (playerUnit.alive) {
-    player.update(dt, input);
+    player.update(dt, input, aimWorldYaw, aimPitch);
     resolveTankCollision();
   }
 
@@ -403,7 +441,6 @@ renderer.setAnimationLoop(() => {
 
   fx.update(dt);
   updateCamera(dt);
-  updateCrosshair();
 
   sun.position.copy(playerModel.root.position).add(SUN_OFFSET);
   sun.target.position.copy(playerModel.root.position);

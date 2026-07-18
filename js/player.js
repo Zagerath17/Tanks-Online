@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import { SPEC } from './tank.js';
 import { ARENA, heightAt } from './map.js';
 
-const PITCH_MIN = -0.12; // minimal barrel depression
-const PITCH_MAX = 0.17; // minimal barrel elevation
-const YAW_SENS = 0.0032;
-const PITCH_SENS = 0.002;
-const TURRET_RATE = 2.2; // rad/s traverse limit — turret chases the mouse aim
+// The barrel's real vertical travel — the mouse aim is clamped to this
+export const AIM_PITCH = { min: -0.12, max: 0.17 };
+
+const TURRET_RATE = 2.2; // rad/s traverse — the turret chases the aim
 const PITCH_RATE = 1.1;
-const SLOPE_CLAMP = 0.32; // never tilt harder than the ramps
+const TIP_CLAMP = 0.5; // steeper than the ramps, so edges read as tipping
+const GRAVITY = 24;
 const FO = 1.6; // ground sample offsets: fore/aft of center...
 const SO = 1.18; // ...and out to each tread
 
@@ -17,13 +17,12 @@ export function createPlayerController(model, spawn) {
     v: 0,
     omega: 0,
     heading: spawn.heading,
-    aimYaw: 0, // where the mouse wants the turret
-    turretYaw: 0, // where the turret actually is
-    aimPitch: 0,
+    turretYaw: 0,
     pitch: 0,
     groundPitch: 0,
     groundRoll: 0,
     y: 0,
+    vy: 0,
   };
 
   // Yaw first, then pitch about local Z, then roll about local X
@@ -41,25 +40,15 @@ export function createPlayerController(model, spawn) {
     state.v = 0;
     state.omega = 0;
     state.heading = spawn.heading;
-    state.aimYaw = 0;
     state.turretYaw = 0;
-    state.aimPitch = 0;
     state.pitch = 0;
     state.groundPitch = 0;
     state.groundRoll = 0;
+    state.vy = 0;
     model.root.position.set(spawn.x, heightAt(spawn.x, spawn.z), spawn.z);
     state.y = model.root.position.y;
     model.gun.position.x = 0;
     apply();
-  }
-
-  // Mouse deltas -> desired aim. Pitch is clamped, so the mouse is limited
-  // vertically to the barrel's real travel.
-  function addAim(dx, dy) {
-    state.aimYaw -= dx * YAW_SENS;
-    state.aimPitch = THREE.MathUtils.clamp(
-      state.aimPitch - dy * PITCH_SENS, PITCH_MIN, PITCH_MAX
-    );
   }
 
   function applyRecoil() {
@@ -67,7 +56,9 @@ export function createPlayerController(model, spawn) {
     state.v -= 1.3 * Math.cos(state.turretYaw);
   }
 
-  function update(dt, input) {
+  // aimWorldYaw/aimPitch: the direction of the point under the crosshair.
+  // The turret chases it at a limited rate — the view never waits for it.
+  function update(dt, input, aimWorldYaw, aimPitch) {
     // --- throttle ---
     if (input.throttle > 0) {
       state.v += (state.v < 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
@@ -106,46 +97,77 @@ export function createPlayerController(model, spawn) {
     const rz = Math.cos(state.heading);
     const hC = heightAt(p.x, p.z);
     // Walls should block, never lift — ignore samples far above the hull
-    const gate = (h) => (h - hC > 0.9 ? hC : h);
-    const hFL = gate(heightAt(p.x + fx * FO - rx * SO, p.z + fz * FO - rz * SO));
-    const hFR = gate(heightAt(p.x + fx * FO + rx * SO, p.z + fz * FO + rz * SO));
-    const hBL = gate(heightAt(p.x - fx * FO - rx * SO, p.z - fz * FO - rz * SO));
-    const hBR = gate(heightAt(p.x - fx * FO + rx * SO, p.z - fz * FO + rz * SO));
+    const wallGate = (h) => (h - hC > 0.9 ? hC : h);
+    const hFL = wallGate(heightAt(p.x + fx * FO - rx * SO, p.z + fz * FO - rz * SO));
+    const hFR = wallGate(heightAt(p.x + fx * FO + rx * SO, p.z + fz * FO + rz * SO));
+    const hBL = wallGate(heightAt(p.x - fx * FO - rx * SO, p.z - fz * FO - rz * SO));
+    const hBR = wallGate(heightAt(p.x - fx * FO + rx * SO, p.z - fz * FO + rz * SO));
 
     const pitchT = THREE.MathUtils.clamp(
-      Math.atan2((hFL + hFR) / 2 - (hBL + hBR) / 2, 2 * FO), -SLOPE_CLAMP, SLOPE_CLAMP
+      Math.atan2((hFL + hFR) / 2 - (hBL + hBR) / 2, 2 * FO), -TIP_CLAMP, TIP_CLAMP
     );
     const rollT = THREE.MathUtils.clamp(
-      Math.atan2((hFL + hBL) / 2 - (hFR + hBR) / 2, 2 * SO), -SLOPE_CLAMP, SLOPE_CLAMP
+      Math.atan2((hFL + hBL) / 2 - (hFR + hBR) / 2, 2 * SO), -TIP_CLAMP, TIP_CLAMP
     );
-    const k = Math.min(1, 12 * dt);
+    const k = Math.min(1, 8 * dt);
     state.groundPitch += (pitchT - state.groundPitch) * k;
     state.groundRoll += (rollT - state.groundRoll) * k;
 
-    // Support height: with the current tilt, no corner may sink into the
-    // ground. This is what stops the hull clipping at ramp edges.
+    // Support: with the current tilt, which corners could actually hold us?
     const sinP = Math.sin(state.groundPitch);
     const sinR = Math.sin(state.groundRoll);
     const need = (h, dx, dz) => h - (dx * sinP - dz * sinR);
-    const yT = Math.max(
-      hC,
-      need(hFL, FO, -SO),
-      need(hFR, FO, SO),
-      need(hBL, -FO, -SO),
-      need(hBR, -FO, SO)
-    );
-    const settle = yT > state.y ? 30 : 10; // snap up onto support, ease down
-    state.y += (yT - state.y) * Math.min(1, settle * dt);
+    const nFL = need(hFL, FO, -SO);
+    const nFR = need(hFR, FO, SO);
+    const nBL = need(hBL, -FO, -SO);
+    const nBR = need(hBR, -FO, SO);
+    let cornerMax = Math.max(nFL, nFR, nBL, nBR);
+
+    // A one-sided grip over an edge can't hold the tank: if the center is
+    // over the drop and only one end/side still touches, it slips off.
+    if (cornerMax > hC + 0.4) {
+      const th = cornerMax - 0.05;
+      let n = 0;
+      let mx = 0;
+      let mz = 0;
+      if (nFL >= th) { n++; mx += FO; mz += -SO; }
+      if (nFR >= th) { n++; mx += FO; mz += SO; }
+      if (nBL >= th) { n++; mx += -FO; mz += -SO; }
+      if (nBR >= th) { n++; mx += -FO; mz += SO; }
+      mx /= n;
+      mz /= n;
+      if (Math.abs(mx) > 1.2 || Math.abs(mz) > 0.9) cornerMax = hC;
+    }
+
+    const yT = Math.max(hC, cornerMax);
+
+    // Real vertical motion: fall under gravity when unsupported, climb
+    // smoothly when the ground rises under us. No more hovering glides.
+    if (state.y > yT + 0.04) {
+      state.vy -= GRAVITY * dt;
+      state.y += state.vy * dt;
+      if (state.y <= yT) {
+        if (state.vy < -7) state.v *= 0.7; // hard landing scrubs speed
+        state.y = yT;
+        state.vy = 0;
+      }
+    } else {
+      state.vy = 0;
+      state.y += (yT - state.y) * Math.min(1, 30 * dt);
+    }
     p.y = state.y;
 
-    // --- turret chases the mouse aim at a limited traverse rate -----------
+    // --- turret chases the crosshair point at a limited traverse rate -----
+    const relTarget = aimWorldYaw - state.heading;
     const yawErr = Math.atan2(
-      Math.sin(state.aimYaw - state.turretYaw),
-      Math.cos(state.aimYaw - state.turretYaw)
+      Math.sin(relTarget - state.turretYaw),
+      Math.cos(relTarget - state.turretYaw)
     );
     state.turretYaw += THREE.MathUtils.clamp(yawErr, -TURRET_RATE * dt, TURRET_RATE * dt);
+    state.turretYaw = Math.atan2(Math.sin(state.turretYaw), Math.cos(state.turretYaw));
+    const pitchTarget = THREE.MathUtils.clamp(aimPitch, AIM_PITCH.min, AIM_PITCH.max);
     state.pitch += THREE.MathUtils.clamp(
-      state.aimPitch - state.pitch, -PITCH_RATE * dt, PITCH_RATE * dt
+      pitchTarget - state.pitch, -PITCH_RATE * dt, PITCH_RATE * dt
     );
 
     apply();
@@ -161,11 +183,7 @@ export function createPlayerController(model, spawn) {
   return {
     state,
     update,
-    addAim,
     reset,
     applyRecoil,
-    // camera follows the mouse aim so the view stays responsive while the
-    // turret catches up underneath it
-    aimAngle: () => state.heading + state.aimYaw,
   };
 }

@@ -329,6 +329,10 @@ export function createTankModel(palette = PALETTE.green) {
   const treadL = buildTread(M, -1);
   const treadR = buildTread(M, 1);
   root.add(treadL.group, treadR.group);
+  // Lay the link chains out immediately — a tank that never drives (the
+  // dummy) would otherwise render its wheels with no tracks
+  updateTread(treadL, 0, 0);
+  updateTread(treadR, 0, 0);
 
   const { turret, pitchGroup, gun, muzzle } = buildTurret(M);
   turret.position.set(0.05, 1.16, 0);
