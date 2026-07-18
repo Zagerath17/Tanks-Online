@@ -244,3 +244,147 @@ kbd {
 @media (max-width: 640px) {
   .hpwrap { width: 200px; }
 }
+
+/* ---- menu (v0.5) ------------------------------------------------------ */
+
+#menu {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 17, 20, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+#menu.hidden { display: none; }
+
+.screen {
+  width: 310px;
+  padding: 28px 26px 22px;
+  background: rgba(20, 23, 27, 0.93);
+  border: 1px solid rgba(200, 217, 174, 0.35);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+.screen.hidden { display: none; }
+
+.menu-title {
+  margin: 0 0 2px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  color: var(--sand-100);
+}
+
+.menu-sub {
+  margin: 0 0 22px;
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.55);
+}
+
+.screen h2 {
+  margin: 0 0 18px;
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--olive-200);
+}
+
+.lobby-count {
+  font-size: 10px;
+  color: rgba(232, 228, 216, 0.5);
+  letter-spacing: 0.2em;
+}
+
+.mbtn {
+  display: block;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 12px 0;
+  background: rgba(58, 68, 54, 0.85);
+  color: var(--sand-100);
+  border: 1px solid rgba(200, 217, 174, 0.4);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.mbtn:hover { background: rgba(93, 112, 80, 0.9); }
+
+.mbtn.back {
+  background: transparent;
+  border-color: rgba(200, 217, 174, 0.25);
+  color: rgba(232, 228, 216, 0.7);
+}
+
+.mbtn.back:hover { background: rgba(58, 68, 54, 0.4); }
+
+#code-input {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px;
+  background: rgba(10, 12, 14, 0.8);
+  border: 1px solid rgba(200, 217, 174, 0.4);
+  color: var(--sand-100);
+  font: inherit;
+  font-size: 26px;
+  letter-spacing: 0.5em;
+  text-align: center;
+}
+
+#code-input:focus { outline: 1px solid var(--olive-400); }
+
+.code-big {
+  margin: 2px 0 14px;
+  font-size: 46px;
+  letter-spacing: 0.4em;
+  color: var(--sand-100);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+}
+
+#lobby-players {
+  margin: 0 0 16px;
+  min-height: 56px;
+  max-height: 190px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.lp {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(200, 217, 174, 0.15);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sand-100);
+}
+
+.lp span { color: rgba(232, 228, 216, 0.5); }
+
+.menu-err {
+  min-height: 14px;
+  margin: 4px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #e0908a;
+}
+
+.menu-hint {
+  margin: 8px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.5);
+}
+
+/* in-game HUD hidden until a match is running */
+#gamehud { display: none; }
+body.ingame #gamehud { display: block; }

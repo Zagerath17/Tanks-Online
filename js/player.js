@@ -12,11 +12,11 @@ const GRAVITY = 24;
 const FO = 1.6; // ground sample offsets: fore/aft of center...
 const SO = 1.18; // ...and out to each tread
 
-export function createPlayerController(model, spawn) {
+export function createPlayerController(model) {
   const state = {
     v: 0,
     omega: 0,
-    heading: spawn.heading,
+    heading: 0,
     turretYaw: 0,
     pitch: 0,
     groundPitch: 0,
@@ -36,7 +36,8 @@ export function createPlayerController(model, spawn) {
     model.pitchGroup.rotation.z = state.pitch;
   }
 
-  function reset() {
+  // spawn: { x, z, heading } — passed on every (re)spawn so slots can vary
+  function reset(spawn) {
     state.v = 0;
     state.omega = 0;
     state.heading = spawn.heading;
@@ -177,8 +178,6 @@ export function createPlayerController(model, spawn) {
     const sL = state.v - state.omega * SPEC.halfTrack;
     model.updateTreads(dt, sL, sR);
   }
-
-  reset();
 
   return {
     state,

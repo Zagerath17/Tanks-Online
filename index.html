@@ -3,39 +3,86 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tank Remake — prototype</title>
+  <title>Tank Remake</title>
   <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
   <div id="app"></div>
 
-  <div class="hud brand">
-    <h1>TANK REMAKE</h1>
-    <p>prototype 0.4 &middot; not pay-to-win</p>
+  <!-- ============ menu ============ -->
+  <div id="menu">
+    <div class="screen" id="scr-main">
+      <h1 class="menu-title">TANK REMAKE</h1>
+      <p class="menu-sub">prototype 0.5 &middot; not pay-to-win</p>
+      <button class="mbtn" id="btn-play">Play</button>
+      <button class="mbtn" id="btn-custom">Custom</button>
+      <button class="mbtn" id="btn-settings">Settings</button>
+    </div>
+
+    <div class="screen hidden" id="scr-play">
+      <h2>Play</h2>
+      <button class="mbtn" id="btn-tdm">TDM</button>
+      <button class="mbtn" id="btn-ffa">FFA</button>
+      <button class="mbtn" id="btn-ctf">CTF</button>
+      <button class="mbtn back" id="back-play">Back</button>
+    </div>
+
+    <div class="screen hidden" id="scr-custom">
+      <h2>Custom</h2>
+      <button class="mbtn" id="btn-create">Create Lobby</button>
+      <button class="mbtn" id="btn-join">Join Lobby</button>
+      <button class="mbtn back" id="back-custom">Back</button>
+      <p class="menu-err" id="custom-err"></p>
+    </div>
+
+    <div class="screen hidden" id="scr-join">
+      <h2>Join Lobby</h2>
+      <input id="code-input" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="0000" />
+      <button class="mbtn" id="btn-join-go">Join</button>
+      <button class="mbtn back" id="back-join">Back</button>
+      <p class="menu-err" id="join-err"></p>
+    </div>
+
+    <div class="screen hidden" id="scr-lobby">
+      <h2>Lobby <span class="lobby-count" id="lobby-count">1 / 12</span></h2>
+      <div class="code-big" id="lobby-code">0000</div>
+      <div id="lobby-players"></div>
+      <button class="mbtn" id="btn-start">Start</button>
+      <button class="mbtn back" id="btn-leave">Leave</button>
+      <p class="menu-hint" id="lobby-hint"></p>
+    </div>
   </div>
 
-  <div class="hud controls">
-    <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span> drive / reverse</div>
-    <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
-    <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
-    <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire</div>
+  <!-- ============ in-game HUD ============ -->
+  <div id="gamehud">
+    <div class="hud brand">
+      <h1>TANK REMAKE</h1>
+      <p>custom match &middot; not pay-to-win</p>
+    </div>
+
+    <div class="hud controls">
+      <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span> drive / reverse</div>
+      <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
+      <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
+      <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire</div>
+    </div>
+
+    <div class="hud stats">
+      <div class="stat"><span id="speed">0</span><label>km/h</label></div>
+      <div class="stat"><span id="fps">0</span><label>fps</label></div>
+    </div>
+
+    <div id="crosshair"></div>
+    <div id="reloadwrap"><div id="reload"></div></div>
+
+    <div class="hpwrap">
+      <div id="hpbar"><div id="hpfill"></div></div>
+      <label>hull &middot; <span id="hpnum">1000</span></label>
+    </div>
+
+    <div id="lockhint">click to take aim</div>
+    <div id="deathmsg" style="display:none"></div>
   </div>
-
-  <div class="hud stats">
-    <div class="stat"><span id="speed">0</span><label>km/h</label></div>
-    <div class="stat"><span id="fps">0</span><label>fps</label></div>
-  </div>
-
-  <div id="crosshair"></div>
-  <div id="reloadwrap"><div id="reload"></div></div>
-
-  <div class="hpwrap">
-    <div id="hpbar"><div id="hpfill"></div></div>
-    <label>hull &middot; <span id="hpnum">1000</span></label>
-  </div>
-
-  <div id="lockhint">click to take aim</div>
-  <div id="deathmsg" style="display:none"></div>
 
   <script type="importmap">
     {

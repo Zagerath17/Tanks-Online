@@ -2,19 +2,19 @@ import * as THREE from 'three';
 import { heightAt, ARENA } from './map.js';
 
 export const BULLET = {
-  speed: 46,
-  life: 3,
+  speed: 115, // 2.5x the old 46
+  life: 1.8,
   damage: 100,
 };
 
-export function createBullets(scene) {
-  const geo = new THREE.CylinderGeometry(0.06, 0.06, 0.55, 10);
+export function createBullets(scene, fx) {
+  // Short, completely black shell
+  const geo = new THREE.CylinderGeometry(0.05, 0.05, 0.275, 8);
   geo.rotateZ(Math.PI / 2); // axis along +X
   const mat = new THREE.MeshStandardMaterial({
-    color: '#ffd27a',
-    emissive: '#ff9f2e',
-    emissiveIntensity: 2.6,
-    roughness: 0.4,
+    color: '#0a0b0d',
+    roughness: 0.5,
+    metalness: 0.25,
   });
 
   const pool = [];
@@ -51,13 +51,16 @@ export function createBullets(scene) {
       b.m.position.addScaledVector(b.vel, dt);
       const p = b.m.position;
 
+      // very thin smoke trail, gone quickly
+      fx.bulletTrail(p);
+
       let done = b.life <= 0;
 
       if (!done && (
         Math.abs(p.x) > ARENA.half - 0.4 ||
         Math.abs(p.z) > ARENA.half - 0.4 ||
-        p.y < heightAt(p.x, p.z) ||
-        p.y > 40
+        p.y <= heightAt(p.x, p.z) ||
+        p.y > 80
       )) {
         onEnv(p);
         done = true;
@@ -82,5 +85,13 @@ export function createBullets(scene) {
     }
   }
 
-  return { fire, update };
+  function clear() {
+    for (const b of active) {
+      scene.remove(b.m);
+      pool.push(b.m);
+    }
+    active.length = 0;
+  }
+
+  return { fire, update, clear };
 }

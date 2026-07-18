@@ -15,10 +15,21 @@ export const PLATFORM = {
   rampHalfW: 3, // ramp is 6 wide
 };
 
-export const SPAWN = {
-  player: { x: -32, z: 0, heading: 0 },
-  dummy: { x: 0, z: 0, heading: Math.PI }, // faces the player spawn
-};
+// 12 spawn slots on a ring around the platform, each facing the center.
+// Match spacing keeps players apart at game start; respawns pick the slot
+// farthest from everyone still alive.
+export const SPAWN_SLOTS = [];
+{
+  const R = 58;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    SPAWN_SLOTS.push({
+      x: Math.cos(a) * R,
+      z: Math.sin(a) * R,
+      heading: Math.PI - a, // forward = toward the platform
+    });
+  }
+}
 
 // Ground height at any point — drives tank climbing and bullet impacts
 export function heightAt(x, z) {
@@ -115,19 +126,19 @@ export function createArena(scene) {
     scene.add(ramp);
   }
 
-  // ---- player spawn pad --------------------------------------------------
+  // ---- spawn pads: one small ring per slot -------------------------------
   const ringMat = new THREE.MeshBasicMaterial({
     color: '#c2cbd6',
     transparent: true,
-    opacity: 0.75,
+    opacity: 0.55,
   });
-  const outerRing = new THREE.Mesh(new THREE.RingGeometry(2.35, 2.6, 48), ringMat);
-  outerRing.rotation.x = -Math.PI / 2;
-  outerRing.position.set(SPAWN.player.x, 0.02, SPAWN.player.z);
-  const innerRing = new THREE.Mesh(new THREE.RingGeometry(0.65, 0.82, 32), ringMat);
-  innerRing.rotation.x = -Math.PI / 2;
-  innerRing.position.set(SPAWN.player.x, 0.02, SPAWN.player.z);
-  scene.add(outerRing, innerRing);
+  const padGeo = new THREE.RingGeometry(1.9, 2.12, 40);
+  for (const s of SPAWN_SLOTS) {
+    const pad = new THREE.Mesh(padGeo, ringMat);
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(s.x, 0.02, s.z);
+    scene.add(pad);
+  }
 
   // ---- perimeter walls ---------------------------------------------------
   const wallTex = makeGridTexture({

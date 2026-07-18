@@ -101,6 +101,19 @@ export function createFx(scene) {
     });
   }
 
+  function bulletTrail(pos) {
+    spawn({
+      pos,
+      vel: new THREE.Vector3((Math.random() - 0.5) * 0.2, 0.35, (Math.random() - 0.5) * 0.2),
+      life: 0.22 + Math.random() * 0.1,
+      scale: 0.14,
+      grow: 0.8,
+      color: 0x2c2e33,
+      opacity: 0.42,
+      drag: 0.5,
+    });
+  }
+
   function impact(pos) {
     spawn({ pos, life: 0.08, scale: 1.1, grow: 6, color: 0xffd08a, additive: true });
     for (let i = 0; i < 6; i++) {
@@ -177,5 +190,5 @@ export function createFx(scene) {
     }
   }
 
-  return { muzzleFlash, barrelSmoke, huskSmoke, impact, explosion, update };
+  return { muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, impact, explosion, update };
 }

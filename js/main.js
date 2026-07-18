@@ -1,15 +1,19 @@
 import * as THREE from 'three';
-import { createArena, SPAWN, heightAt, ARENA } from './map.js';
+import { createArena, SPAWN_SLOTS, heightAt, ARENA } from './map.js';
 import { createTankModel, SPEC } from './tank.js';
-import { createPlayerController, AIM_PITCH } from './player.js';
+import { createPlayerController } from './player.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { readInput } from './controls.js';
+import { createMenu } from './menu.js';
+import { createRemoteManager } from './remote.js';
+import * as net from './net.js';
 
 const FIRE_INTERVAL = 2.5;
 const YAW_SENS = 0.0032;
 const PITCH_SENS = 0.002;
+const CAM_PITCH_LIM = 1.35; // the view goes (almost) anywhere vertically now
 
 // ---------------------------------------------------------------------------
 // Renderer + scene
@@ -58,81 +62,38 @@ const SUN_OFFSET = new THREE.Vector3(28, 42, 18);
 createArena(scene);
 const fx = createFx(scene);
 const audio = createAudio(camera, scene);
-const bullets = createBullets(scene);
+const bullets = createBullets(scene, fx);
+const remote = createRemoteManager({ scene, fx, audio });
 
-function makeUnit(name, model, isPlayer) {
-  return {
-    name,
-    model,
-    isPlayer,
-    alive: true,
-    hp: 1000,
-    maxHp: 1000,
-    cooldown: isPlayer ? 0 : 1.2,
-    fireSmoke: 0,
-    smokeAcc: 0,
-    huskAcc: 0,
-    deadT: 0,
-    recoil: 0,
-  };
-}
-
-// Player and enemy are design replicas of each other
+// Local player
 const playerModel = createTankModel();
+playerModel.root.visible = false; // hidden until a match starts
 scene.add(playerModel.root);
-const player = createPlayerController(playerModel, SPAWN.player);
-const playerUnit = makeUnit('player', playerModel, true);
+const player = createPlayerController(playerModel);
 
-const dummyModel = createTankModel();
-scene.add(dummyModel.root);
-dummyModel.root.position.set(
-  SPAWN.dummy.x,
-  heightAt(SPAWN.dummy.x, SPAWN.dummy.z),
-  SPAWN.dummy.z
-);
-dummyModel.root.rotation.y = SPAWN.dummy.heading;
-const dummyUnit = makeUnit('dummy', dummyModel, false);
-
-function resetDummyPose() {
-  dummyModel.root.rotation.set(0, SPAWN.dummy.heading, 0);
-  dummyModel.turret.rotation.y = 0;
-  dummyModel.pitchGroup.rotation.z = 0;
-  dummyModel.gun.position.x = 0;
-}
-
-const units = [playerUnit, dummyUnit];
+const local = {
+  id: net.getMyId(),
+  isLocal: true,
+  model: playerModel,
+  alive: false,
+  hp: 1000,
+  maxHp: 1000,
+  cooldown: 0,
+  fireSmoke: 0,
+  smokeAcc: 0,
+  huskAcc: 0,
+  deadT: 0,
+  recoil: 0,
+};
 
 const engine = audio.engineLoop(playerModel.root);
 
 // ---------------------------------------------------------------------------
-// Dummy's floating health bar
+// Phase + lobby bookkeeping
 // ---------------------------------------------------------------------------
-const barCanvas = document.createElement('canvas');
-barCanvas.width = 256;
-barCanvas.height = 28;
-const barCtx = barCanvas.getContext('2d');
-const barTex = new THREE.CanvasTexture(barCanvas);
-barTex.colorSpace = THREE.SRGBColorSpace;
-const barSprite = new THREE.Sprite(
-  new THREE.SpriteMaterial({ map: barTex, transparent: true, depthTest: false })
-);
-barSprite.scale.set(3.0, 0.33, 1);
-barSprite.position.set(0, 4.3, 0);
-dummyModel.root.add(barSprite);
-
-function drawDummyBar() {
-  barCtx.clearRect(0, 0, 256, 28);
-  barCtx.fillStyle = 'rgba(10,12,14,0.72)';
-  barCtx.fillRect(0, 0, 256, 28);
-  barCtx.strokeStyle = 'rgba(220,225,230,0.5)';
-  barCtx.lineWidth = 3;
-  barCtx.strokeRect(1.5, 1.5, 253, 25);
-  const f = Math.max(0, dummyUnit.hp / dummyUnit.maxHp);
-  barCtx.fillStyle = '#d9534a';
-  barCtx.fillRect(4, 4, 248 * f, 20);
-  barTex.needsUpdate = true;
-}
-drawDummyBar();
+let phase = 'menu'; // 'menu' | 'lobby' | 'playing'
+let lobbyPlayers = {}; // pid -> latest node value (stub or full state)
+let stateAcc = 0;
 
 // ---------------------------------------------------------------------------
 // HUD
@@ -148,27 +109,186 @@ let fpsTime = 0;
 let fpsFrames = 0;
 
 function updateHpHud() {
-  const f = Math.max(0, playerUnit.hp / playerUnit.maxHp);
+  const f = Math.max(0, local.hp / local.maxHp);
   elHpFill.style.width = `${f * 100}%`;
   elHpFill.style.background =
     f > 0.5 ? 'linear-gradient(90deg,#7fae57,#9cc36e)'
       : f > 0.25 ? 'linear-gradient(90deg,#c9a24a,#dcb85e)'
         : 'linear-gradient(90deg,#b04a40,#d05a4e)';
-  elHpNum.textContent = String(Math.max(0, Math.round(playerUnit.hp)));
+  elHpNum.textContent = String(Math.max(0, Math.round(local.hp)));
 }
-updateHpHud();
 
 // ---------------------------------------------------------------------------
-// Mouse aim: the camera IS the crosshair. Moving the mouse swings the view
-// immediately; the turret lags behind, catching up at its traverse rate.
+// Menu + networking flow
 // ---------------------------------------------------------------------------
-let viewYaw = SPAWN.player.heading;
+const CONFIG_MSG = 'multiplayer needs firebase \u2014 fill in js/firebase-config.js (see README)';
+
+const menu = createMenu({
+  customNotice: () => (net.netConfigured() ? '' : CONFIG_MSG),
+  onCreate: async () => {
+    if (!net.netConfigured()) { menu.err('custom-err', CONFIG_MSG); return; }
+    try {
+      lobbyPlayers = {};
+      await net.createLobby();
+      enterLobby();
+    } catch (e) {
+      menu.err('custom-err', String(e.message || e));
+    }
+  },
+  onJoin: async (code) => {
+    if (!net.netConfigured()) { menu.err('join-err', CONFIG_MSG); return; }
+    try {
+      lobbyPlayers = {};
+      await net.joinLobby(code);
+      enterLobby();
+    } catch (e) {
+      menu.err('join-err', String(e.message || e));
+    }
+  },
+  onStart: () => net.startGame(),
+  onLeave: () => leaveToMenu(),
+});
+
+function refreshLobbyUi() {
+  menu.setLobby({
+    code: net.getLobbyCode() || '----',
+    players: lobbyPlayers,
+    hostId: net.getHostId(),
+    myId: net.getMyId(),
+    isHost: net.isHost(),
+  });
+}
+
+function enterLobby() {
+  phase = 'lobby';
+  net.subscribe({
+    onState: (state) => {
+      if (state === 'playing' && phase !== 'playing') beginMatch();
+    },
+    onPlayer: (pid, data) => {
+      lobbyPlayers[pid] = data;
+      if (phase === 'lobby') refreshLobbyUi();
+      if (phase === 'playing' && pid !== net.getMyId()) remote.applyState(pid, data);
+    },
+    onPlayerGone: (pid) => {
+      delete lobbyPlayers[pid];
+      if (phase === 'lobby') refreshLobbyUi();
+      remote.removePlayer(pid);
+    },
+    onShot: (pid, s) => {
+      if (pid === net.getMyId() || phase !== 'playing') return;
+      const pos = new THREE.Vector3(s.x, s.y, s.z);
+      const dir = new THREE.Vector3(s.dx, s.dy, s.dz).normalize();
+      const ru = remote.shotFrom(pid);
+      fx.muzzleFlash(pos.clone(), dir.clone());
+      audio.playAt('shot', pos, { volume: 0.75, rate: 0.94 + Math.random() * 0.12 });
+      bullets.fire(ru || {}, pos.clone().addScaledVector(dir, 0.15), dir);
+    },
+  });
+  refreshLobbyUi();
+  menu.show('scr-lobby');
+}
+
+function leaveToMenu() {
+  net.leaveLobby();
+  remote.clear();
+  bullets.clear();
+  lobbyPlayers = {};
+  phase = 'menu';
+  local.alive = false;
+  playerModel.root.visible = false;
+  playerModel.setCharred(false);
+  elDeath.style.display = 'none';
+  if (document.pointerLockElement) document.exitPointerLock();
+  menu.show('scr-main');
+}
+
+// ---------------------------------------------------------------------------
+// Spawning: even spread at match start, farthest-from-everyone on respawn
+// ---------------------------------------------------------------------------
+function startSlot() {
+  const ids = Object.keys(lobbyPlayers).sort(
+    (a, b) => ((lobbyPlayers[a] && lobbyPlayers[a].joined) || 0) - ((lobbyPlayers[b] && lobbyPlayers[b].joined) || 0)
+  );
+  const i = Math.max(0, ids.indexOf(net.getMyId()));
+  const n = Math.max(1, ids.length);
+  return SPAWN_SLOTS[Math.round((i * 12) / n) % 12];
+}
+
+function pickFarSlot() {
+  const others = remote.alivePositions();
+  if (!others.length) return SPAWN_SLOTS[Math.floor(Math.random() * 12)];
+  let best = SPAWN_SLOTS[0];
+  let bestD = -1;
+  for (const s of SPAWN_SLOTS) {
+    let dMin = Infinity;
+    for (const o of others) dMin = Math.min(dMin, Math.hypot(s.x - o.x, s.z - o.z));
+    if (dMin > bestD) {
+      bestD = dMin;
+      best = s;
+    }
+  }
+  return best;
+}
+
+function spawnLocal(slot) {
+  player.reset(slot);
+  playerModel.root.visible = true;
+  local.alive = true;
+  local.hp = local.maxHp;
+  local.cooldown = 0;
+  local.fireSmoke = 0;
+  local.recoil = 0;
+  playerModel.setCharred(false);
+  playerModel.gun.position.x = 0;
+  viewYaw = slot.heading;
+  viewPitch = 0;
+  camYaw = viewYaw;
+  camPitch = 0;
+  updateHpHud();
+  elDeath.style.display = 'none';
+  pushState();
+}
+
+function beginMatch() {
+  phase = 'playing';
+  menu.hideAll();
+  spawnLocal(startSlot());
+}
+
+// ---------------------------------------------------------------------------
+// State sync
+// ---------------------------------------------------------------------------
+const r3 = (v) => Math.round(v * 1000) / 1000;
+
+function pushState() {
+  const p = playerModel.root.position;
+  net.sendState({
+    x: r3(p.x),
+    y: r3(p.y),
+    z: r3(p.z),
+    h: r3(player.state.heading),
+    gp: r3(player.state.groundPitch),
+    gr: r3(player.state.groundRoll),
+    ty: r3(player.state.turretYaw),
+    tp: r3(player.state.pitch),
+    hp: Math.max(0, Math.round(local.hp)),
+    al: local.alive,
+    t: Date.now(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mouse aim: camera IS the crosshair; the view goes anywhere, the turret
+// does its best within its own limits
+// ---------------------------------------------------------------------------
+let viewYaw = 0;
 let viewPitch = 0;
 
 const canvas = renderer.domElement;
 
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || phase !== 'playing') return;
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
     return;
@@ -182,10 +302,10 @@ document.addEventListener('pointerlockchange', () => {
 
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  if (!playerUnit.alive) return;
+  if (phase !== 'playing' || !local.alive) return;
   viewYaw -= e.movementX * YAW_SENS;
   viewPitch = THREE.MathUtils.clamp(
-    viewPitch - e.movementY * PITCH_SENS, AIM_PITCH.min, AIM_PITCH.max
+    viewPitch - e.movementY * PITCH_SENS, -CAM_PITCH_LIM, CAM_PITCH_LIM
   );
 });
 
@@ -204,137 +324,104 @@ function muzzleWorld(unit, outPos, outDir) {
 
 let camKick = 0;
 
-function fireGun(unit) {
-  unit.cooldown = FIRE_INTERVAL;
-  unit.fireSmoke = 2;
-  unit.recoil = 0.22;
-  muzzleWorld(unit, _fpos, _fdir);
-  bullets.fire(unit, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone());
-  fx.muzzleFlash(_fpos.clone(), _fdir.clone());
-  audio.playAt('shot', _fpos, {
-    volume: unit.isPlayer ? 0.9 : 0.75,
-    rate: 0.94 + Math.random() * 0.12,
-  });
-  if (unit.isPlayer) {
-    player.applyRecoil();
-    camKick = 0.55;
-  }
-}
-
 function tryPlayerFire() {
-  if (!playerUnit.alive || playerUnit.cooldown > 0) return;
-  fireGun(playerUnit);
+  if (!local.alive || local.cooldown > 0) return;
+  local.cooldown = FIRE_INTERVAL;
+  local.fireSmoke = 2;
+  local.recoil = 0.22;
+  muzzleWorld(local, _fpos, _fdir);
+  bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone());
+  fx.muzzleFlash(_fpos.clone(), _fdir.clone());
+  audio.playAt('shot', _fpos, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
+  player.applyRecoil();
+  camKick = 0.55;
+  net.sendShot({
+    x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
+    dx: r3(_fdir.x), dy: r3(_fdir.y), dz: r3(_fdir.z),
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Damage, death, husk, respawn
+// Local damage, death, husk, respawn
 // ---------------------------------------------------------------------------
-function damage(unit, amount, at) {
-  if (!unit.alive) return;
-  unit.hp -= amount;
+function localDamage(amount, at) {
+  if (!local.alive) return;
+  local.hp -= amount;
   audio.playAt('hit', at, { volume: 0.7, rate: 0.92 + Math.random() * 0.16 });
-  if (unit === dummyUnit) drawDummyBar();
-  if (unit.isPlayer) updateHpHud();
-  if (unit.hp <= 0) die(unit);
+  updateHpHud();
+  if (local.hp <= 0) localDie();
+  else pushState();
 }
 
-function die(unit) {
-  unit.alive = false;
-  unit.deadT = 5;
-  unit.hp = 0;
-  unit.fireSmoke = 0;
-  const pos = unit.model.root.position.clone();
+function localDie() {
+  local.alive = false;
+  local.deadT = 5;
+  local.hp = 0;
+  local.fireSmoke = 0;
+  const pos = playerModel.root.position.clone();
   pos.y += 1.2;
   fx.explosion(pos);
   audio.playAt('explosion', pos, { volume: 1, ref: 14 });
-  // black smoking husk
-  unit.model.setCharred(true);
-  unit.model.turret.rotation.y += (Math.random() - 0.5) * 1.4;
-  unit.model.pitchGroup.rotation.z = -0.06;
-  if (unit === dummyUnit) barSprite.visible = false;
-  if (unit.isPlayer) {
-    updateHpHud();
-    elDeath.style.display = '';
-  }
+  playerModel.setCharred(true);
+  playerModel.turret.rotation.y += (Math.random() - 0.5) * 1.4;
+  playerModel.pitchGroup.rotation.z = -0.06;
+  updateHpHud();
+  elDeath.style.display = '';
+  pushState();
 }
 
-function respawn(unit) {
-  unit.alive = true;
-  unit.hp = unit.maxHp;
-  unit.model.setCharred(false);
-  unit.model.gun.position.x = 0;
-  if (unit.isPlayer) {
-    player.reset();
-    viewYaw = SPAWN.player.heading;
-    viewPitch = 0;
-    camYaw = viewYaw;
-    camPitch = 0;
-    updateHpHud();
-    elDeath.style.display = 'none';
-  } else {
-    resetDummyPose();
-    dummyUnit.cooldown = 1.0;
-    drawDummyBar();
-    barSprite.visible = true;
-  }
-}
+function updateLocalUnit(dt) {
+  if (local.alive) {
+    if (local.cooldown > 0) local.cooldown -= dt;
 
-const _smokePos = new THREE.Vector3();
-const _smokeDir = new THREE.Vector3();
+    local.recoil = Math.max(0, local.recoil - dt * (0.4 + local.recoil * 9));
+    playerModel.gun.position.x = -local.recoil;
 
-function updateUnitCommon(unit, dt) {
-  if (unit.alive) {
-    if (unit.cooldown > 0) unit.cooldown -= dt;
-
-    // barrel recoil spring
-    unit.recoil = Math.max(0, unit.recoil - dt * (0.4 + unit.recoil * 9));
-    unit.model.gun.position.x = -unit.recoil;
-
-    // smoke drifts from the barrel for a couple seconds after each shot
-    if (unit.fireSmoke > 0) {
-      unit.fireSmoke -= dt;
-      unit.smokeAcc += dt;
-      while (unit.smokeAcc > 0.07) {
-        unit.smokeAcc -= 0.07;
-        muzzleWorld(unit, _smokePos, _smokeDir);
-        fx.barrelSmoke(_smokePos, _smokeDir);
+    if (local.fireSmoke > 0) {
+      local.fireSmoke -= dt;
+      local.smokeAcc += dt;
+      while (local.smokeAcc > 0.07) {
+        local.smokeAcc -= 0.07;
+        muzzleWorld(local, _fpos, _fdir);
+        fx.barrelSmoke(_fpos, _fdir);
       }
     }
-  } else {
-    unit.deadT -= dt;
-    unit.huskAcc += dt;
-    while (unit.huskAcc > 0.13) {
-      unit.huskAcc -= 0.13;
-      fx.huskSmoke(unit.model.root.position);
+  } else if (phase === 'playing' && playerModel.root.visible) {
+    local.deadT -= dt;
+    local.huskAcc += dt;
+    while (local.huskAcc > 0.13) {
+      local.huskAcc -= 0.13;
+      fx.huskSmoke(playerModel.root.position);
     }
-    if (unit.deadT <= 0) respawn(unit);
+    if (local.deadT <= 0) spawnLocal(pickFarSlot());
   }
 }
 
-// Keep the two hulls from overlapping (dummy is static; push the player out)
-function resolveTankCollision() {
+// Push the local hull out of any remote hull (their client moves their own)
+function resolveTankCollisions() {
   const a = playerModel.root.position;
-  const b = dummyModel.root.position;
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  const d = Math.hypot(dx, dz);
-  if (d < 3.8 && d > 1e-4 && Math.abs(a.y - b.y) < 1.8) {
-    const push = 3.8 - d;
-    a.x += (dx / d) * push;
-    a.z += (dz / d) * push;
-    player.state.v *= 0.5;
+  for (const ru of remote.targets()) {
+    if (!ru.model.root.visible) continue;
+    const dx = a.x - ru.cur.x;
+    const dz = a.z - ru.cur.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 3.8 && d > 1e-4 && Math.abs(a.y - ru.cur.y) < 1.8) {
+      const push = 3.8 - d;
+      a.x += (dx / d) * push;
+      a.z += (dz / d) * push;
+      player.state.v *= 0.5;
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Camera: locked to the crosshair at screen center. The view aims where the
-// mouse says; the tank and turret do their best underneath it.
+// Camera: locked to the center crosshair, vertically unlimited
 // ---------------------------------------------------------------------------
-let camYaw = viewYaw;
+let camYaw = 0;
 let camPitch = 0;
-const camPos = new THREE.Vector3(SPAWN.player.x - 10.5, 5.6, SPAWN.player.z);
+const camPos = new THREE.Vector3(0, 26, 60);
 const _desired = new THREE.Vector3();
-const _lookAt = new THREE.Vector3();
+const _lookAt = new THREE.Vector3(0, 2, 0);
 
 function lerpAngle(a, b, t) {
   const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
@@ -361,18 +448,28 @@ function updateCamera(dt) {
   );
 
   const dist = 10.5 + camKick * 2.4;
-  _desired.set(tp.x - cy * dist, tp.y + 5.6, tp.z - sy * dist);
+  // Aiming down lifts the camera, aiming up drops it toward the deck
+  let camY = tp.y + 5.6 - sp * 9;
+  _desired.set(tp.x - cy * dist, 0, tp.z - sy * dist);
+  camY = Math.max(camY, heightAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
+  _desired.y = camY;
+
   camPos.lerp(_desired, 1 - Math.exp(-9 * dt));
   camera.position.copy(camPos);
   camera.lookAt(_lookAt);
 }
 
-updateCamera(0.02);
+let idleAngle = 0;
+function updateIdleCamera(dt) {
+  idleAngle += dt * 0.07;
+  camera.position.set(Math.cos(idleAngle) * 46, 20, Math.sin(idleAngle) * 46);
+  camera.lookAt(0, 2, 0);
+  camPos.copy(camera.position);
+}
 
 // ---------------------------------------------------------------------------
-// Aim: march the crosshair's center ray into the world to find the exact
-// point under it — ground, wall, or enemy armor. The turret converges on
-// that point, so settled shots land on the crosshair.
+// Aim: march the crosshair ray into the world — ground, wall, or enemy armor.
+// The turret converges on that exact point (within its own limits).
 // ---------------------------------------------------------------------------
 const _rayDir = new THREE.Vector3();
 const _rayPt = new THREE.Vector3();
@@ -381,15 +478,26 @@ const _pivot = new THREE.Vector3();
 
 function aimRaycast(out) {
   _rayDir.copy(_lookAt).sub(camera.position).normalize();
-  for (let d = 2; d < 150; d += 0.6) {
+  const targets = remote.targets();
+  for (let d = 2; d < 170; d += 0.6) {
     _rayPt.copy(camera.position).addScaledVector(_rayDir, d);
     if (
       Math.abs(_rayPt.x) > ARENA.half ||
       Math.abs(_rayPt.z) > ARENA.half ||
       _rayPt.y <= heightAt(_rayPt.x, _rayPt.z) ||
-      (dummyUnit.alive && dummyModel.hitTest(_rayPt)) ||
-      _rayPt.y > 60
+      _rayPt.y > 90
     ) break;
+    let hit = false;
+    for (const ru of targets) {
+      if (!ru.alive || !ru.model.root.visible) continue;
+      const ddx = _rayPt.x - ru.cur.x;
+      const ddz = _rayPt.z - ru.cur.z;
+      if (ddx * ddx + ddz * ddz < 30 && ru.model.hitTest(_rayPt)) {
+        hit = true;
+        break;
+      }
+    }
+    if (hit) break;
   }
   out.copy(_rayPt);
 }
@@ -401,69 +509,80 @@ const clock = new THREE.Clock();
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
-  const input = readInput();
 
-  // where is the crosshair pointing, and what angles does the turret need?
-  aimRaycast(_aimPoint);
-  playerModel.pitchGroup.getWorldPosition(_pivot);
-  const adx = _aimPoint.x - _pivot.x;
-  const adz = _aimPoint.z - _pivot.z;
-  const aimWorldYaw = Math.atan2(-adz, adx);
-  const aimPitch = Math.atan2(
-    _aimPoint.y - _pivot.y,
-    Math.max(1, Math.hypot(adx, adz))
-  );
+  if (phase === 'playing') {
+    const input = readInput();
 
-  if (playerUnit.alive) {
-    player.update(dt, input, aimWorldYaw, aimPitch);
-    resolveTankCollision();
-  }
+    aimRaycast(_aimPoint);
+    playerModel.pitchGroup.getWorldPosition(_pivot);
+    const adx = _aimPoint.x - _pivot.x;
+    const adz = _aimPoint.z - _pivot.z;
+    const aimWorldYaw = Math.atan2(-adz, adx);
+    const aimPitch = Math.atan2(
+      _aimPoint.y - _pivot.y,
+      Math.max(1, Math.hypot(adx, adz))
+    );
 
-  // The dummy doesn't track — it just fires straight ahead on its interval
-  if (dummyUnit.alive && playerUnit.alive && dummyUnit.cooldown <= 0) {
-    fireGun(dummyUnit);
-  }
-
-  updateUnitCommon(playerUnit, dt);
-  updateUnitCommon(dummyUnit, dt);
-
-  bullets.update(
-    dt,
-    units,
-    (unit, pos) => {
-      fx.impact(pos.clone());
-      damage(unit, BULLET.damage, pos);
-    },
-    (pos) => {
-      fx.impact(pos.clone());
+    if (local.alive) {
+      player.update(dt, input, aimWorldYaw, aimPitch);
+      resolveTankCollisions();
     }
-  );
 
-  fx.update(dt);
-  updateCamera(dt);
+    updateLocalUnit(dt);
+    remote.update(dt);
 
-  sun.position.copy(playerModel.root.position).add(SUN_OFFSET);
-  sun.target.position.copy(playerModel.root.position);
+    bullets.update(
+      dt,
+      [local, ...remote.targets()],
+      (unit, pos) => {
+        fx.impact(pos.clone());
+        if (unit === local) localDamage(BULLET.damage, pos);
+        else audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
+      },
+      (pos) => {
+        fx.impact(pos.clone());
+      }
+    );
 
-  // engine follows throttle
-  const speedFrac = Math.abs(player.state.v) / SPEC.maxForward;
-  engine.update(
-    0.72 + speedFrac * 0.65,
-    playerUnit.alive ? 0.16 + speedFrac * 0.14 : 0
-  );
+    fx.update(dt);
+    updateCamera(dt);
 
-  // HUD
+    sun.position.copy(playerModel.root.position).add(SUN_OFFSET);
+    sun.target.position.copy(playerModel.root.position);
+
+    const speedFrac = Math.abs(player.state.v) / SPEC.maxForward;
+    engine.update(
+      0.72 + speedFrac * 0.65,
+      local.alive ? 0.16 + speedFrac * 0.14 : 0
+    );
+
+    stateAcc += dt;
+    if (stateAcc > 1 / 12) {
+      stateAcc = 0;
+      pushState();
+    }
+
+    elSpeed.textContent = String(Math.round(Math.abs(player.state.v) * 8));
+    elReload.style.transform = `scaleX(${1 - Math.max(0, local.cooldown) / FIRE_INTERVAL})`;
+    if (!local.alive) {
+      elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(local.deadT))}`;
+    }
+  } else {
+    // menu / lobby: slow orbit over the arena
+    updateIdleCamera(dt);
+    fx.update(dt);
+    remote.update(dt);
+    engine.update(0.72, 0);
+    sun.position.copy(SUN_OFFSET);
+    sun.target.position.set(0, 0, 0);
+  }
+
   fpsTime += dt;
   fpsFrames += 1;
   if (fpsTime >= 0.5) {
     elFps.textContent = String(Math.round(fpsFrames / fpsTime));
     fpsTime = 0;
     fpsFrames = 0;
-  }
-  elSpeed.textContent = String(Math.round(Math.abs(player.state.v) * 8));
-  elReload.style.transform = `scaleX(${1 - Math.max(0, playerUnit.cooldown) / FIRE_INTERVAL})`;
-  if (!playerUnit.alive) {
-    elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(playerUnit.deadT))}`;
   }
 
   renderer.render(scene, camera);
