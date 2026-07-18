@@ -7,10 +7,36 @@ export const ARENA = {
   margin: 3.2, // keeps the tank's nose off the walls
 };
 
+// Central raised platform with a drive-up ramp on each of the four sides
+export const PLATFORM = {
+  half: 8,      // platform is 16 x 16
+  h: 2,         // top surface height
+  rampLen: 7,   // ramp reaches this far out from the platform edge
+  rampHalfW: 3, // ramp is 6 wide
+};
+
+export const SPAWN = {
+  player: { x: -32, z: 0, heading: 0 },
+  dummy: { x: 0, z: 0, heading: Math.PI }, // faces the player spawn
+};
+
+// Ground height at any point — drives tank climbing and bullet impacts
+export function heightAt(x, z) {
+  const { half, h, rampLen, rampHalfW } = PLATFORM;
+  const ax = Math.abs(x);
+  const az = Math.abs(z);
+  if (ax <= half && az <= half) return h;
+  if (az <= rampHalfW && ax > half && ax <= half + rampLen) {
+    return h * (1 - (ax - half) / rampLen);
+  }
+  if (ax <= rampHalfW && az > half && az <= half + rampLen) {
+    return h * (1 - (az - half) / rampLen);
+  }
+  return 0;
+}
+
 export function createArena(scene) {
   // ---- floor -------------------------------------------------------------
-  // One texture tile = 4 units, 8 cells per tile -> 0.5 u cells,
-  // with a heavier major line every 4 units.
   const floorTex = makeGridTexture({
     cells: 8,
     base: '#8b939d',
@@ -31,7 +57,65 @@ export function createArena(scene) {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // ---- spawn pad ---------------------------------------------------------
+  // ---- central platform + ramps -----------------------------------------
+  const platTex = makeGridTexture({
+    cells: 8,
+    base: '#7d8894',
+    line: '#6d7884',
+    lineWidth: 2,
+    major: 8,
+    majorLine: '#5d6874',
+    majorWidth: 6,
+    repeat: [PLATFORM.half / 2, PLATFORM.half / 2],
+  });
+  const platMat = new THREE.MeshStandardMaterial({ map: platTex, roughness: 0.92 });
+
+  const platform = new THREE.Mesh(
+    new THREE.BoxGeometry(PLATFORM.half * 2, PLATFORM.h, PLATFORM.half * 2),
+    platMat
+  );
+  platform.position.y = PLATFORM.h / 2;
+  platform.castShadow = true;
+  platform.receiveShadow = true;
+  scene.add(platform);
+
+  // Ramp: right-triangle profile extruded to width, vertical face against
+  // the platform. Local +X points away from the platform.
+  const rampShape = new THREE.Shape();
+  rampShape.moveTo(0, 0);
+  rampShape.lineTo(PLATFORM.rampLen, 0);
+  rampShape.lineTo(0, PLATFORM.h);
+  rampShape.closePath();
+  const rampGeo = new THREE.ExtrudeGeometry(rampShape, {
+    depth: PLATFORM.rampHalfW * 2,
+    bevelEnabled: false,
+  });
+  rampGeo.translate(0, 0, -PLATFORM.rampHalfW);
+
+  const rampTex = makeGridTexture({
+    cells: 6,
+    base: '#747f8b',
+    line: '#65707c',
+    lineWidth: 3,
+    repeat: [0.5, 0.5],
+  });
+  const rampMat = new THREE.MeshStandardMaterial({ map: rampTex, roughness: 0.92 });
+
+  const rampAngles = [0, Math.PI / 2, Math.PI, -Math.PI / 2]; // +x, +z?, -x, -z
+  for (const a of rampAngles) {
+    const ramp = new THREE.Mesh(rampGeo, rampMat);
+    ramp.rotation.y = a;
+    ramp.position.set(
+      Math.cos(a) * PLATFORM.half,
+      0,
+      -Math.sin(a) * PLATFORM.half
+    );
+    ramp.castShadow = true;
+    ramp.receiveShadow = true;
+    scene.add(ramp);
+  }
+
+  // ---- player spawn pad --------------------------------------------------
   const ringMat = new THREE.MeshBasicMaterial({
     color: '#c2cbd6',
     transparent: true,
@@ -39,10 +123,10 @@ export function createArena(scene) {
   });
   const outerRing = new THREE.Mesh(new THREE.RingGeometry(2.35, 2.6, 48), ringMat);
   outerRing.rotation.x = -Math.PI / 2;
-  outerRing.position.y = 0.02;
+  outerRing.position.set(SPAWN.player.x, 0.02, SPAWN.player.z);
   const innerRing = new THREE.Mesh(new THREE.RingGeometry(0.65, 0.82, 32), ringMat);
   innerRing.rotation.x = -Math.PI / 2;
-  innerRing.position.y = 0.02;
+  innerRing.position.set(SPAWN.player.x, 0.02, SPAWN.player.z);
   scene.add(outerRing, innerRing);
 
   // ---- perimeter walls ---------------------------------------------------
@@ -55,8 +139,8 @@ export function createArena(scene) {
   });
   const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.9, metalness: 0.05 });
 
-  const t = 2; // wall thickness
-  const h = 4; // wall height
+  const t = 2;
+  const h = 4;
   const long = ARENA.size + t * 2;
 
   const geoNS = new THREE.BoxGeometry(long, h, t);

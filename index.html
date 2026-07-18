@@ -3,9 +3,40 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tank Remake — prototype 0.1</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%231b1f24'/><rect x='1.5' y='8' width='10' height='4.5' rx='1' fill='%238faf6a'/><rect x='3.5' y='4.5' width='5' height='4' rx='1' fill='%23c8d9ae'/><rect x='8.5' y='5.6' width='6' height='1.6' fill='%23c8d9ae'/></svg>" />
+  <title>Tank Remake — prototype</title>
   <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="hud brand">
+    <h1>TANK REMAKE</h1>
+    <p>prototype 0.2 &middot; not pay-to-win</p>
+  </div>
+
+  <div class="hud controls">
+    <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span> drive / reverse</div>
+    <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
+    <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
+    <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire</div>
+  </div>
+
+  <div class="hud stats">
+    <div class="stat"><span id="speed">0</span><label>km/h</label></div>
+    <div class="stat"><span id="fps">0</span><label>fps</label></div>
+  </div>
+
+  <div id="crosshair"></div>
+  <div id="reloadwrap"><div id="reload"></div></div>
+
+  <div class="hpwrap">
+    <div id="hpbar"><div id="hpfill"></div></div>
+    <label>hull &middot; <span id="hpnum">1000</span></label>
+  </div>
+
+  <div id="lockhint">click to take aim</div>
+  <div id="deathmsg" style="display:none"></div>
+
   <script type="importmap">
     {
       "imports": {
@@ -13,26 +44,6 @@
       }
     }
   </script>
-</head>
-<body>
-  <div id="app"></div>
-
-  <header class="hud brand">
-    <h1>TANK REMAKE</h1>
-    <p>prototype 0.1 &middot; free to win</p>
-  </header>
-
-  <section class="hud controls" aria-label="Controls">
-    <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span><span>drive / reverse</span></div>
-    <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span><span>pivot hull</span></div>
-    <div class="row"><span class="keys"><kbd>J</kbd><kbd>K</kbd></span><span>rotate turret</span></div>
-  </section>
-
-  <section class="hud stats" aria-label="Telemetry">
-    <div class="stat"><span id="speed">0</span><label>km/h</label></div>
-    <div class="stat"><span id="fps">&mdash;</span><label>fps</label></div>
-  </section>
-
   <script type="module" src="./js/main.js"></script>
 </body>
 </html>

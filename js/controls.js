@@ -1,5 +1,6 @@
-// Keyboard state. W/S throttle, A/D hull pivot, J/K turret traverse.
-const HANDLED = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyJ', 'KeyK']);
+// Keyboard state. W/S throttle, A/D hull pivot. Turret aim is mouse-driven
+// (see main.js pointer lock handling).
+const HANDLED = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
 const down = new Set();
 
 window.addEventListener('keydown', (e) => {
@@ -19,6 +20,5 @@ export function readInput() {
   return {
     throttle: (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0),
     turn: (down.has('KeyA') ? 1 : 0) - (down.has('KeyD') ? 1 : 0),
-    turret: (down.has('KeyJ') ? 1 : 0) - (down.has('KeyK') ? 1 : 0),
   };
 }
