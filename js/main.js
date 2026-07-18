@@ -30,6 +30,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true; // decals are trimmed to the face they sit on
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -462,8 +463,10 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'Digit3') editor.setTool('slope');
   else if (e.code === 'Digit4') editor.setTool('spawn');
   else if (e.code === 'Digit5') editor.setTool('decal');
-  else if (e.code === 'KeyR') editor.rotateGhost();
+  else if (e.code === 'KeyR') editor.rotateGhost(e.ctrlKey ? -1 : 1);
   else if (e.code === 'KeyX') editor.deleteAtCursor();
+  else return;
+  e.preventDefault(); // ctrl+R is a page reload otherwise
 });
 
 window.addEventListener('wheel', (e) => {
@@ -705,15 +708,12 @@ const camPos = new THREE.Vector3(0, 26, 60);
 const _desired = new THREE.Vector3();
 const _lookAt = new THREE.Vector3(0, 2, 0);
 
-function lerpAngle(a, b, t) {
-  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
-  return a + d * t;
-}
-
 function updateCamera(dt) {
   camKick = Math.max(0, camKick - camKick * 7 * dt - 0.05 * dt);
-  camYaw = lerpAngle(camYaw, viewYaw, 1 - Math.exp(-16 * dt));
-  camPitch += (viewPitch - camPitch) * (1 - Math.exp(-16 * dt));
+  // no easing: the camera is the crosshair, so it goes exactly where the
+  // mouse says, this frame
+  camYaw = viewYaw;
+  camPitch = viewPitch;
 
   const cy = Math.cos(camYaw);
   const sy = -Math.sin(camYaw);
@@ -734,7 +734,7 @@ function updateCamera(dt) {
   camY = Math.max(camY, groundYAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
   _desired.y = camY;
 
-  camPos.lerp(_desired, 1 - Math.exp(-9 * dt));
+  camPos.copy(_desired);
   camera.position.copy(camPos);
   camera.lookAt(_lookAt);
 }

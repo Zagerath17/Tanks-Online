@@ -185,9 +185,10 @@ export function createEditor({ scene, physics }) {
     rebuildGhost();
   }
 
-  function rotateGhost() {
-    if (tool === 'decal') decal.spin += Math.PI / 12;
-    else ghostYaw += Math.PI / 12;
+  function rotateGhost(dir = 1) {
+    const step = (dir < 0 ? -1 : 1) * (Math.PI / 12);
+    if (tool === 'decal') decal.spin += step;
+    else ghostYaw += step;
   }
 
   function setDecalShape(shape) {
@@ -237,6 +238,48 @@ export function createEditor({ scene, physics }) {
   const _projQuat = new THREE.Quaternion();
   const _spinQuat = new THREE.Quaternion();
 
+  // decals ride the same grid as solid pieces, ten times finer
+  const DGRID = { xz: 1 / 10, y: 0.5 / 10 };
+  const _snap = new THREE.Vector3();
+
+  // Any flat face of a piece is that face's plane cut by the piece's own box,
+  // so bounding a decal with the box's *other* planes trims it exactly at the
+  // edge of the face. Planes parallel to the face are dropped — the decal
+  // floats a hair proud of the surface and would clip against itself.
+  const PLANE_SPECS = [
+    [1, 0, 0], [-1, 0, 0],
+    [0, 1, 0], [0, -1, 0],
+    [0, 0, 1], [0, 0, -1],
+  ];
+
+  function clipPlanesFor(owner, normal) {
+    if (!owner || owner.type === 'spawn') return null;
+    const d = owner.dims;
+    const half = {
+      x: d.L / 2,
+      y: owner.type === 'slope' ? slopeHeight(d) : d.H,
+      z: d.W / 2,
+    };
+    owner.group.updateMatrixWorld();
+    const out = [];
+    for (const [nx, ny, nz] of PLANE_SPECS) {
+      // keep the half-space n·p + c >= 0; c is the box extent on that side
+      const c = nx !== 0 ? half.x : nz !== 0 ? half.z : ny > 0 ? 0 : half.y;
+      const plane = new THREE.Plane(new THREE.Vector3(nx, ny, nz), c)
+        .applyMatrix4(owner.group.matrixWorld);
+      if (Math.abs(plane.normal.dot(normal)) < 0.985) out.push(plane);
+    }
+    return out.length ? out : null;
+  }
+
+  // swapping the plane count recompiles the shader, so flag it when it changes
+  function applyClip(mat, planes) {
+    const before = mat.clippingPlanes ? mat.clippingPlanes.length : 0;
+    const after = planes ? planes.length : 0;
+    mat.clippingPlanes = planes;
+    if (before !== after) mat.needsUpdate = true;
+  }
+
   function updateGhost(camera) {
     raycaster.setFromCamera(_center, camera);
     const surfaces = [ground, ...objects.filter((o) => o.type !== 'spawn').map((o) => o.group)];
@@ -265,7 +308,18 @@ export function createEditor({ scene, physics }) {
       _projQuat.setFromUnitVectors(_zAxis, _n);
       _spinQuat.setFromAxisAngle(_zAxis, decal.spin);
       ghost.quaternion.copy(_projQuat).multiply(_spinQuat);
-      ghost.position.copy(hit.point).addScaledVector(_n, 0.03);
+
+      // snap on the fine grid, then slide back onto the face's own plane so
+      // the rounding never buries the decal in the surface or lifts it off
+      _snap.set(
+        Math.round(hit.point.x / DGRID.xz) * DGRID.xz,
+        Math.round(hit.point.y / DGRID.y) * DGRID.y,
+        Math.round(hit.point.z / DGRID.xz) * DGRID.xz
+      );
+      _snap.addScaledVector(_n, hit.point.dot(_n) - _snap.dot(_n));
+      ghost.position.copy(_snap).addScaledVector(_n, 0.02);
+
+      applyClip(decalGhostMat, clipPlanesFor(pointedAt, _n));
       ghost.visible = true;
       return;
     }
@@ -351,9 +405,12 @@ export function createEditor({ scene, physics }) {
   }
 
   function placeDecal(dc, pos, quat, owner) {
+    // the decal's own +Z is the face normal it was stamped against
+    const normal = _zAxis.clone().applyQuaternion(quat).normalize();
     const mat = new THREE.MeshBasicMaterial({
       color: dc.color, side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      clippingPlanes: clipPlanesFor(owner, normal),
     });
     const mesh = new THREE.Mesh(buildDecalGeometry(dc), mat);
     mesh.position.copy(pos);

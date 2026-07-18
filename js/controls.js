@@ -1,6 +1,7 @@
 // Keyboard state. W/S throttle, A/D hull pivot when driving; in the editor's
-// free cam the same WASD moves the camera, with Space/Shift for up/down.
-const HANDLED = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight']);
+// free cam the same WASD moves the camera, with Space to rise. Shift is left
+// alone — it's only a scroll modifier for the build tools.
+const HANDLED = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space']);
 const down = new Set();
 
 function inField(e) {
@@ -32,6 +33,6 @@ export function readFly() {
   return {
     fwd: (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0),
     strafe: (down.has('KeyD') ? 1 : 0) - (down.has('KeyA') ? 1 : 0),
-    up: (down.has('Space') ? 1 : 0) - (down.has('ShiftLeft') || down.has('ShiftRight') ? 1 : 0),
+    up: down.has('Space') ? 1 : 0,
   };
 }

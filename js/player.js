@@ -9,6 +9,9 @@ export const AIM_PITCH = { min: -0.12, max: 0.17 };
 
 const TURRET_RATE = 2.2; // rad/s traverse — the turret chases the aim
 const PITCH_RATE = 1.1;
+const LAT_GRIP = 14; // how fast sideways slide is scrubbed off, 1/s
+const HOLD_SPEED = 0.8; // below this, an idle tank parks instead of creeping
+const HUSK_DRAG = 3; // a flipped hull slides to a stop on the slick ground
 const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 
 export function createPlayerController(model, physics) {
@@ -88,6 +91,12 @@ export function createPlayerController(model, physics) {
     let vF = _vel.dot(_fwd);
 
     if (state.grounded && state.upright) {
+      // Work in the hull's own frame: forward / sideways / along its up axis.
+      // Rebuilding the velocity from these three keeps the drive authoritative
+      // while still reading back whatever the solver did (walls, ramps, hits).
+      let vLat = _vel.dot(_right);
+      const vUp = _vel.dot(_up);
+
       // throttle -> target forward speed (same curve as ever)
       if (input.throttle > 0) {
         vF += (vF < 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
@@ -99,17 +108,18 @@ export function createPlayerController(model, physics) {
       }
       vF = THREE.MathUtils.clamp(vF, -SPEC.maxReverse, SPEC.maxForward);
 
-      const dvF = vF - _vel.dot(_fwd);
-      vel.x += _fwd.x * dvF;
-      vel.y += _fwd.y * dvF;
-      vel.z += _fwd.z * dvF;
-
       // treads don't slide sideways
-      const vLat = _vel.dot(_right);
-      const kill = vLat * Math.min(1, 12 * dt);
-      vel.x -= _right.x * kill;
-      vel.y -= _right.y * kill;
-      vel.z -= _right.z * kill;
+      vLat -= vLat * Math.min(1, LAT_GRIP * dt);
+
+      // parking brake: sitting still means sitting still, including on a slope
+      if (input.throttle === 0 && Math.abs(vF) < HOLD_SPEED) {
+        vF = 0;
+        vLat = 0;
+      }
+
+      vel.x = _fwd.x * vF + _right.x * vLat + _up.x * vUp;
+      vel.y = _fwd.y * vF + _right.y * vLat + _up.y * vUp;
+      vel.z = _fwd.z * vF + _right.z * vLat + _up.z * vUp;
 
       // pivot: steer angular velocity about the hull's own up axis
       const av = body.angularVelocity;
@@ -118,6 +128,11 @@ export function createPlayerController(model, physics) {
       av.x += _up.x * dAv;
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
+    } else if (state.grounded) {
+      // flipped or otherwise not driving — bleed the slide off by hand
+      const k = Math.min(1, HUSK_DRAG * dt);
+      vel.x -= vel.x * k;
+      vel.z -= vel.z * k;
     }
     state.v = vF;
 
