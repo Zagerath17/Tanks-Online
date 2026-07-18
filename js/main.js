@@ -1,12 +1,13 @@
 import * as THREE from 'three';
-import { createArena, SPAWN } from './map.js';
-import { createTankModel, PALETTE, SPEC } from './tank.js';
+import { createArena, SPAWN, heightAt } from './map.js';
+import { createTankModel, SPEC } from './tank.js';
 import { createPlayerController } from './player.js';
-import { createDummyController } from './dummy.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { readInput } from './controls.js';
+
+const FIRE_INTERVAL = 2.5;
 
 // ---------------------------------------------------------------------------
 // Renderer + scene
@@ -74,15 +75,28 @@ function makeUnit(name, model, isPlayer) {
   };
 }
 
-const playerModel = createTankModel(PALETTE.green);
+// Player and enemy are design replicas of each other
+const playerModel = createTankModel();
 scene.add(playerModel.root);
 const player = createPlayerController(playerModel, SPAWN.player);
 const playerUnit = makeUnit('player', playerModel, true);
 
-const dummyModel = createTankModel(PALETTE.red);
+const dummyModel = createTankModel();
 scene.add(dummyModel.root);
-const dummy = createDummyController(dummyModel, SPAWN.dummy);
+dummyModel.root.position.set(
+  SPAWN.dummy.x,
+  heightAt(SPAWN.dummy.x, SPAWN.dummy.z),
+  SPAWN.dummy.z
+);
+dummyModel.root.rotation.y = SPAWN.dummy.heading;
 const dummyUnit = makeUnit('dummy', dummyModel, false);
+
+function resetDummyPose() {
+  dummyModel.root.rotation.set(0, SPAWN.dummy.heading, 0);
+  dummyModel.turret.rotation.y = 0;
+  dummyModel.pitchGroup.rotation.z = 0;
+  dummyModel.gun.position.x = 0;
+}
 
 const units = [playerUnit, dummyUnit];
 
@@ -126,6 +140,8 @@ const elFps = document.getElementById('fps');
 const elHpFill = document.getElementById('hpfill');
 const elHpNum = document.getElementById('hpnum');
 const elReload = document.getElementById('reload');
+const elReloadWrap = document.getElementById('reloadwrap');
+const elCross = document.getElementById('crosshair');
 const elHint = document.getElementById('lockhint');
 const elDeath = document.getElementById('deathmsg');
 let fpsTime = 0;
@@ -182,7 +198,7 @@ function muzzleWorld(unit, outPos, outDir) {
 let camKick = 0;
 
 function fireGun(unit) {
-  unit.cooldown = 3;
+  unit.cooldown = FIRE_INTERVAL;
   unit.fireSmoke = 2;
   unit.recoil = 0.22;
   muzzleWorld(unit, _fpos, _fdir);
@@ -209,7 +225,7 @@ function tryPlayerFire() {
 function damage(unit, amount, at) {
   if (!unit.alive) return;
   unit.hp -= amount;
-  audio.playAt('hit', at, { volume: 0.55, rate: 0.9 + Math.random() * 0.2 });
+  audio.playAt('hit', at, { volume: 0.7, rate: 0.92 + Math.random() * 0.16 });
   if (unit === dummyUnit) drawDummyBar();
   if (unit.isPlayer) updateHpHud();
   if (unit.hp <= 0) die(unit);
@@ -245,7 +261,7 @@ function respawn(unit) {
     updateHpHud();
     elDeath.style.display = 'none';
   } else {
-    dummy.reset();
+    resetDummyPose();
     dummyUnit.cooldown = 1.0;
     drawDummyBar();
     barSprite.visible = true;
@@ -284,8 +300,23 @@ function updateUnitCommon(unit, dt) {
   }
 }
 
+// Keep the two hulls from overlapping (dummy is static; push the player out)
+function resolveTankCollision() {
+  const a = playerModel.root.position;
+  const b = dummyModel.root.position;
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  const d = Math.hypot(dx, dz);
+  if (d < 3.8 && d > 1e-4 && Math.abs(a.y - b.y) < 1.8) {
+    const push = 3.8 - d;
+    a.x += (dx / d) * push;
+    a.z += (dz / d) * push;
+    player.state.v *= 0.5;
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Camera: hangs behind the turret; the mouse swings the whole view
+// Camera: hangs behind the mouse aim; the turret catches up underneath
 // ---------------------------------------------------------------------------
 let camYaw = 0;
 const camPos = new THREE.Vector3(SPAWN.player.x - 10.5, 5.6, SPAWN.player.z);
@@ -314,6 +345,29 @@ function updateCamera(dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Crosshair: projected from the barrel, so it marks exactly where the
+// turret is looking — it swings to catch up when you whip the mouse
+// ---------------------------------------------------------------------------
+const _cPos = new THREE.Vector3();
+const _cDir = new THREE.Vector3();
+const _cPt = new THREE.Vector3();
+
+function updateCrosshair() {
+  muzzleWorld(playerUnit, _cPos, _cDir);
+  _cPt.copy(_cPos).addScaledVector(_cDir, 60);
+  _cPt.project(camera);
+  if (_cPt.z > 1) {
+    elCross.style.transform = 'translate(-100px, -100px)';
+    elReloadWrap.style.transform = 'translate(-100px, -100px)';
+    return;
+  }
+  const sx = (_cPt.x * 0.5 + 0.5) * window.innerWidth;
+  const sy = (-_cPt.y * 0.5 + 0.5) * window.innerHeight;
+  elCross.style.transform = `translate(${sx - 13}px, ${sy - 13}px)`;
+  elReloadWrap.style.transform = `translate(${sx - 28}px, ${sy + 16}px)`;
+}
+
+// ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
@@ -322,13 +376,14 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   const input = readInput();
 
-  if (playerUnit.alive) player.update(dt, input);
+  if (playerUnit.alive) {
+    player.update(dt, input);
+    resolveTankCollision();
+  }
 
-  if (dummyUnit.alive) {
-    const aimed = dummy.update(dt, playerModel.root.position);
-    if (playerUnit.alive && aimed && dummyUnit.cooldown <= 0) {
-      fireGun(dummyUnit);
-    }
+  // The dummy doesn't track — it just fires straight ahead on its interval
+  if (dummyUnit.alive && playerUnit.alive && dummyUnit.cooldown <= 0) {
+    fireGun(dummyUnit);
   }
 
   updateUnitCommon(playerUnit, dt);
@@ -348,6 +403,7 @@ renderer.setAnimationLoop(() => {
 
   fx.update(dt);
   updateCamera(dt);
+  updateCrosshair();
 
   sun.position.copy(playerModel.root.position).add(SUN_OFFSET);
   sun.target.position.copy(playerModel.root.position);
@@ -368,7 +424,7 @@ renderer.setAnimationLoop(() => {
     fpsFrames = 0;
   }
   elSpeed.textContent = String(Math.round(Math.abs(player.state.v) * 8));
-  elReload.style.transform = `scaleX(${1 - Math.max(0, playerUnit.cooldown) / 3})`;
+  elReload.style.transform = `scaleX(${1 - Math.max(0, playerUnit.cooldown) / FIRE_INTERVAL})`;
   if (!playerUnit.alive) {
     elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(playerUnit.deadT))}`;
   }

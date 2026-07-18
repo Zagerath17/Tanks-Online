@@ -114,17 +114,26 @@ def make_explosion():
 
 # --- armor hit --------------------------------------------------------------
 def make_hit():
-    n = int(SR * 0.32)
-    modes = [(310, 0.05), (505, 0.07), (742, 0.09), (1130, 0.06), (1610, 0.045)]
+    n = int(SR * 0.5)
+    # heavy plate ring — low modes so it reads as armor, not a tin can
+    modes = [(148, 0.16, 1.0), (241, 0.12, 0.8), (397, 0.09, 0.6),
+             (622, 0.065, 0.45), (938, 0.05, 0.3)]
     ring = [0.0] * n
-    for f, tau in modes:
+    for f, tau, amp in modes:
         ph = random.uniform(0, math.pi * 2)
-        a = random.uniform(0.5, 1.0)
         for i in range(n):
-            ring[i] += a * math.sin(2 * math.pi * f * (i / SR) + ph) * math.exp(-i / (tau * SR))
-    click = [s * e for s, e in zip(noise(n), env_exp(n, 0.006))]
-    out = mix(gain(ring, 0.7), gain(click, 0.8))
-    return normalize(softclip(out, 1.4), 0.85)
+            ring[i] += amp * math.sin(2 * math.pi * f * (i / SR) + ph) * math.exp(-i / (tau * SR))
+    # impact thud underneath
+    thump = [
+        0.9 * math.sin(2 * math.pi * 74 * (i / SR)) * math.exp(-i / (0.06 * SR))
+        + 0.55 * math.sin(2 * math.pi * 47 * (i / SR)) * math.exp(-i / (0.11 * SR))
+        for i in range(n)
+    ]
+    # noise punch with a falling lowpass
+    punch = [s * e for s, e in zip(noise(n), env_exp(n, 0.035))]
+    punch = lowpass(punch, lambda i: 2400 * math.exp(-i / (0.03 * SR)) + 260)
+    out = mix(gain(ring, 0.85), gain(thump, 1.0), gain(punch, 1.1))
+    return normalize(softclip(out, 1.9), 0.92)
 
 # --- engine idle loop (seamless: 1.0 s, integer-Hz partials) ----------------
 def make_engine():

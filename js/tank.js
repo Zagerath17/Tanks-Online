@@ -12,7 +12,7 @@ export const SPEC = {
   maxReverse: 5.0,
   turnRate: 1.8,
   turnResponse: 8,
-  halfTrack: 1.5,
+  halfTrack: 1.18,
 };
 
 export const PALETTE = {
@@ -20,11 +20,6 @@ export const PALETTE = {
     hull: ['#4d6039', '#41522f'],
     turret: ['#57683c', '#4a5a32'],
     barrel: ['#3f4d2e', '#35422a'],
-  },
-  red: {
-    hull: ['#6e3a33', '#5c2f29'],
-    turret: ['#7c453a', '#683a30'],
-    barrel: ['#5c332c', '#4d2b24'],
   },
 };
 
@@ -39,16 +34,30 @@ export const TREAD = {
   centerY: 0.455,
   linkCount: 34,
   linkLen: 0.25,
-  linkW: 0.62,
+  linkW: 0.56,
   linkHalfT: 0.035,
   grouserH: 0.05,
-  z: 1.5,
+  z: 1.18,
 };
 TREAD.bottomY = TREAD.centerY - TREAD.arcR;
 TREAD.topY = TREAD.centerY + TREAD.arcR;
 TREAD.runLen = TREAD.runHalf * 2;
 TREAD.arcLen = Math.PI * TREAD.arcR;
 TREAD.length = 2 * TREAD.runLen + 2 * TREAD.arcLen;
+
+// Overall body bounds derived from the geometry below — used for accurate
+// hit detection (hull/tread box in root space, turret box in turret space)
+export const HIT = {
+  bodyX: 2.5,
+  bodyZ: TREAD.z + TREAD.linkW / 2 + TREAD.grouserH + 0.02,
+  bodyY0: 0.02,
+  bodyY1: 1.19,
+  turretX0: -0.9,
+  turretX1: 1.1,
+  turretZ: 0.62,
+  turretY0: 0.0,
+  turretY1: 0.8,
+};
 
 // Position + tangent angle at distance t along the loop. Param increases in
 // the direction the tread circulates when driving forward: bottom run moves
@@ -144,13 +153,13 @@ function buildHull(M) {
   s.closePath();
 
   const hullGeo = new THREE.ExtrudeGeometry(s, {
-    depth: 2.26,
+    depth: 1.86,
     bevelEnabled: true,
     bevelThickness: 0.03,
     bevelSize: 0.03,
     bevelSegments: 1,
   });
-  hullGeo.translate(0, 0, -1.13);
+  hullGeo.translate(0, 0, -0.93);
   return new THREE.Mesh(hullGeo, M.hull);
 }
 
@@ -164,16 +173,16 @@ function buildTurret(M) {
   collar.position.y = 0.06;
   t.add(collar);
 
-  const lower = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.42, 1.3), M.turret);
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.42, 1.1), M.turret);
   lower.position.set(0.05, 0.33, 0);
-  const upper = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.24, 1.0), M.turret);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.24, 0.85), M.turret);
   upper.position.set(-0.02, 0.64, 0);
   t.add(lower, upper);
 
   const cheekGeo = new THREE.BoxGeometry(0.65, 0.42, 0.26);
   for (const side of [-1, 1]) {
     const cheek = new THREE.Mesh(cheekGeo, M.turret);
-    cheek.position.set(0.62, 0.33, side * 0.58);
+    cheek.position.set(0.62, 0.33, side * 0.48);
     cheek.rotation.y = -side * 0.5;
     t.add(cheek);
   }
@@ -183,7 +192,7 @@ function buildTurret(M) {
   pitchGroup.position.set(0.92, 0.4, 0);
   t.add(pitchGroup);
 
-  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.52, 0.66), M.turret);
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.52, 0.6), M.turret);
   pitchGroup.add(mantlet);
 
   // Gun group slides backward for recoil
@@ -252,13 +261,13 @@ function buildTread(M, side) {
   }
 
   for (const x of [-1.1, -0.55, 0, 0.55, 1.1]) {
-    addWheel(0.25, 0.5, x, TREAD.bottomY + TREAD.linkHalfT + 0.25, tyreMats);
+    addWheel(0.25, 0.46, x, TREAD.bottomY + TREAD.linkHalfT + 0.25, tyreMats);
   }
 
-  addWheel(0.3, 0.5, TREAD.runHalf, TREAD.centerY, tyreMats); // idler
-  const sprocket = addWheel(0.3, 0.44, -TREAD.runHalf, TREAD.centerY, tyreMats);
+  addWheel(0.3, 0.46, TREAD.runHalf, TREAD.centerY, tyreMats); // idler
+  const sprocket = addWheel(0.3, 0.4, -TREAD.runHalf, TREAD.centerY, tyreMats);
 
-  const toothGeo = new THREE.BoxGeometry(0.1, 0.075, 0.5);
+  const toothGeo = new THREE.BoxGeometry(0.1, 0.075, 0.42);
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2;
     const tooth = new THREE.Mesh(toothGeo, M.metal);
@@ -268,13 +277,13 @@ function buildTread(M, side) {
   }
 
   for (const x of [-0.7, 0.7]) {
-    addWheel(0.1, 0.34, x, TREAD.topY - TREAD.linkHalfT - 0.1, rollerMats, 14);
+    addWheel(0.1, 0.3, x, TREAD.topY - TREAD.linkHalfT - 0.1, rollerMats, 14);
   }
 
   const armGeo = new THREE.BoxGeometry(0.4, 0.09, 0.09);
   for (const x of [-1.1, -0.55, 0, 0.55, 1.1]) {
     const arm = new THREE.Mesh(armGeo, M.metal);
-    arm.position.set(x - 0.16, 0.45, -side * 0.3);
+    arm.position.set(x - 0.16, 0.45, -side * 0.26);
     arm.rotation.z = -0.5;
     g.add(arm);
   }
@@ -340,6 +349,8 @@ export function createTankModel(palette = PALETTE.green) {
     metalness: 0.05,
   });
 
+  const _hb = new THREE.Vector3();
+
   return {
     root,
     turret,
@@ -354,6 +365,25 @@ export function createTankModel(palette = PALETTE.green) {
       for (const [mesh, original] of meshes) {
         mesh.material = flag ? charredMat : original;
       }
+    },
+    // Accurate two-box hit test: hull+treads in root space (follows ground
+    // pitch/roll), turret in turret space (follows traverse).
+    hitTest(worldPoint) {
+      _hb.copy(worldPoint);
+      root.worldToLocal(_hb);
+      if (
+        Math.abs(_hb.x) < HIT.bodyX &&
+        Math.abs(_hb.z) < HIT.bodyZ &&
+        _hb.y > HIT.bodyY0 && _hb.y < HIT.bodyY1
+      ) return true;
+
+      _hb.copy(worldPoint);
+      turret.worldToLocal(_hb);
+      return (
+        _hb.x > HIT.turretX0 && _hb.x < HIT.turretX1 &&
+        Math.abs(_hb.z) < HIT.turretZ &&
+        _hb.y > HIT.turretY0 && _hb.y < HIT.turretY1
+      );
     },
   };
 }

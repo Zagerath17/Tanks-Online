@@ -124,13 +124,14 @@ kbd {
 
 #crosshair {
   position: fixed;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
   width: 26px;
   height: 26px;
-  margin: -13px 0 0 -13px;
   z-index: 2;
   pointer-events: none;
+  will-change: transform;
+  transform: translate(-100px, -100px);
 }
 
 #crosshair::before,
@@ -159,13 +160,14 @@ kbd {
 
 #reloadwrap {
   position: fixed;
-  left: 50%;
-  top: calc(50% + 24px);
+  left: 0;
+  top: 0;
   width: 56px;
   height: 5px;
-  margin-left: -28px;
   z-index: 2;
   pointer-events: none;
+  will-change: transform;
+  transform: translate(-100px, -100px);
   background: rgba(20, 23, 27, 0.6);
   border: 1px solid rgba(200, 217, 174, 0.35);
 }

@@ -6,13 +6,20 @@ const PITCH_MIN = -0.12; // minimal barrel depression
 const PITCH_MAX = 0.17; // minimal barrel elevation
 const YAW_SENS = 0.0032;
 const PITCH_SENS = 0.002;
+const TURRET_RATE = 2.2; // rad/s traverse limit — turret chases the mouse aim
+const PITCH_RATE = 1.1;
+const SLOPE_CLAMP = 0.32; // never tilt harder than the ramps
+const FO = 1.6; // ground sample offsets: fore/aft of center...
+const SO = 1.18; // ...and out to each tread
 
 export function createPlayerController(model, spawn) {
   const state = {
     v: 0,
     omega: 0,
     heading: spawn.heading,
-    turretYaw: 0,
+    aimYaw: 0, // where the mouse wants the turret
+    turretYaw: 0, // where the turret actually is
+    aimPitch: 0,
     pitch: 0,
     groundPitch: 0,
     groundRoll: 0,
@@ -34,7 +41,9 @@ export function createPlayerController(model, spawn) {
     state.v = 0;
     state.omega = 0;
     state.heading = spawn.heading;
+    state.aimYaw = 0;
     state.turretYaw = 0;
+    state.aimPitch = 0;
     state.pitch = 0;
     state.groundPitch = 0;
     state.groundRoll = 0;
@@ -44,10 +53,13 @@ export function createPlayerController(model, spawn) {
     apply();
   }
 
-  // Mouse deltas -> turret yaw + minimal barrel elevation
+  // Mouse deltas -> desired aim. Pitch is clamped, so the mouse is limited
+  // vertically to the barrel's real travel.
   function addAim(dx, dy) {
-    state.turretYaw -= dx * YAW_SENS;
-    state.pitch = THREE.MathUtils.clamp(state.pitch - dy * PITCH_SENS, PITCH_MIN, PITCH_MAX);
+    state.aimYaw -= dx * YAW_SENS;
+    state.aimPitch = THREE.MathUtils.clamp(
+      state.aimPitch - dy * PITCH_SENS, PITCH_MIN, PITCH_MAX
+    );
   }
 
   function applyRecoil() {
@@ -72,36 +84,69 @@ export function createPlayerController(model, spawn) {
     state.omega += (targetOmega - state.omega) * Math.min(1, SPEC.turnResponse * dt);
     state.heading += state.omega * dt;
 
-    // --- move, blocking vertical faces (platform sides without ramps) ---
+    // --- move, refusing to drive into vertical faces ---
     const fx = Math.cos(state.heading);
     const fz = -Math.sin(state.heading);
     const p = model.root.position;
     const lim = ARENA.half - ARENA.margin;
     const nx = THREE.MathUtils.clamp(p.x + fx * state.v * dt, -lim, lim);
     const nz = THREE.MathUtils.clamp(p.z + fz * state.v * dt, -lim, lim);
-    if (heightAt(nx, nz) - heightAt(p.x, p.z) > 0.6) {
-      state.v *= 0.2; // bumped a ledge
+    const hHere = heightAt(p.x, p.z);
+    const dirSign = state.v >= 0 ? 1 : -1;
+    const hProbe = heightAt(nx + fx * 2.1 * dirSign, nz + fz * 2.1 * dirSign);
+    if (state.v !== 0 && hProbe - hHere > 0.8) {
+      state.v *= 0.2; // nose bumped a ledge
     } else {
       p.x = nx;
       p.z = nz;
     }
 
-    // --- follow the terrain: sample around the hull for pitch and roll ---
+    // --- terrain contact: sample under all four tread corners -------------
     const rx = Math.sin(state.heading);
     const rz = Math.cos(state.heading);
     const hC = heightAt(p.x, p.z);
-    const hF = heightAt(p.x + fx * 1.7, p.z + fz * 1.7);
-    const hB = heightAt(p.x - fx * 1.7, p.z - fz * 1.7);
-    const hR = heightAt(p.x + rx * 1.3, p.z + rz * 1.3);
-    const hL = heightAt(p.x - rx * 1.3, p.z - rz * 1.3);
+    // Walls should block, never lift — ignore samples far above the hull
+    const gate = (h) => (h - hC > 0.9 ? hC : h);
+    const hFL = gate(heightAt(p.x + fx * FO - rx * SO, p.z + fz * FO - rz * SO));
+    const hFR = gate(heightAt(p.x + fx * FO + rx * SO, p.z + fz * FO + rz * SO));
+    const hBL = gate(heightAt(p.x - fx * FO - rx * SO, p.z - fz * FO - rz * SO));
+    const hBR = gate(heightAt(p.x - fx * FO + rx * SO, p.z - fz * FO + rz * SO));
 
-    const pitchT = Math.atan2(hF - hB, 3.4);
-    const rollT = Math.atan2(hL - hR, 2.6);
-    const k = Math.min(1, 10 * dt);
+    const pitchT = THREE.MathUtils.clamp(
+      Math.atan2((hFL + hFR) / 2 - (hBL + hBR) / 2, 2 * FO), -SLOPE_CLAMP, SLOPE_CLAMP
+    );
+    const rollT = THREE.MathUtils.clamp(
+      Math.atan2((hFL + hBL) / 2 - (hFR + hBR) / 2, 2 * SO), -SLOPE_CLAMP, SLOPE_CLAMP
+    );
+    const k = Math.min(1, 12 * dt);
     state.groundPitch += (pitchT - state.groundPitch) * k;
     state.groundRoll += (rollT - state.groundRoll) * k;
-    state.y += (hC - state.y) * Math.min(1, 12 * dt);
+
+    // Support height: with the current tilt, no corner may sink into the
+    // ground. This is what stops the hull clipping at ramp edges.
+    const sinP = Math.sin(state.groundPitch);
+    const sinR = Math.sin(state.groundRoll);
+    const need = (h, dx, dz) => h - (dx * sinP - dz * sinR);
+    const yT = Math.max(
+      hC,
+      need(hFL, FO, -SO),
+      need(hFR, FO, SO),
+      need(hBL, -FO, -SO),
+      need(hBR, -FO, SO)
+    );
+    const settle = yT > state.y ? 30 : 10; // snap up onto support, ease down
+    state.y += (yT - state.y) * Math.min(1, settle * dt);
     p.y = state.y;
+
+    // --- turret chases the mouse aim at a limited traverse rate -----------
+    const yawErr = Math.atan2(
+      Math.sin(state.aimYaw - state.turretYaw),
+      Math.cos(state.aimYaw - state.turretYaw)
+    );
+    state.turretYaw += THREE.MathUtils.clamp(yawErr, -TURRET_RATE * dt, TURRET_RATE * dt);
+    state.pitch += THREE.MathUtils.clamp(
+      state.aimPitch - state.pitch, -PITCH_RATE * dt, PITCH_RATE * dt
+    );
 
     apply();
 
@@ -119,6 +164,8 @@ export function createPlayerController(model, spawn) {
     addAim,
     reset,
     applyRecoil,
-    aimAngle: () => state.heading + state.turretYaw,
+    // camera follows the mouse aim so the view stays responsive while the
+    // turret catches up underneath it
+    aimAngle: () => state.heading + state.aimYaw,
   };
 }

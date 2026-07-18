@@ -22,7 +22,6 @@ export function createBullets(scene) {
 
   const _X = new THREE.Vector3(1, 0, 0);
   const _q = new THREE.Quaternion();
-  const _local = new THREE.Vector3();
 
   function getMesh() {
     let m = pool.pop();
@@ -67,13 +66,7 @@ export function createBullets(scene) {
       if (!done) {
         for (const t of targets) {
           if (t === b.owner || !t.alive) continue;
-          _local.copy(p);
-          t.model.root.worldToLocal(_local);
-          if (
-            Math.abs(_local.x) < 2.55 &&
-            Math.abs(_local.z) < 1.95 &&
-            _local.y > -0.15 && _local.y < 2.3
-          ) {
+          if (t.model.hitTest(p)) {
             onHit(t, p);
             done = true;
             break;
