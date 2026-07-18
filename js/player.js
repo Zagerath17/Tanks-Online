@@ -12,6 +12,7 @@ const PITCH_RATE = 1.1;
 const LAT_GRIP = 14; // how fast sideways slide is scrubbed off, 1/s
 const HOLD_SPEED = 0.8; // below this, an idle tank parks instead of creeping
 const HUSK_DRAG = 3; // a flipped hull slides to a stop on the slick ground
+const RECOIL = 1.5; // impulse per unit of hull mass, straight back down the bore
 const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 
 export function createPlayerController(model, physics) {
@@ -64,13 +65,27 @@ export function createPlayerController(model, physics) {
     syncModel();
   }
 
-  // Recoil is a real impulse now — firing shoves the whole rigid body
-  function applyRecoil(dir) {
-    body.applyImpulse(new CANNON.Vec3(
-      -dir.x * body.mass * 1.2,
-      -Math.max(0, dir.y) * body.mass * 0.4,
-      -dir.z * body.mass * 1.2
-    ));
+  // Recoil is a real impulse fired straight back down the barrel line, applied
+  // at the muzzle. Because the barrel sits about a metre above the hull's
+  // centre of mass, that offset turns into torque on its own and the tank
+  // squats and rocks nose-up — no camera trickery involved. Any point on the
+  // barrel axis gives the same torque, so the muzzle is as good as the breech.
+  const _imp = new CANNON.Vec3();
+  const _rel = new CANNON.Vec3();
+  function applyRecoil(dir, muzzlePos) {
+    const j = body.mass * RECOIL;
+    _imp.set(-dir.x * j, -dir.y * j, -dir.z * j);
+    if (muzzlePos) {
+      _rel.set(
+        muzzlePos.x - body.position.x,
+        muzzlePos.y - body.position.y,
+        muzzlePos.z - body.position.z
+      );
+      body.applyImpulse(_imp, _rel);
+    } else {
+      body.applyImpulse(_imp);
+    }
+    body.wakeUp();
   }
 
   // Pre-physics: read input, steer the body. The solver owns everything

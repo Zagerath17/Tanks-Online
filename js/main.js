@@ -585,7 +585,60 @@ canvas.addEventListener('mousedown', (e) => {
 });
 
 document.addEventListener('pointerlockchange', () => {
-  elHint.style.display = document.pointerLockElement === canvas ? 'none' : '';
+  const locked = document.pointerLockElement === canvas;
+  if (locked) {
+    elHint.style.display = 'none';
+    hidePause();
+  } else if (phase === 'playing' || phase === 'editor') {
+    // Esc (or anything else) broke pointer lock mid-game: offer a way out.
+    // The browser reserves Esc while locked, so this is the only hook.
+    showPause();
+  } else {
+    elHint.style.display = '';
+    hidePause();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Pause menu: appears whenever pointer lock drops in a match or the editor
+// ---------------------------------------------------------------------------
+const elPause = document.getElementById('pausemenu');
+let pauseShownAt = 0;
+
+function showPause() {
+  elPause.classList.remove('hidden');
+  elHint.style.display = 'none';
+  pauseShownAt = performance.now();
+}
+
+function hidePause() {
+  elPause.classList.add('hidden');
+}
+
+document.getElementById('pause-resume').addEventListener('click', () => {
+  // pointerlockchange hides the menu once the lock actually lands
+  const p = canvas.requestPointerLock();
+  if (p && p.catch) p.catch(() => { /* browser cooldown — click again */ });
+});
+
+document.getElementById('pause-exit').addEventListener('click', () => {
+  hidePause();
+  if (phase === 'editor') leaveEditor();
+  else if (phase === 'playing') leaveToMenu();
+});
+
+// Esc while already unlocked (e.g. after using the editor toolbar) toggles it
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape') return;
+  if (phase !== 'playing' && phase !== 'editor') return;
+  if (document.pointerLockElement === canvas) return; // browser handles that Esc
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+  // swallow the same Esc press that just broke pointer lock (some browsers
+  // deliver it after the pointerlockchange that opened the menu)
+  if (performance.now() - pauseShownAt < 250) return;
+  if (elPause.classList.contains('hidden')) showPause();
+  else hidePause();
 });
 
 document.addEventListener('mousemove', (e) => {
@@ -615,8 +668,6 @@ function muzzleWorld(unit, outPos, outDir) {
   outDir.set(1, 0, 0).applyQuaternion(_fq);
 }
 
-let camKick = 0;
-
 function tryPlayerFire() {
   if (!local.alive || local.cooldown > 0) return;
   local.cooldown = FIRE_INTERVAL;
@@ -626,8 +677,7 @@ function tryPlayerFire() {
   bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone());
   fx.muzzleFlash(_fpos.clone(), _fdir.clone());
   audio.playAt('shot', _fpos, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
-  player.applyRecoil(_fdir);
-  camKick = 0.55;
+  player.applyRecoil(_fdir, _fpos);
   if (phase === 'playing') {
     net.sendShot({
       x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
@@ -708,10 +758,10 @@ const camPos = new THREE.Vector3(0, 26, 60);
 const _desired = new THREE.Vector3();
 const _lookAt = new THREE.Vector3(0, 2, 0);
 
-function updateCamera(dt) {
-  camKick = Math.max(0, camKick - camKick * 7 * dt - 0.05 * dt);
-  // no easing: the camera is the crosshair, so it goes exactly where the
-  // mouse says, this frame
+function updateCamera() {
+  // no easing, no fire kick: the camera is the crosshair, so it goes exactly
+  // where the mouse says, this frame. Recoil is felt through the hull moving
+  // under it, not by shoving the viewpoint around.
   camYaw = viewYaw;
   camPitch = viewPitch;
 
@@ -728,7 +778,7 @@ function updateCamera(dt) {
     tp.z + cp * sy * D
   );
 
-  const dist = 10.5 + camKick * 2.4;
+  const dist = 10.5;
   let camY = tp.y + 5.6 - sp * 9;
   _desired.set(tp.x - cy * dist, 0, tp.z - sy * dist);
   camY = Math.max(camY, groundYAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
@@ -842,7 +892,7 @@ renderer.setAnimationLoop(() => {
     );
 
     fx.update(dt);
-    if (!flying) updateCamera(dt);
+    if (!flying) updateCamera();
 
     const sunAnchor = flying ? camera.position : playerModel.root.position;
     sun.position.copy(sunAnchor).add(SUN_OFFSET);

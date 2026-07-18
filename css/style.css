@@ -498,3 +498,25 @@ body.editor .hpwrap { display: none; }
 
 #wheel-canvas { cursor: crosshair; touch-action: none; }
 #wheel-value { cursor: ns-resize; touch-action: none; }
+
+/* ---- pause menu (Esc) -------------------------------------------------- */
+
+#pausemenu {
+  position: fixed;
+  inset: 0;
+  z-index: 8; /* under #menu (10), over the hud */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* no full-screen blocker: the editor toolbar stays clickable, and
+     clicking the world still re-locks the pointer */
+  pointer-events: none;
+}
+
+#pausemenu.hidden { display: none; }
+
+#pausemenu .pausebox {
+  pointer-events: auto;
+  width: 250px;
+  padding: 22px 24px 14px;
+}

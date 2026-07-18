@@ -28,12 +28,13 @@ export function createPhysics() {
   const chassisMat = new CANNON.Material('chassis');
   // The chassis is a plain box, so solver friction treats it like a crate:
   // it drives contact-point slip to zero every step and completely eats the
-  // drive velocity the controller writes each frame. Grip is done in code
-  // instead (player.js owns forward drive, lateral bite, and the parking
-  // brake), so the contact itself is left almost slick.
+  // drive velocity the controller writes each frame. Grip is done entirely in
+  // code (player.js owns forward drive, lateral bite, and the parking brake),
+  // so the contact is frictionless — cannon then skips friction equations for
+  // it altogether and nothing can fight the drive.
   world.addContactMaterial(
     new CANNON.ContactMaterial(groundMat, chassisMat, {
-      friction: 0.02,
+      friction: 0.0,
       restitution: 0.0,
     })
   );

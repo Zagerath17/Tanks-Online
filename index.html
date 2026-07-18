@@ -13,7 +13,7 @@
   <div id="menu">
     <div class="screen" id="scr-main">
       <h1 class="menu-title">TANK REMAKE</h1>
-      <p class="menu-sub">prototype 0.9.1 &middot; not pay-to-win</p>
+      <p class="menu-sub">prototype 0.9.3 &middot; not pay-to-win</p>
       <button class="mbtn" id="btn-play">Play</button>
       <button class="mbtn" id="btn-custom">Custom</button>
       <button class="mbtn" id="btn-editor">Editor</button>
@@ -66,6 +66,7 @@
       <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
       <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
       <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire</div>
+      <div class="row"><span class="keys"><kbd>Esc</kbd></span> pause / exit</div>
     </div>
 
     <div class="hud controls" id="editorhud">
@@ -74,6 +75,7 @@
       <div class="row"><span class="keys"><kbd>LMB</kbd></span> place &middot; <kbd>X</kbd> delete</div>
       <div class="row"><span class="keys"><kbd>Scroll</kbd></span> length &middot; <kbd>Shift</kbd> width &middot; <kbd>Ctrl</kbd> height / angle</div>
       <div class="row"><span class="keys"><kbd>R</kbd></span> rotate &middot; <kbd>Ctrl</kbd>+<kbd>R</kbd> reverse &middot; <kbd>Space</kbd> fly up</div>
+      <div class="row"><span class="keys"><kbd>Esc</kbd></span> pause / exit</div>
     </div>
 
     <div id="editorbar">
@@ -115,6 +117,14 @@
 
     <div id="lockhint">click to take aim</div>
     <div id="deathmsg" style="display:none"></div>
+
+    <div id="pausemenu" class="hidden">
+      <div class="screen pausebox">
+        <h2>paused</h2>
+        <button class="mbtn" id="pause-resume">resume</button>
+        <button class="mbtn back" id="pause-exit">exit to menu</button>
+      </div>
+    </div>
   </div>
 
   <script type="importmap">
