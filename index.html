@@ -13,9 +13,10 @@
   <div id="menu">
     <div class="screen" id="scr-main">
       <h1 class="menu-title">TANK REMAKE</h1>
-      <p class="menu-sub">prototype 0.5 &middot; not pay-to-win</p>
+      <p class="menu-sub">prototype 0.9 &middot; not pay-to-win</p>
       <button class="mbtn" id="btn-play">Play</button>
       <button class="mbtn" id="btn-custom">Custom</button>
+      <button class="mbtn" id="btn-editor">Editor</button>
       <button class="mbtn" id="btn-settings">Settings</button>
     </div>
 
@@ -60,11 +61,43 @@
       <p>custom match &middot; not pay-to-win</p>
     </div>
 
-    <div class="hud controls">
+    <div class="hud controls" id="drivehud">
       <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span> drive / reverse</div>
       <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
       <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
       <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire</div>
+    </div>
+
+    <div class="hud controls" id="editorhud">
+      <div class="row"><span class="keys"><kbd>F</kbd></span> drive / build cam</div>
+      <div class="row"><span class="keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd></span> wall / platform / slope / spawn / decal</div>
+      <div class="row"><span class="keys"><kbd>LMB</kbd></span> place &middot; <kbd>X</kbd> delete</div>
+      <div class="row"><span class="keys"><kbd>Scroll</kbd></span> length &middot; <kbd>Shift</kbd> width &middot; <kbd>Ctrl</kbd> height / angle</div>
+      <div class="row"><span class="keys"><kbd>R</kbd></span> rotate &middot; <kbd>Space</kbd>/<kbd>Shift</kbd> fly up / down</div>
+    </div>
+
+    <div id="editorbar">
+      <button id="editor-exit">leave</button>
+      <input id="map-name" placeholder="map name" maxlength="24" spellcheck="false" autocomplete="off" />
+      <button id="map-save">save</button>
+      <select id="map-list"></select>
+      <button id="map-load">load</button>
+      <button id="map-export">export</button>
+      <button id="map-import">import</button>
+      <button id="map-clear">clear</button>
+      <span id="map-sep"></span>
+      <span class="bar-label">decal</span>
+      <button id="decal-rect" class="shape-btn">rect</button>
+      <button id="decal-circle" class="shape-btn">circle</button>
+      <button id="decal-triangle" class="shape-btn">tri</button>
+      <button id="decal-swatch" title="decal colour"></button>
+      <span id="map-status"></span>
+      <input type="file" id="map-file" accept=".json,application/json" style="display:none" />
+
+      <div id="wheel-pop" class="hidden">
+        <canvas id="wheel-canvas" width="150" height="150"></canvas>
+        <canvas id="wheel-value" width="18" height="150"></canvas>
+      </div>
     </div>
 
     <div class="hud stats">
@@ -87,7 +120,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js"
+        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+        "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
       }
     }
   </script>

@@ -152,14 +152,16 @@ function buildHull(M) {
   s.lineTo(-2.45, 0.78); // rear plate
   s.closePath();
 
+  // depth 1.70 (+0.03 bevel) keeps the hull sides clear of the tread
+  // chains, whose inner faces sit at |z| = 0.90
   const hullGeo = new THREE.ExtrudeGeometry(s, {
-    depth: 1.86,
+    depth: 1.70,
     bevelEnabled: true,
     bevelThickness: 0.03,
     bevelSize: 0.03,
     bevelSegments: 1,
   });
-  hullGeo.translate(0, 0, -0.93);
+  hullGeo.translate(0, 0, -0.85);
   return new THREE.Mesh(hullGeo, M.hull);
 }
 

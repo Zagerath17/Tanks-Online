@@ -1,188 +1,154 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { SPEC } from './tank.js';
-import { ARENA, heightAt } from './map.js';
+import { heightAt } from './map.js';
+import { CHASSIS, MODEL_OFF_Y } from './physics.js';
 
-// The barrel's real vertical travel — the mouse aim is clamped to this
+// The barrel's real vertical travel — the turret aims within this
 export const AIM_PITCH = { min: -0.12, max: 0.17 };
 
 const TURRET_RATE = 2.2; // rad/s traverse — the turret chases the aim
 const PITCH_RATE = 1.1;
-const TIP_CLAMP = 0.5; // steeper than the ramps, so edges read as tipping
-const GRAVITY = 24;
-const FO = 1.6; // ground sample offsets: fore/aft of center...
-const SO = 1.18; // ...and out to each tread
+const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 
-export function createPlayerController(model) {
+export function createPlayerController(model, physics) {
+  const body = physics.createChassis();
+
   const state = {
-    v: 0,
-    omega: 0,
-    heading: 0,
+    v: 0, // forward ground speed (HUD, engine, treads)
+    heading: 0, // hull yaw projected onto the ground plane
     turretYaw: 0,
     pitch: 0,
-    groundPitch: 0,
-    groundRoll: 0,
-    y: 0,
-    vy: 0,
+    grounded: false,
+    upright: true,
+    flipT: 0, // seconds spent flipped over
   };
 
-  // Yaw first, then pitch about local Z, then roll about local X
-  model.root.rotation.order = 'YZX';
+  const _q = new THREE.Quaternion();
+  const _fwd = new THREE.Vector3();
+  const _right = new THREE.Vector3();
+  const _up = new THREE.Vector3();
+  const _vel = new THREE.Vector3();
+  const _off = new THREE.Vector3();
+  const _yAxis = new CANNON.Vec3(0, 1, 0);
 
-  function apply() {
-    model.root.rotation.y = state.heading;
-    model.root.rotation.z = state.groundPitch;
-    model.root.rotation.x = state.groundRoll;
-    model.turret.rotation.y = state.turretYaw;
-    model.pitchGroup.rotation.z = state.pitch;
+  function syncModel() {
+    _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    _off.set(0, MODEL_OFF_Y, 0).applyQuaternion(_q);
+    model.root.position.set(
+      body.position.x + _off.x,
+      body.position.y + _off.y,
+      body.position.z + _off.z
+    );
+    model.root.quaternion.copy(_q);
   }
 
-  // spawn: { x, z, heading } — passed on every (re)spawn so slots can vary
   function reset(spawn) {
+    const gy = spawn.y !== undefined ? spawn.y : heightAt(spawn.x, spawn.z);
+    body.position.set(spawn.x, gy - MODEL_OFF_Y + 0.06, spawn.z);
+    body.quaternion.setFromAxisAngle(_yAxis, spawn.heading);
+    body.velocity.setZero();
+    body.angularVelocity.setZero();
+    body.wakeUp();
     state.v = 0;
-    state.omega = 0;
     state.heading = spawn.heading;
     state.turretYaw = 0;
     state.pitch = 0;
-    state.groundPitch = 0;
-    state.groundRoll = 0;
-    state.vy = 0;
-    model.root.position.set(spawn.x, heightAt(spawn.x, spawn.z), spawn.z);
-    state.y = model.root.position.y;
+    state.flipT = 0;
     model.gun.position.x = 0;
-    apply();
+    model.turret.rotation.y = 0;
+    model.pitchGroup.rotation.z = 0;
+    syncModel();
   }
 
-  function applyRecoil() {
-    // Kick opposes the shot; strongest when firing along the hull axis
-    state.v -= 1.3 * Math.cos(state.turretYaw);
+  // Recoil is a real impulse now — firing shoves the whole rigid body
+  function applyRecoil(dir) {
+    body.applyImpulse(new CANNON.Vec3(
+      -dir.x * body.mass * 1.2,
+      -Math.max(0, dir.y) * body.mass * 0.4,
+      -dir.z * body.mass * 1.2
+    ));
   }
 
-  // aimWorldYaw/aimPitch: the direction of the point under the crosshair.
-  // The turret chases it at a limited rate — the view never waits for it.
+  // Pre-physics: read input, steer the body. The solver owns everything
+  // else — slopes, edges, tumbling, and coming to rest upside down.
   function update(dt, input, aimWorldYaw, aimPitch) {
-    // --- throttle ---
-    if (input.throttle > 0) {
-      state.v += (state.v < 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
-    } else if (input.throttle < 0) {
-      state.v -= (state.v > 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
-    } else {
-      const d = SPEC.drag * dt;
-      state.v = Math.abs(state.v) <= d ? 0 : state.v - Math.sign(state.v) * d;
-    }
-    state.v = THREE.MathUtils.clamp(state.v, -SPEC.maxReverse, SPEC.maxForward);
+    _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    _fwd.set(1, 0, 0).applyQuaternion(_q);
+    _right.set(0, 0, 1).applyQuaternion(_q);
+    _up.set(0, 1, 0).applyQuaternion(_q);
 
-    // --- hull yaw ---
-    const targetOmega = input.turn * SPEC.turnRate;
-    state.omega += (targetOmega - state.omega) * Math.min(1, SPEC.turnResponse * dt);
-    state.heading += state.omega * dt;
+    state.grounded = physics.groundedAt(body.position, GROUND_REACH);
+    state.upright = _up.y > 0.55;
+    if (_up.y < 0.25) state.flipT += dt;
+    else state.flipT = 0;
 
-    // --- move, refusing to drive into vertical faces ---
-    const fx = Math.cos(state.heading);
-    const fz = -Math.sin(state.heading);
-    const p = model.root.position;
-    const lim = ARENA.half - ARENA.margin;
-    const nx = THREE.MathUtils.clamp(p.x + fx * state.v * dt, -lim, lim);
-    const nz = THREE.MathUtils.clamp(p.z + fz * state.v * dt, -lim, lim);
-    const hHere = heightAt(p.x, p.z);
-    const dirSign = state.v >= 0 ? 1 : -1;
-    const hProbe = heightAt(nx + fx * 2.1 * dirSign, nz + fz * 2.1 * dirSign);
-    if (state.v !== 0 && hProbe - hHere > 0.8) {
-      state.v *= 0.2; // nose bumped a ledge
-    } else {
-      p.x = nx;
-      p.z = nz;
-    }
+    const vel = body.velocity;
+    _vel.set(vel.x, vel.y, vel.z);
+    let vF = _vel.dot(_fwd);
 
-    // --- terrain contact: sample under all four tread corners -------------
-    const rx = Math.sin(state.heading);
-    const rz = Math.cos(state.heading);
-    const hC = heightAt(p.x, p.z);
-    // Walls should block, never lift — ignore samples far above the hull
-    const wallGate = (h) => (h - hC > 0.9 ? hC : h);
-    const hFL = wallGate(heightAt(p.x + fx * FO - rx * SO, p.z + fz * FO - rz * SO));
-    const hFR = wallGate(heightAt(p.x + fx * FO + rx * SO, p.z + fz * FO + rz * SO));
-    const hBL = wallGate(heightAt(p.x - fx * FO - rx * SO, p.z - fz * FO - rz * SO));
-    const hBR = wallGate(heightAt(p.x - fx * FO + rx * SO, p.z - fz * FO + rz * SO));
-
-    const pitchT = THREE.MathUtils.clamp(
-      Math.atan2((hFL + hFR) / 2 - (hBL + hBR) / 2, 2 * FO), -TIP_CLAMP, TIP_CLAMP
-    );
-    const rollT = THREE.MathUtils.clamp(
-      Math.atan2((hFL + hBL) / 2 - (hFR + hBR) / 2, 2 * SO), -TIP_CLAMP, TIP_CLAMP
-    );
-    const k = Math.min(1, 8 * dt);
-    state.groundPitch += (pitchT - state.groundPitch) * k;
-    state.groundRoll += (rollT - state.groundRoll) * k;
-
-    // Support: with the current tilt, which corners could actually hold us?
-    const sinP = Math.sin(state.groundPitch);
-    const sinR = Math.sin(state.groundRoll);
-    const need = (h, dx, dz) => h - (dx * sinP - dz * sinR);
-    const nFL = need(hFL, FO, -SO);
-    const nFR = need(hFR, FO, SO);
-    const nBL = need(hBL, -FO, -SO);
-    const nBR = need(hBR, -FO, SO);
-    let cornerMax = Math.max(nFL, nFR, nBL, nBR);
-
-    // A one-sided grip over an edge can't hold the tank: if the center is
-    // over the drop and only one end/side still touches, it slips off.
-    if (cornerMax > hC + 0.4) {
-      const th = cornerMax - 0.05;
-      let n = 0;
-      let mx = 0;
-      let mz = 0;
-      if (nFL >= th) { n++; mx += FO; mz += -SO; }
-      if (nFR >= th) { n++; mx += FO; mz += SO; }
-      if (nBL >= th) { n++; mx += -FO; mz += -SO; }
-      if (nBR >= th) { n++; mx += -FO; mz += SO; }
-      mx /= n;
-      mz /= n;
-      if (Math.abs(mx) > 1.2 || Math.abs(mz) > 0.9) cornerMax = hC;
-    }
-
-    const yT = Math.max(hC, cornerMax);
-
-    // Real vertical motion: fall under gravity when unsupported, climb
-    // smoothly when the ground rises under us. No more hovering glides.
-    if (state.y > yT + 0.04) {
-      state.vy -= GRAVITY * dt;
-      state.y += state.vy * dt;
-      if (state.y <= yT) {
-        if (state.vy < -7) state.v *= 0.7; // hard landing scrubs speed
-        state.y = yT;
-        state.vy = 0;
+    if (state.grounded && state.upright) {
+      // throttle -> target forward speed (same curve as ever)
+      if (input.throttle > 0) {
+        vF += (vF < 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
+      } else if (input.throttle < 0) {
+        vF -= (vF > 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
+      } else {
+        const d = SPEC.drag * dt;
+        vF = Math.abs(vF) <= d ? 0 : vF - Math.sign(vF) * d;
       }
-    } else {
-      state.vy = 0;
-      state.y += (yT - state.y) * Math.min(1, 30 * dt);
+      vF = THREE.MathUtils.clamp(vF, -SPEC.maxReverse, SPEC.maxForward);
+
+      const dvF = vF - _vel.dot(_fwd);
+      vel.x += _fwd.x * dvF;
+      vel.y += _fwd.y * dvF;
+      vel.z += _fwd.z * dvF;
+
+      // treads don't slide sideways
+      const vLat = _vel.dot(_right);
+      const kill = vLat * Math.min(1, 12 * dt);
+      vel.x -= _right.x * kill;
+      vel.y -= _right.y * kill;
+      vel.z -= _right.z * kill;
+
+      // pivot: steer angular velocity about the hull's own up axis
+      const av = body.angularVelocity;
+      const avUp = av.x * _up.x + av.y * _up.y + av.z * _up.z;
+      const dAv = (input.turn * SPEC.turnRate - avUp) * Math.min(1, SPEC.turnResponse * dt);
+      av.x += _up.x * dAv;
+      av.y += _up.y * dAv;
+      av.z += _up.z * dAv;
     }
-    p.y = state.y;
+    state.v = vF;
 
-    // --- turret chases the crosshair point at a limited traverse rate -----
-    const relTarget = aimWorldYaw - state.heading;
-    const yawErr = Math.atan2(
-      Math.sin(relTarget - state.turretYaw),
-      Math.cos(relTarget - state.turretYaw)
-    );
-    state.turretYaw += THREE.MathUtils.clamp(yawErr, -TURRET_RATE * dt, TURRET_RATE * dt);
-    state.turretYaw = Math.atan2(Math.sin(state.turretYaw), Math.cos(state.turretYaw));
-    const pitchTarget = THREE.MathUtils.clamp(aimPitch, AIM_PITCH.min, AIM_PITCH.max);
-    state.pitch += THREE.MathUtils.clamp(
-      pitchTarget - state.pitch, -PITCH_RATE * dt, PITCH_RATE * dt
-    );
-
-    apply();
+    // --- turret chases the crosshair point within its own limits ----------
+    if (Math.hypot(_fwd.x, _fwd.z) > 0.15) {
+      state.heading = Math.atan2(-_fwd.z, _fwd.x);
+    }
+    if (state.upright) {
+      const relTarget = aimWorldYaw - state.heading;
+      const yawErr = Math.atan2(
+        Math.sin(relTarget - state.turretYaw),
+        Math.cos(relTarget - state.turretYaw)
+      );
+      state.turretYaw += THREE.MathUtils.clamp(yawErr, -TURRET_RATE * dt, TURRET_RATE * dt);
+      state.turretYaw = Math.atan2(Math.sin(state.turretYaw), Math.cos(state.turretYaw));
+      const pt = THREE.MathUtils.clamp(aimPitch, AIM_PITCH.min, AIM_PITCH.max);
+      state.pitch += THREE.MathUtils.clamp(pt - state.pitch, -PITCH_RATE * dt, PITCH_RATE * dt);
+    }
+    model.turret.rotation.y = state.turretYaw;
+    model.pitchGroup.rotation.z = state.pitch;
 
     // --- treads (counter-rotate on pivot turns) ---
-    const sR = state.v + state.omega * SPEC.halfTrack;
-    const sL = state.v - state.omega * SPEC.halfTrack;
-    model.updateTreads(dt, sL, sR);
+    const av = body.angularVelocity;
+    const yawRate = av.x * _up.x + av.y * _up.y + av.z * _up.z;
+    model.updateTreads(dt, state.v - yawRate * SPEC.halfTrack, state.v + yawRate * SPEC.halfTrack);
   }
 
-  return {
-    state,
-    update,
-    reset,
-    applyRecoil,
-  };
+  // Post-physics: pull the solved transform onto the visual model
+  function postStep() {
+    syncModel();
+  }
+
+  return { state, body, update, postStep, reset, applyRecoil };
 }

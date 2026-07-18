@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { heightAt, ARENA } from './map.js';
 
 export const BULLET = {
-  speed: 115, // 2.5x the old 46
+  speed: 172, // 2.5x the old 46, then +50% more
   life: 1.8,
-  damage: 100,
+  damage: 200,
 };
 
 export function createBullets(scene, fx) {
@@ -43,8 +43,11 @@ export function createBullets(scene, fx) {
     });
   }
 
-  // targets: array of units with { alive, model } — hits call onHit(unit, pos)
-  function update(dt, targets, onHit, onEnv) {
+  const DEFAULT_ENV = { groundAt: heightAt, half: ARENA.half - 0.4, solidAt: null };
+
+  // targets: array of units with { alive, model } — hits call onHit(unit, pos).
+  // env: { groundAt(x,z), half, solidAt(p) } — the world the shells fly in.
+  function update(dt, targets, onHit, onEnv, env = DEFAULT_ENV) {
     for (let i = active.length - 1; i >= 0; i--) {
       const b = active[i];
       b.life -= dt;
@@ -57,10 +60,11 @@ export function createBullets(scene, fx) {
       let done = b.life <= 0;
 
       if (!done && (
-        Math.abs(p.x) > ARENA.half - 0.4 ||
-        Math.abs(p.z) > ARENA.half - 0.4 ||
-        p.y <= heightAt(p.x, p.z) ||
-        p.y > 80
+        Math.abs(p.x) > env.half ||
+        Math.abs(p.z) > env.half ||
+        p.y <= env.groundAt(p.x, p.z) ||
+        p.y > 80 ||
+        (env.solidAt && env.solidAt(p))
       )) {
         onEnv(p);
         done = true;
@@ -93,5 +97,16 @@ export function createBullets(scene, fx) {
     active.length = 0;
   }
 
-  return { fire, update, clear };
+  // Render one shell far below the arena during the menu so its shader
+  // compiles before the first real shot
+  function prewarm() {
+    const m = getMesh();
+    m.position.set(0, -160, 0);
+    setTimeout(() => {
+      scene.remove(m);
+      pool.push(m);
+    }, 400);
+  }
+
+  return { fire, update, clear, prewarm };
 }

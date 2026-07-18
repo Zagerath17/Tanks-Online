@@ -26,6 +26,7 @@ export function createMenu(handlers) {
     show('scr-custom');
   });
   el('btn-settings').addEventListener('click', () => {}); // ignored for now
+  el('btn-editor').addEventListener('click', () => handlers.onEditor());
 
   // --- play (placeholders — modes do nothing yet) ---
   for (const id of ['btn-tdm', 'btn-ffa', 'btn-ctf']) {

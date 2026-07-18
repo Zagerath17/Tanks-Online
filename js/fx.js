@@ -21,7 +21,29 @@ export function createFx(scene) {
   const flashTex = makePuffTexture(128, 'rgba(255,255,255,1)', 'rgba(255,255,255,0.8)');
 
   const particles = [];
-  const lights = [];
+
+  // Fixed pool of point lights that live in the scene permanently at zero
+  // intensity. Adding/removing lights forces three.js to recompile every
+  // shader — that was the first-shot freeze. Reusing these never does.
+  const lightPool = [];
+  for (let i = 0; i < 4; i++) {
+    const l = new THREE.PointLight(0xffffff, 0, 16, 2);
+    l.position.set(0, -200, 0);
+    scene.add(l);
+    lightPool.push({ l, life: 0, maxLife: 1, intensity: 0 });
+  }
+
+  function flashLight(pos, { color = 0xffb45e, intensity = 30, life = 0.09, distance = 16 } = {}) {
+    let slot = lightPool.find((s) => s.life <= 0);
+    if (!slot) slot = lightPool[0];
+    slot.l.color.set(color);
+    slot.l.distance = distance;
+    slot.l.position.copy(pos);
+    slot.life = life;
+    slot.maxLife = life;
+    slot.intensity = intensity;
+    slot.l.intensity = intensity;
+  }
 
   function spawn({
     pos, vel = null, life = 1, scale = 1, grow = 0, color = 0xffffff,
@@ -45,13 +67,6 @@ export function createFx(scene) {
       life, maxLife: life, grow, gravity, drag,
       baseOpacity: opacity,
     });
-  }
-
-  function flashLight(pos, { color = 0xffb45e, intensity = 30, life = 0.09, distance = 16 } = {}) {
-    const l = new THREE.PointLight(color, intensity, distance, 2);
-    l.position.copy(pos);
-    scene.add(l);
-    lights.push({ l, life, maxLife: life, intensity });
   }
 
   // ---- effect recipes ------------------------------------------------------
@@ -156,6 +171,16 @@ export function createFx(scene) {
     flashLight(pos, { intensity: 90, distance: 34, life: 0.16, color: 0xffa050 });
   }
 
+  // Compile every material variant during the menu, far below the arena, so
+  // nothing hitches the first time an effect appears in a match.
+  function prewarm() {
+    const p = new THREE.Vector3(0, -160, 0);
+    spawn({ pos: p, life: 0.1, scale: 0.3, color: 0x888888, opacity: 0.2 });
+    spawn({ pos: p, life: 0.1, scale: 0.3, color: 0x888888, opacity: 0.2, additive: true });
+    bulletTrail(p.clone());
+    flashLight(p, { intensity: 0.01, life: 0.08 });
+  }
+
   // ---- per-frame update ----------------------------------------------------
 
   function update(dt) {
@@ -178,17 +203,13 @@ export function createFx(scene) {
       p.mat.opacity = p.baseOpacity * (p.life / p.maxLife);
     }
 
-    for (let i = lights.length - 1; i >= 0; i--) {
-      const f = lights[i];
-      f.life -= dt;
-      if (f.life <= 0) {
-        scene.remove(f.l);
-        lights.splice(i, 1);
-        continue;
+    for (const slot of lightPool) {
+      if (slot.life > 0) {
+        slot.life -= dt;
+        slot.l.intensity = slot.life <= 0 ? 0 : slot.intensity * (slot.life / slot.maxLife);
       }
-      f.l.intensity = f.intensity * (f.life / f.maxLife);
     }
   }
 
-  return { muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, impact, explosion, update };
+  return { muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, impact, explosion, prewarm, update };
 }

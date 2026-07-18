@@ -5,15 +5,20 @@ import { createPlayerController } from './player.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
-import { readInput } from './controls.js';
+import { readInput, readFly } from './controls.js';
 import { createMenu } from './menu.js';
 import { createRemoteManager } from './remote.js';
+import { createPhysics } from './physics.js';
+import { createEditor } from './editor.js';
+import { createColorWheel } from './colorwheel.js';
 import * as net from './net.js';
 
 const FIRE_INTERVAL = 2.5;
 const YAW_SENS = 0.0032;
 const PITCH_SENS = 0.002;
-const CAM_PITCH_LIM = 1.35; // the view goes (almost) anywhere vertically now
+const CAM_PITCH_LIM = 1.35;
+const FLY_SPEED = 26;
+const EDITOR_SPAWN = { x: 0, z: -14, heading: Math.PI / 2, y: 0 };
 
 // ---------------------------------------------------------------------------
 // Renderer + scene
@@ -59,17 +64,24 @@ const SUN_OFFSET = new THREE.Vector3(28, 42, 18);
 // ---------------------------------------------------------------------------
 // World + systems
 // ---------------------------------------------------------------------------
-createArena(scene);
+const arenaGroup = createArena(scene);
+const physics = createPhysics();
 const fx = createFx(scene);
 const audio = createAudio(camera, scene);
 const bullets = createBullets(scene, fx);
-const remote = createRemoteManager({ scene, fx, audio });
+const remote = createRemoteManager({ scene, fx, audio, physics });
+const editor = createEditor({ scene, physics });
+
+// compile every shader / effect during the menu so the first shot in a
+// match never hitches
+fx.prewarm();
+bullets.prewarm();
 
 // Local player
 const playerModel = createTankModel();
 playerModel.root.visible = false; // hidden until a match starts
 scene.add(playerModel.root);
-const player = createPlayerController(playerModel);
+const player = createPlayerController(playerModel, physics);
 
 const local = {
   id: net.getMyId(),
@@ -91,9 +103,22 @@ const engine = audio.engineLoop(playerModel.root);
 // ---------------------------------------------------------------------------
 // Phase + lobby bookkeeping
 // ---------------------------------------------------------------------------
-let phase = 'menu'; // 'menu' | 'lobby' | 'playing'
+let phase = 'menu'; // 'menu' | 'lobby' | 'playing' | 'editor'
+let editorMode = 'drive'; // 'drive' | 'fly'
 let lobbyPlayers = {}; // pid -> latest node value (stub or full state)
 let stateAcc = 0;
+
+function groundYAt(x, z) {
+  return phase === 'editor' ? 0 : heightAt(x, z);
+}
+
+// bullet environments: the arena vs the editor's flat build ground
+const ENV_ARENA = { groundAt: heightAt, half: ARENA.half - 0.4, solidAt: null };
+const ENV_EDITOR = {
+  groundAt: () => 0,
+  half: editor.boundsHalf,
+  solidAt: (p) => editor.solidAt(p),
+};
 
 // ---------------------------------------------------------------------------
 // HUD
@@ -105,6 +130,7 @@ const elHpNum = document.getElementById('hpnum');
 const elReload = document.getElementById('reload');
 const elHint = document.getElementById('lockhint');
 const elDeath = document.getElementById('deathmsg');
+const elExit = document.getElementById('editor-exit');
 let fpsTime = 0;
 let fpsFrames = 0;
 
@@ -147,6 +173,7 @@ const menu = createMenu({
   },
   onStart: () => net.startGame(),
   onLeave: () => leaveToMenu(),
+  onEditor: () => enterEditor(),
 });
 
 function refreshLobbyUi() {
@@ -204,6 +231,250 @@ function leaveToMenu() {
 }
 
 // ---------------------------------------------------------------------------
+// Editor mode
+// ---------------------------------------------------------------------------
+function enterEditor() {
+  phase = 'editor';
+  editorMode = 'drive';
+  document.body.classList.add('editor');
+  menu.hideAll();
+  arenaGroup.visible = false;
+  physics.setArenaActive(false);
+  editor.enter();
+  spawnLocal(editorSpawnPoint());
+}
+
+function leaveEditor() {
+  editor.exit();
+  arenaGroup.visible = true;
+  physics.setArenaActive(true);
+  document.body.classList.remove('editor');
+  bullets.clear();
+  phase = 'menu';
+  local.alive = false;
+  playerModel.root.visible = false;
+  playerModel.setCharred(false);
+  elDeath.style.display = 'none';
+  if (document.pointerLockElement) document.exitPointerLock();
+  menu.show('scr-main');
+}
+
+elExit.addEventListener('click', () => {
+  if (phase === 'editor') leaveEditor();
+});
+
+// ---------------------------------------------------------------------------
+// Map save / load toolbar — this is the map-making pipeline for the game
+// ---------------------------------------------------------------------------
+const elMapName = document.getElementById('map-name');
+const elMapList = document.getElementById('map-list');
+const elMapStatus = document.getElementById('map-status');
+const elMapFile = document.getElementById('map-file');
+const MAP_PREFIX = 'tankmap:';
+let statusTimer = 0;
+
+function mapStatus(msg) {
+  elMapStatus.textContent = msg;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { elMapStatus.textContent = ''; }, 2800);
+}
+
+function cleanName(raw, fallback) {
+  const name = String(raw || '').trim().replace(/[^\w\- ]/g, '').slice(0, 24);
+  return name || fallback;
+}
+
+function refreshMapList(selectName) {
+  const names = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(MAP_PREFIX)) names.push(k.slice(MAP_PREFIX.length));
+    }
+  } catch { /* storage unavailable */ }
+  names.sort();
+  elMapList.innerHTML = names.length
+    ? names.map((n) => `<option value="${n}">${n}</option>`).join('')
+    : '<option value="">no saved maps</option>';
+  if (selectName && names.includes(selectName)) elMapList.value = selectName;
+}
+refreshMapList();
+
+function currentMapData(name) {
+  return { name, ...editor.serialize() };
+}
+
+document.getElementById('map-save').addEventListener('click', () => {
+  const name = cleanName(elMapName.value, 'untitled');
+  elMapName.value = name;
+  try {
+    localStorage.setItem(MAP_PREFIX + name, JSON.stringify(currentMapData(name)));
+    refreshMapList(name);
+    mapStatus(`saved "${name}"`);
+  } catch {
+    mapStatus('storage unavailable');
+  }
+});
+
+document.getElementById('map-load').addEventListener('click', () => {
+  const name = elMapList.value;
+  if (!name) { mapStatus('nothing to load'); return; }
+  if (!confirm(`Load "${name}"? Unsaved changes will be lost.`)) return;
+  try {
+    const data = JSON.parse(localStorage.getItem(MAP_PREFIX + name));
+    const n = editor.loadData(data);
+    elMapName.value = name;
+    mapStatus(`loaded "${name}" \u00b7 ${n} pieces`);
+  } catch {
+    mapStatus('could not load that map');
+  }
+});
+
+document.getElementById('map-export').addEventListener('click', () => {
+  const name = cleanName(elMapName.value, 'map');
+  const blob = new Blob(
+    [JSON.stringify(currentMapData(name), null, 2)],
+    { type: 'application/json' }
+  );
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${name}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  mapStatus(`exported ${name}.json`);
+});
+
+document.getElementById('map-import').addEventListener('click', () => elMapFile.click());
+
+elMapFile.addEventListener('change', () => {
+  const file = elMapFile.files && elMapFile.files[0];
+  elMapFile.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!confirm(`Import "${file.name}"? Unsaved changes will be lost.`)) return;
+      const n = editor.loadData(data);
+      elMapName.value = cleanName(data.name || file.name.replace(/\.json$/i, ''), 'imported');
+      mapStatus(`imported \u00b7 ${n} pieces`);
+    } catch {
+      mapStatus('not a valid map file');
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('map-clear').addEventListener('click', () => {
+  if (!confirm('Clear the whole board?')) return;
+  editor.clearAll();
+  mapStatus('cleared');
+});
+
+// ---- decal brush: shape buttons + colour wheel popover --------------------
+const decalShapeBtns = {
+  rect: document.getElementById('decal-rect'),
+  circle: document.getElementById('decal-circle'),
+  triangle: document.getElementById('decal-triangle'),
+};
+function selectDecalShape(shape) {
+  editor.setDecalShape(shape);
+  for (const [s, btn] of Object.entries(decalShapeBtns)) {
+    btn.classList.toggle('on', s === shape);
+  }
+}
+for (const [shape, btn] of Object.entries(decalShapeBtns)) {
+  btn.addEventListener('click', () => selectDecalShape(shape));
+}
+selectDecalShape('rect');
+
+const wheelPop = document.getElementById('wheel-pop');
+const decalSwatch = document.getElementById('decal-swatch');
+createColorWheel(
+  document.getElementById('wheel-canvas'),
+  document.getElementById('wheel-value'),
+  decalSwatch,
+  (hex) => editor.setDecalColor(hex)
+);
+decalSwatch.addEventListener('click', (e) => {
+  e.stopPropagation();
+  wheelPop.classList.toggle('hidden');
+});
+document.addEventListener('mousedown', (e) => {
+  if (!wheelPop.classList.contains('hidden') &&
+      !wheelPop.contains(e.target) && e.target !== decalSwatch) {
+    wheelPop.classList.add('hidden');
+  }
+});
+
+
+// fly cam
+let flyYaw = 0;
+let flyPitch = 0;
+const flyPos = new THREE.Vector3();
+const _flyDir = new THREE.Vector3();
+
+function toggleFly() {
+  if (editorMode === 'drive') {
+    editorMode = 'fly';
+    flyPos.copy(camera.position);
+    flyYaw = camYaw;
+    flyPitch = camPitch;
+  } else {
+    editorMode = 'drive';
+    editor.hideGhost();
+    viewYaw = flyYaw;
+    viewPitch = THREE.MathUtils.clamp(flyPitch, -CAM_PITCH_LIM, CAM_PITCH_LIM);
+    camYaw = viewYaw;
+    camPitch = viewPitch;
+    camPos.copy(camera.position);
+  }
+}
+
+function updateFly(dt) {
+  const f = readFly();
+  const cy = Math.cos(flyYaw);
+  const sy = -Math.sin(flyYaw);
+  const cp = Math.cos(flyPitch);
+  const sp = Math.sin(flyPitch);
+  _flyDir.set(cp * cy, sp, cp * sy);
+  // move along the view, strafe on the horizontal right, rise on world up
+  flyPos.x += (_flyDir.x * f.fwd + Math.sin(flyYaw) * f.strafe) * FLY_SPEED * dt;
+  flyPos.y += (_flyDir.y * f.fwd + f.up) * FLY_SPEED * dt;
+  flyPos.z += (_flyDir.z * f.fwd + Math.cos(flyYaw) * f.strafe) * FLY_SPEED * dt;
+  flyPos.y = Math.max(0.6, Math.min(90, flyPos.y));
+  camera.position.copy(flyPos);
+  _lookAt.copy(flyPos).add(_flyDir);
+  camera.lookAt(_lookAt);
+}
+
+window.addEventListener('keydown', (e) => {
+  if (phase !== 'editor') return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+  if (e.code === 'KeyF') {
+    toggleFly();
+    return;
+  }
+  if (editorMode !== 'fly' || document.pointerLockElement !== canvas) return;
+  if (e.code === 'Digit1') editor.setTool('wall');
+  else if (e.code === 'Digit2') editor.setTool('platform');
+  else if (e.code === 'Digit3') editor.setTool('slope');
+  else if (e.code === 'Digit4') editor.setTool('spawn');
+  else if (e.code === 'Digit5') editor.setTool('decal');
+  else if (e.code === 'KeyR') editor.rotateGhost();
+  else if (e.code === 'KeyX') editor.deleteAtCursor();
+});
+
+window.addEventListener('wheel', (e) => {
+  if (phase !== 'editor' || editorMode !== 'fly') return;
+  if (document.pointerLockElement !== canvas) return;
+  e.preventDefault();
+  const dir = e.deltaY < 0 ? 1 : -1;
+  editor.adjust(e.ctrlKey ? 'h' : e.shiftKey ? 'w' : 'l', dir);
+}, { passive: false });
+
+// ---------------------------------------------------------------------------
 // Spawning: even spread at match start, farthest-from-everyone on respawn
 // ---------------------------------------------------------------------------
 function startSlot() {
@@ -231,6 +502,12 @@ function pickFarSlot() {
   return best;
 }
 
+function editorSpawnPoint() {
+  const spawns = editor.getSpawns();
+  if (!spawns.length) return EDITOR_SPAWN;
+  return spawns[Math.floor(Math.random() * spawns.length)];
+}
+
 function spawnLocal(slot) {
   player.reset(slot);
   playerModel.root.visible = true;
@@ -247,7 +524,7 @@ function spawnLocal(slot) {
   camPitch = 0;
   updateHpHud();
   elDeath.style.display = 'none';
-  pushState();
+  if (phase === 'playing') pushState();
 }
 
 function beginMatch() {
@@ -263,13 +540,15 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 
 function pushState() {
   const p = playerModel.root.position;
+  const q = playerModel.root.quaternion;
   net.sendState({
     x: r3(p.x),
     y: r3(p.y),
     z: r3(p.z),
-    h: r3(player.state.heading),
-    gp: r3(player.state.groundPitch),
-    gr: r3(player.state.groundRoll),
+    qx: r3(q.x),
+    qy: r3(q.y),
+    qz: r3(q.z),
+    qw: r3(q.w),
     ty: r3(player.state.turretYaw),
     tp: r3(player.state.pitch),
     hp: Math.max(0, Math.round(local.hp)),
@@ -279,18 +558,24 @@ function pushState() {
 }
 
 // ---------------------------------------------------------------------------
-// Mouse aim: camera IS the crosshair; the view goes anywhere, the turret
-// does its best within its own limits
+// Mouse aim: camera IS the crosshair
 // ---------------------------------------------------------------------------
 let viewYaw = 0;
 let viewPitch = 0;
+let lastAimYaw = 0;
+let lastAimPitch = 0;
 
 const canvas = renderer.domElement;
 
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button !== 0 || phase !== 'playing') return;
+  if (e.button !== 0) return;
+  if (phase !== 'playing' && phase !== 'editor') return;
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
+    return;
+  }
+  if (phase === 'editor' && editorMode === 'fly') {
+    editor.place();
     return;
   }
   tryPlayerFire();
@@ -302,7 +587,12 @@ document.addEventListener('pointerlockchange', () => {
 
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  if (phase !== 'playing' || !local.alive) return;
+  if (phase === 'editor' && editorMode === 'fly') {
+    flyYaw -= e.movementX * YAW_SENS;
+    flyPitch = THREE.MathUtils.clamp(flyPitch - e.movementY * PITCH_SENS, -1.5, 1.5);
+    return;
+  }
+  if ((phase !== 'playing' && phase !== 'editor') || !local.alive) return;
   viewYaw -= e.movementX * YAW_SENS;
   viewPitch = THREE.MathUtils.clamp(
     viewPitch - e.movementY * PITCH_SENS, -CAM_PITCH_LIM, CAM_PITCH_LIM
@@ -333,12 +623,14 @@ function tryPlayerFire() {
   bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone());
   fx.muzzleFlash(_fpos.clone(), _fdir.clone());
   audio.playAt('shot', _fpos, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
-  player.applyRecoil();
+  player.applyRecoil(_fdir);
   camKick = 0.55;
-  net.sendShot({
-    x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
-    dx: r3(_fdir.x), dy: r3(_fdir.y), dz: r3(_fdir.z),
-  });
+  if (phase === 'playing') {
+    net.sendShot({
+      x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
+      dx: r3(_fdir.x), dy: r3(_fdir.y), dz: r3(_fdir.z),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +642,7 @@ function localDamage(amount, at) {
   audio.playAt('hit', at, { volume: 0.7, rate: 0.92 + Math.random() * 0.16 });
   updateHpHud();
   if (local.hp <= 0) localDie();
-  else pushState();
+  else if (phase === 'playing') pushState();
 }
 
 function localDie() {
@@ -367,7 +659,7 @@ function localDie() {
   playerModel.pitchGroup.rotation.z = -0.06;
   updateHpHud();
   elDeath.style.display = '';
-  pushState();
+  if (phase === 'playing') pushState();
 }
 
 function updateLocalUnit(dt) {
@@ -386,30 +678,20 @@ function updateLocalUnit(dt) {
         fx.barrelSmoke(_fpos, _fdir);
       }
     }
-  } else if (phase === 'playing' && playerModel.root.visible) {
+
+    // fell off the world (editor edges) — quiet reset
+    if (playerModel.root.position.y < -40) {
+      spawnLocal(phase === 'editor' ? editorSpawnPoint() : pickFarSlot());
+    }
+  } else if (playerModel.root.visible) {
     local.deadT -= dt;
     local.huskAcc += dt;
     while (local.huskAcc > 0.13) {
       local.huskAcc -= 0.13;
       fx.huskSmoke(playerModel.root.position);
     }
-    if (local.deadT <= 0) spawnLocal(pickFarSlot());
-  }
-}
-
-// Push the local hull out of any remote hull (their client moves their own)
-function resolveTankCollisions() {
-  const a = playerModel.root.position;
-  for (const ru of remote.targets()) {
-    if (!ru.model.root.visible) continue;
-    const dx = a.x - ru.cur.x;
-    const dz = a.z - ru.cur.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 3.8 && d > 1e-4 && Math.abs(a.y - ru.cur.y) < 1.8) {
-      const push = 3.8 - d;
-      a.x += (dx / d) * push;
-      a.z += (dz / d) * push;
-      player.state.v *= 0.5;
+    if (local.deadT <= 0) {
+      spawnLocal(phase === 'editor' ? editorSpawnPoint() : pickFarSlot());
     }
   }
 }
@@ -439,7 +721,6 @@ function updateCamera(dt) {
   const sp = Math.sin(camPitch);
   const tp = playerModel.root.position;
 
-  // Far focus point along the aim direction, from turret height
   const D = 45;
   _lookAt.set(
     tp.x + cp * cy * D,
@@ -448,10 +729,9 @@ function updateCamera(dt) {
   );
 
   const dist = 10.5 + camKick * 2.4;
-  // Aiming down lifts the camera, aiming up drops it toward the deck
   let camY = tp.y + 5.6 - sp * 9;
   _desired.set(tp.x - cy * dist, 0, tp.z - sy * dist);
-  camY = Math.max(camY, heightAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
+  camY = Math.max(camY, groundYAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
   _desired.y = camY;
 
   camPos.lerp(_desired, 1 - Math.exp(-9 * dt));
@@ -468,8 +748,8 @@ function updateIdleCamera(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Aim: march the crosshair ray into the world — ground, wall, or enemy armor.
-// The turret converges on that exact point (within its own limits).
+// Aim: march the crosshair ray into the world — ground, wall, placed piece,
+// or enemy armor. The turret converges on that exact point.
 // ---------------------------------------------------------------------------
 const _rayDir = new THREE.Vector3();
 const _rayPt = new THREE.Vector3();
@@ -478,20 +758,23 @@ const _pivot = new THREE.Vector3();
 
 function aimRaycast(out) {
   _rayDir.copy(_lookAt).sub(camera.position).normalize();
-  const targets = remote.targets();
+  const inEditor = phase === 'editor';
+  const half = inEditor ? editor.boundsHalf : ARENA.half;
+  const targets = inEditor ? [] : remote.targets();
   for (let d = 2; d < 170; d += 0.6) {
     _rayPt.copy(camera.position).addScaledVector(_rayDir, d);
     if (
-      Math.abs(_rayPt.x) > ARENA.half ||
-      Math.abs(_rayPt.z) > ARENA.half ||
-      _rayPt.y <= heightAt(_rayPt.x, _rayPt.z) ||
-      _rayPt.y > 90
+      Math.abs(_rayPt.x) > half ||
+      Math.abs(_rayPt.z) > half ||
+      _rayPt.y <= groundYAt(_rayPt.x, _rayPt.z) ||
+      _rayPt.y > 90 ||
+      (inEditor && editor.solidAt(_rayPt))
     ) break;
     let hit = false;
     for (const ru of targets) {
       if (!ru.alive || !ru.model.root.visible) continue;
-      const ddx = _rayPt.x - ru.cur.x;
-      const ddz = _rayPt.z - ru.cur.z;
+      const ddx = _rayPt.x - ru.pos.x;
+      const ddz = _rayPt.z - ru.pos.z;
       if (ddx * ddx + ddz * ddz < 30 && ru.model.hitTest(_rayPt)) {
         hit = true;
         break;
@@ -509,31 +792,44 @@ const clock = new THREE.Clock();
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
+  const inGame = phase === 'playing' || phase === 'editor';
 
-  if (phase === 'playing') {
+  if (inGame) {
     const input = readInput();
+    const flying = phase === 'editor' && editorMode === 'fly';
 
-    aimRaycast(_aimPoint);
-    playerModel.pitchGroup.getWorldPosition(_pivot);
-    const adx = _aimPoint.x - _pivot.x;
-    const adz = _aimPoint.z - _pivot.z;
-    const aimWorldYaw = Math.atan2(-adz, adx);
-    const aimPitch = Math.atan2(
-      _aimPoint.y - _pivot.y,
-      Math.max(1, Math.hypot(adx, adz))
-    );
+    if (phase === 'playing') remote.update(dt); // interpolate + kinematic colliders
 
-    if (local.alive) {
-      player.update(dt, input, aimWorldYaw, aimPitch);
-      resolveTankCollisions();
+    if (flying) {
+      updateFly(dt);
+      editor.updateGhost(camera);
+      if (local.alive) player.update(dt, { throttle: 0, turn: 0 }, lastAimYaw, lastAimPitch);
+    } else {
+      aimRaycast(_aimPoint);
+      playerModel.pitchGroup.getWorldPosition(_pivot);
+      const adx = _aimPoint.x - _pivot.x;
+      const adz = _aimPoint.z - _pivot.z;
+      lastAimYaw = Math.atan2(-adz, adx);
+      lastAimPitch = Math.atan2(
+        _aimPoint.y - _pivot.y,
+        Math.max(1, Math.hypot(adx, adz))
+      );
+      if (local.alive) player.update(dt, input, lastAimYaw, lastAimPitch);
+    }
+
+    physics.step(dt);
+    player.postStep();
+
+    // stuck upside down long enough -> the crew bails and it cooks off
+    if (local.alive && player.state.flipT > 4) {
+      localDie();
     }
 
     updateLocalUnit(dt);
-    remote.update(dt);
 
     bullets.update(
       dt,
-      [local, ...remote.targets()],
+      phase === 'playing' ? [local, ...remote.targets()] : [local],
       (unit, pos) => {
         fx.impact(pos.clone());
         if (unit === local) localDamage(BULLET.damage, pos);
@@ -541,25 +837,29 @@ renderer.setAnimationLoop(() => {
       },
       (pos) => {
         fx.impact(pos.clone());
-      }
+      },
+      phase === 'editor' ? ENV_EDITOR : ENV_ARENA
     );
 
     fx.update(dt);
-    updateCamera(dt);
+    if (!flying) updateCamera(dt);
 
-    sun.position.copy(playerModel.root.position).add(SUN_OFFSET);
-    sun.target.position.copy(playerModel.root.position);
+    const sunAnchor = flying ? camera.position : playerModel.root.position;
+    sun.position.copy(sunAnchor).add(SUN_OFFSET);
+    sun.target.position.copy(sunAnchor);
 
     const speedFrac = Math.abs(player.state.v) / SPEC.maxForward;
     engine.update(
       0.72 + speedFrac * 0.65,
-      local.alive ? 0.16 + speedFrac * 0.14 : 0
+      local.alive && !flying ? 0.16 + speedFrac * 0.14 : 0
     );
 
-    stateAcc += dt;
-    if (stateAcc > 1 / 12) {
-      stateAcc = 0;
-      pushState();
+    if (phase === 'playing') {
+      stateAcc += dt;
+      if (stateAcc > 1 / 12) {
+        stateAcc = 0;
+        pushState();
+      }
     }
 
     elSpeed.textContent = String(Math.round(Math.abs(player.state.v) * 8));
@@ -568,7 +868,6 @@ renderer.setAnimationLoop(() => {
       elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(local.deadT))}`;
     }
   } else {
-    // menu / lobby: slow orbit over the arena
     updateIdleCamera(dt);
     fx.update(dt);
     remote.update(dt);

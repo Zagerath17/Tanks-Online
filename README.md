@@ -1,10 +1,18 @@
-# Tank Remake — prototype 0.5
+# Tank Remake — prototype 0.9
 
-A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
+A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
 ## Menu
 
 Play holds the future modes (TDM / FFA / CTF — placeholders for now), Settings is a stub, and **Custom** is the working mode: online multiplayer on the arena map for up to 12 players. Create a lobby to get a 4-digit code, or join with a code someone gives you. Only the host can start the match.
+
+## Editor
+
+The Editor button drops your tank onto a big flat build ground — this is the map-making pipeline for the game. Drive and shoot exactly like a match, or press **F** for the free build cam: WASD flies (Space/Shift for up and down), and the crosshair becomes your placement cursor. **1 / 2 / 3 / 4** pick wall, platform, slope, or **spawn point**; a green ghost previews the piece on whatever surface you're pointing at (they stack, and spawns can sit on top of platforms). **5** is the decal tool — flat rectangular, circular, or triangular markers you paint onto any surface. **Scroll** adjusts length/size, **Shift+Scroll** the second dimension, **Ctrl+Scroll** height — or slope angle (5°–45°) when the slope tool is out. **R** rotates in 15° steps (a spawn's arrow is the direction tanks will face; for decals it spins them in place), **LMB** places, **X** deletes the piece — or decal — under the crosshair.
+
+Pick a decal's shape and colour from the toolbar: the three shape buttons choose rect / circle / triangle, and the colour swatch opens a full-spectrum HSV wheel (hue by angle, saturation by radius, with a brightness slider beside it). Decals project onto whatever face you point at — walls, platform tops, the sloped face of a ramp — conforming to that surface, and they stick to their piece, so deleting the piece takes its decals with it. Everything solid is fully real — the tank climbs it, shells hit it — and once you've placed spawn points, dying or falling off the world respawns you on one of them, so you can playtest spawn placement immediately.
+
+The toolbar along the top saves maps: name the map, **save** it in the browser, **load** any saved map from the list, or **export** it as a `.json` file — that file is the game's map format, and **import** reads one back in. Browser saves survive reloads; exported files are the ones to keep and share.
 
 ## Multiplayer setup (one time, ~2 minutes)
 
@@ -34,7 +42,9 @@ W / S drive and reverse, A / D pivot the hull. Click the canvas to take aim: the
 
 ## The match
 
-Everyone drives the same tank: 1000 HP, 100 damage per shell. Projectiles are fast black darts that leave a thin, quickly fading smoke trail. Players spawn spread out on a ring of 12 pads around the central platform — at match start and on every respawn, the game picks the pad farthest from everyone still alive. Death is an explosion into a black smoking husk for 5 seconds, then you're back. Hulls are physics bodies: they climb the ramps, tip and fall off edges under gravity, collide with each other, and use accurate per-shape hitboxes.
+Everyone drives the same tank: 1000 HP, 200 damage per shell — five hits and you're scrap. Projectiles are very fast black darts that leave a thin, quickly fading smoke trail. Players spawn spread out on a ring of 12 pads around the central platform — at match start and on every respawn, the game picks the pad farthest from everyone still alive. Death is an explosion into a black smoking husk for 5 seconds, then you're back.
+
+Tanks are real rigid bodies (cannon-es): no forced leveling — momentum carries you off edges, you can tumble, land on your side, and flip over completely. A flipped tank has no drive; stay upside down for 4 seconds and the crew bails — it cooks off and you respawn. Firing recoil is a genuine physics impulse, tank-vs-tank contact is solved by the engine, and everything precompiles during the menu so the first shot of a match doesn't hitch.
 
 ## Run it locally
 
@@ -58,7 +68,7 @@ Two browser windows (or a window + a phone on the same deploy) make a quick two-
 
 ## Structure
 
-`index.html` holds the menu markup and HUD; `css/style.css` styles both; `js/main.js` owns phases (menu → lobby → match), the local tank, combat, and the loop; `js/net.js` is the Firebase lobby/state/shot transport; `js/remote.js` mirrors the other players' tanks; `js/menu.js` drives the screens; `js/player.js` is local physics and turret traverse; `js/tank.js` the model, treads, and hitboxes; `js/bullets.js`, `js/fx.js`, `js/audio.js` shells, particles, positional sound; `js/map.js` the arena, platform, spawn ring, and terrain heights; `js/firebase-config.js` your credentials.
+`index.html` holds the menu markup and HUD; `css/style.css` styles both; `js/main.js` owns phases (menu → lobby → match), the local tank, combat, and the loop; `js/net.js` is the Firebase lobby/state/shot transport; `js/remote.js` mirrors the other players' tanks; `js/menu.js` drives the screens; `js/player.js` is local physics and turret traverse; `js/tank.js` the model, treads, and hitboxes; `js/bullets.js`, `js/fx.js`, `js/audio.js` shells, particles, positional sound; `js/map.js` the arena, platform, spawn ring, and terrain heights; `js/physics.js` the cannon-es world and colliders; `js/editor.js` the build mode; `js/firebase-config.js` your credentials.
 
 ## Roadmap ideas
 

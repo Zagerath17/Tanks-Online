@@ -388,3 +388,113 @@ kbd {
 /* in-game HUD hidden until a match is running */
 #gamehud { display: none; }
 body.ingame #gamehud { display: block; }
+
+/* ---- editor (v0.7) ---------------------------------------------------- */
+
+#editorhud { display: none; }
+body.editor #editorhud { display: block; }
+body.editor #drivehud { display: none; }
+
+#editorbar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgba(20, 23, 27, 0.85);
+  border: 1px solid rgba(200, 217, 174, 0.35);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+}
+
+body.editor #editorbar { display: flex; }
+
+#editorbar button {
+  padding: 6px 10px;
+  background: rgba(58, 68, 54, 0.85);
+  color: var(--sand-100);
+  border: 1px solid rgba(200, 217, 174, 0.4);
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#editorbar button:hover { background: rgba(93, 112, 80, 0.9); }
+
+#editorbar input,
+#editorbar select {
+  padding: 5px 7px;
+  background: rgba(10, 12, 14, 0.8);
+  border: 1px solid rgba(200, 217, 174, 0.35);
+  color: var(--sand-100);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+#map-name { width: 108px; }
+#map-list { max-width: 118px; }
+
+#map-status {
+  min-width: 90px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--olive-200);
+}
+
+/* the editor sandbox has no hull damage — hide the HP bar there */
+body.editor .hpwrap { display: none; }
+
+
+/* ---- decal controls + colour wheel (v0.9) ---------------------------- */
+
+#map-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 2px;
+  background: rgba(200, 217, 174, 0.25);
+}
+
+.bar-label {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.55);
+}
+
+#editorbar .shape-btn.on {
+  background: rgba(140, 175, 106, 0.95);
+  color: #14171b;
+}
+
+#decal-swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(200, 217, 174, 0.5);
+  background: #e8563a;
+  cursor: pointer;
+}
+
+#wheel-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 8px;
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(20, 23, 27, 0.96);
+  border: 1px solid rgba(200, 217, 174, 0.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+#wheel-pop.hidden { display: none; }
+
+#wheel-canvas { cursor: crosshair; touch-action: none; }
+#wheel-value { cursor: ns-resize; touch-action: none; }

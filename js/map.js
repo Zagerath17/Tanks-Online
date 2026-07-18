@@ -47,6 +47,8 @@ export function heightAt(x, z) {
 }
 
 export function createArena(scene) {
+  const group = new THREE.Group();
+  scene.add(group);
   // ---- floor -------------------------------------------------------------
   const floorTex = makeGridTexture({
     cells: 8,
@@ -66,7 +68,7 @@ export function createArena(scene) {
   );
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
-  scene.add(floor);
+  group.add(floor);
 
   // ---- central platform + ramps -----------------------------------------
   const platTex = makeGridTexture({
@@ -88,7 +90,7 @@ export function createArena(scene) {
   platform.position.y = PLATFORM.h / 2;
   platform.castShadow = true;
   platform.receiveShadow = true;
-  scene.add(platform);
+  group.add(platform);
 
   // Ramp: right-triangle profile extruded to width, vertical face against
   // the platform. Local +X points away from the platform.
@@ -123,7 +125,7 @@ export function createArena(scene) {
     );
     ramp.castShadow = true;
     ramp.receiveShadow = true;
-    scene.add(ramp);
+    group.add(ramp);
   }
 
   // ---- spawn pads: one small ring per slot -------------------------------
@@ -137,7 +139,7 @@ export function createArena(scene) {
     const pad = new THREE.Mesh(padGeo, ringMat);
     pad.rotation.x = -Math.PI / 2;
     pad.position.set(s.x, 0.02, s.z);
-    scene.add(pad);
+    group.add(pad);
   }
 
   // ---- perimeter walls ---------------------------------------------------
@@ -171,7 +173,7 @@ export function createArena(scene) {
   for (const w of walls) {
     w.castShadow = true;
     w.receiveShadow = true;
-    scene.add(w);
+    group.add(w);
   }
 
   // ---- corner pillars ----------------------------------------------------
@@ -191,7 +193,9 @@ export function createArena(scene) {
       p.position.set(sx * (ARENA.half + t / 2), 2.7, sz * (ARENA.half + t / 2));
       p.castShadow = true;
       p.receiveShadow = true;
-      scene.add(p);
+      group.add(p);
     }
   }
+
+  return group;
 }

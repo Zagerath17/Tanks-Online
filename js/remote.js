@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createTankModel } from './tank.js';
+import { MODEL_OFF_Y } from './physics.js';
 
 // Floating red HP bar above a tank (canvas sprite)
 function makeHpBar(root) {
@@ -35,14 +36,20 @@ function lerpAngle(a, b, t) {
   return a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
 }
 
-export function createRemoteManager({ scene, fx, audio }) {
+export function createRemoteManager({ scene, fx, audio, physics }) {
   const players = new Map(); // pid -> remote unit
+
+  const _tq = new THREE.Quaternion();
+  const _fwd = new THREE.Vector3();
+  const _off = new THREE.Vector3();
+  const _sm = new THREE.Vector3();
+  const _sd = new THREE.Vector3();
+  const _q2 = new THREE.Quaternion();
 
   function ensure(pid) {
     let ru = players.get(pid);
     if (ru) return ru;
     const model = createTankModel();
-    model.root.rotation.order = 'YZX';
     model.root.visible = false; // until the first full state lands
     scene.add(model.root);
     ru = {
@@ -50,9 +57,13 @@ export function createRemoteManager({ scene, fx, audio }) {
       isLocal: false,
       model,
       bar: makeHpBar(model.root),
+      body: physics.createRemoteBody(),
       alive: true,
       hp: 1000,
-      cur: { x: 0, y: 0, z: 0, h: 0, gp: 0, gr: 0, ty: 0, tp: 0 },
+      pos: new THREE.Vector3(),
+      quat: new THREE.Quaternion(),
+      ty: 0,
+      tp: 0,
       tgt: null,
       speed: 0,
       prevX: 0,
@@ -62,13 +73,23 @@ export function createRemoteManager({ scene, fx, audio }) {
       huskAcc: 0,
       recoil: 0,
     };
+    ru.body.position.set(0, -50, 0); // parked until first state
     players.set(pid, ru);
     return ru;
   }
 
+  function snapTo(ru, s) {
+    ru.pos.set(s.x, s.y, s.z);
+    ru.quat.set(s.qx, s.qy, s.qz, s.qw).normalize();
+    ru.ty = s.ty;
+    ru.tp = s.tp;
+    ru.prevX = s.x;
+    ru.prevZ = s.z;
+  }
+
   function applyState(pid, s) {
     const ru = ensure(pid);
-    if (!s || typeof s.x !== 'number') return; // lobby stub, no game state yet
+    if (!s || typeof s.x !== 'number' || typeof s.qw !== 'number') return; // lobby stub
     const wasAlive = ru.alive;
     ru.tgt = s;
     if (typeof s.hp === 'number') {
@@ -76,10 +97,7 @@ export function createRemoteManager({ scene, fx, audio }) {
       ru.bar.draw(s.hp / 1000);
     }
     if (!ru.model.root.visible) {
-      // first real state: snap into place
-      Object.assign(ru.cur, { x: s.x, y: s.y, z: s.z, h: s.h, gp: s.gp, gr: s.gr, ty: s.ty, tp: s.tp });
-      ru.prevX = s.x;
-      ru.prevZ = s.z;
+      snapTo(ru, s);
       ru.model.root.visible = true;
     }
     const aliveNow = s.al !== false;
@@ -89,7 +107,8 @@ export function createRemoteManager({ scene, fx, audio }) {
   }
 
   function dieVisual(ru) {
-    const pos = new THREE.Vector3(ru.cur.x, ru.cur.y + 1.2, ru.cur.z);
+    const pos = ru.pos.clone();
+    pos.y += 1.2;
     fx.explosion(pos);
     audio.playAt('explosion', pos, { volume: 1, ref: 14 });
     ru.model.setCharred(true);
@@ -105,15 +124,13 @@ export function createRemoteManager({ scene, fx, audio }) {
     ru.model.pitchGroup.rotation.z = 0;
     ru.bar.sprite.visible = true;
     ru.bar.draw(1);
-    // teleport to the fresh spawn — no glide across the map
-    Object.assign(ru.cur, { x: s.x, y: s.y, z: s.z, h: s.h, gp: s.gp, gr: s.gr, ty: s.ty, tp: s.tp });
-    ru.prevX = s.x;
-    ru.prevZ = s.z;
+    snapTo(ru, s); // teleport to the fresh spawn — no glide across the map
   }
 
   function removePlayer(pid) {
     const ru = players.get(pid);
     if (!ru) return;
+    physics.removeBody(ru.body);
     scene.remove(ru.model.root);
     players.delete(pid);
   }
@@ -128,40 +145,40 @@ export function createRemoteManager({ scene, fx, audio }) {
     return ru || null;
   }
 
-  const _sm = new THREE.Vector3();
-  const _sd = new THREE.Vector3();
-  const _q = new THREE.Quaternion();
-
   function update(dt) {
     for (const ru of players.values()) {
       if (!ru.tgt || !ru.model.root.visible) continue;
       const t = ru.tgt;
       const k = 1 - Math.exp(-12 * dt);
-      ru.cur.x += (t.x - ru.cur.x) * k;
-      ru.cur.y += (t.y - ru.cur.y) * k;
-      ru.cur.z += (t.z - ru.cur.z) * k;
-      ru.cur.h = lerpAngle(ru.cur.h, t.h, k);
-      ru.cur.gp += (t.gp - ru.cur.gp) * k;
-      ru.cur.gr += (t.gr - ru.cur.gr) * k;
-      ru.cur.ty = lerpAngle(ru.cur.ty, t.ty, k);
-      ru.cur.tp += (t.tp - ru.cur.tp) * k;
+
+      ru.pos.x += (t.x - ru.pos.x) * k;
+      ru.pos.y += (t.y - ru.pos.y) * k;
+      ru.pos.z += (t.z - ru.pos.z) * k;
+      _tq.set(t.qx, t.qy, t.qz, t.qw).normalize();
+      ru.quat.slerp(_tq, k);
+      ru.ty = lerpAngle(ru.ty, t.ty, k);
+      ru.tp += (t.tp - ru.tp) * k;
 
       const m = ru.model;
-      m.root.position.set(ru.cur.x, ru.cur.y, ru.cur.z);
-      m.root.rotation.y = ru.cur.h;
-      m.root.rotation.z = ru.cur.gp;
-      m.root.rotation.x = ru.cur.gr;
+      m.root.position.copy(ru.pos);
+      m.root.quaternion.copy(ru.quat);
       if (ru.alive) {
-        m.turret.rotation.y = ru.cur.ty;
-        m.pitchGroup.rotation.z = ru.cur.tp;
+        m.turret.rotation.y = ru.ty;
+        m.pitchGroup.rotation.z = ru.tp;
       }
 
+      // keep the kinematic collider under the visual
+      _off.set(0, -MODEL_OFF_Y, 0).applyQuaternion(ru.quat);
+      ru.body.position.set(ru.pos.x + _off.x, ru.pos.y + _off.y, ru.pos.z + _off.z);
+      ru.body.quaternion.set(ru.quat.x, ru.quat.y, ru.quat.z, ru.quat.w);
+
       // treads follow actual ground motion along the hull axis
-      const dx = ru.cur.x - ru.prevX;
-      const dz = ru.cur.z - ru.prevZ;
-      ru.prevX = ru.cur.x;
-      ru.prevZ = ru.cur.z;
-      const fwd = dx * Math.cos(ru.cur.h) + dz * -Math.sin(ru.cur.h);
+      const dx = ru.pos.x - ru.prevX;
+      const dz = ru.pos.z - ru.prevZ;
+      ru.prevX = ru.pos.x;
+      ru.prevZ = ru.pos.z;
+      _fwd.set(1, 0, 0).applyQuaternion(ru.quat);
+      const fwd = dx * _fwd.x + dz * _fwd.z;
       const sp = dt > 0 ? fwd / dt : 0;
       ru.speed += (sp - ru.speed) * Math.min(1, 10 * dt);
       if (ru.alive) m.updateTreads(dt, ru.speed, ru.speed);
@@ -175,8 +192,8 @@ export function createRemoteManager({ scene, fx, audio }) {
         while (ru.smokeAcc > 0.07) {
           ru.smokeAcc -= 0.07;
           m.muzzle.getWorldPosition(_sm);
-          m.muzzle.getWorldQuaternion(_q);
-          _sd.set(1, 0, 0).applyQuaternion(_q);
+          m.muzzle.getWorldQuaternion(_q2);
+          _sd.set(1, 0, 0).applyQuaternion(_q2);
           fx.barrelSmoke(_sm, _sd);
         }
       }
@@ -198,7 +215,7 @@ export function createRemoteManager({ scene, fx, audio }) {
   function alivePositions() {
     const out = [];
     for (const ru of players.values()) {
-      if (ru.alive && ru.model.root.visible) out.push({ x: ru.cur.x, z: ru.cur.z });
+      if (ru.alive && ru.model.root.visible) out.push({ x: ru.pos.x, z: ru.pos.z });
     }
     return out;
   }
