@@ -14,6 +14,11 @@ export const SPEC = {
   turnRate: 1.8,
   turnResponse: 8,
   halfTrack: 1.18,
+  // --- traction model (the controller is the only source of ground grip) ---
+  gripRate: 14,   // how fast sideways slide is scrubbed off, 1/s
+  slipRate: 3,    // how fast the commanded speed gives up when blocked, 1/s
+  stabilize: 3,   // bleeds pitch/roll rate while tracks are down, 1/s
+  scrub: 3.5,     // ground drag on a hull nobody is driving (husk, flipped)
 };
 
 // Skins are palettes plus a grid pattern — swappable on a built model.

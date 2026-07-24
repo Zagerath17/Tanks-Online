@@ -1173,6 +1173,7 @@ renderer.setAnimationLoop(() => {
       updateFly(dt);
       editor.updateGhost(camera);
       if (local.alive) player.update(dt, { throttle: 0, turn: 0 }, lastAimYaw, lastAimPitch);
+      else player.coast(dt);
     } else {
       aimRaycast(_aimPoint);
       playerModel.pitchGroup.getWorldPosition(_pivot);
@@ -1184,6 +1185,7 @@ renderer.setAnimationLoop(() => {
         Math.max(1, Math.hypot(adx, adz))
       );
       if (local.alive) player.update(dt, input, lastAimYaw, lastAimPitch);
+      else player.coast(dt);
     }
 
     physics.step(dt);
@@ -1219,7 +1221,9 @@ renderer.setAnimationLoop(() => {
     sun.position.copy(sunAnchor).add(SUN_OFFSET);
     sun.target.position.copy(sunAnchor);
 
-    const speedFrac = Math.abs(player.state.v) / SPEC.maxForward;
+    // the engine note follows the tracks (it roars while they slip against a
+    // wall), the speedo below follows how fast the hull is actually moving
+    const speedFrac = Math.abs(player.state.tread) / SPEC.maxForward;
     engine.update(
       0.72 + speedFrac * 0.65,
       local.alive && !flying ? 0.16 + speedFrac * 0.14 : 0

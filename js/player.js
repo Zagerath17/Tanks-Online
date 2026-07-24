@@ -13,16 +13,19 @@ const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 
 export function createPlayerController(model, physics) {
   const body = physics.createChassis();
+  const gravity = physics.world.gravity;
   let slowMul = 1; // 1 = normal, 0.5 = fully frozen
   let airborne = 0; // seconds since the last confirmed ground contact
   let drive = 0;    // the speed the controller is commanding, in m/s
 
   const state = {
-    v: 0, // forward ground speed (HUD, engine, treads)
+    v: 0, // measured forward ground speed (HUD, engine)
+    tread: 0, // the speed the tracks are turning at — slips against walls
     heading: 0, // hull yaw projected onto the ground plane
     turretYaw: 0,
     pitch: 0,
-    grounded: false,
+    grounded: false, // drive authority (survives brief contact dropouts)
+    contact: false,  // tracks actually touching something this frame
     upright: true,
     flipT: 0, // seconds spent flipped over
   };
@@ -54,6 +57,7 @@ export function createPlayerController(model, physics) {
     body.angularVelocity.setZero();
     body.wakeUp();
     state.v = 0;
+    state.tread = 0;
     state.heading = spawn.heading;
     state.turretYaw = 0;
     state.pitch = 0;
@@ -86,6 +90,34 @@ export function createPlayerController(model, physics) {
     body.angularVelocity.z += dx * rock;
   }
 
+  // Ground drag for a hull nobody is driving — a dead husk or a tank lying on
+  // its roof. Contact friction is zero by design (see physics.js), so without
+  // this the wreck would skate away across the arena forever.
+  function scrub(dt) {
+    const k = Math.min(1, SPEC.scrub * dt);
+    const vel = body.velocity;
+    vel.x -= vel.x * k;
+    vel.z -= vel.z * k;
+    if (vel.y > 0) vel.y -= vel.y * k; // never fight gravity, only bounce
+    const av = body.angularVelocity;
+    av.x -= av.x * k;
+    av.y -= av.y * k;
+    av.z -= av.z * k;
+  }
+
+  // Bleed off pitch and roll rate — everything that is NOT yaw about the
+  // hull's own up axis — while the tracks are down. This is what stops a
+  // nudge from an edge or another tank from winding up into a somersault,
+  // without touching how the tank behaves once it is actually airborne.
+  function dampTumble(dt) {
+    const av = body.angularVelocity;
+    const k = Math.min(1, SPEC.stabilize * dt);
+    const upComp = av.x * _up.x + av.y * _up.y + av.z * _up.z;
+    av.x -= (av.x - _up.x * upComp) * k;
+    av.y -= (av.y - _up.y * upComp) * k;
+    av.z -= (av.z - _up.z * upComp) * k;
+  }
+
   // Pre-physics: read input, steer the body. The solver owns everything
   // else — slopes, edges, tumbling, and coming to rest upside down.
   function update(dt, input, aimWorldYaw, aimPitch) {
@@ -96,9 +128,11 @@ export function createPlayerController(model, physics) {
 
     // coyote time: keep drive authority through brief contact dropouts
     // (cresting a ramp, rolling over a seam) instead of going inert
-    if (physics.groundedAt(body.position, GROUND_REACH, body)) airborne = 0;
+    const touching = physics.groundedAt(body.position, GROUND_REACH, body);
+    if (touching) airborne = 0;
     else airborne += dt;
     state.grounded = airborne < 0.16;
+    state.contact = touching;
     state.upright = _up.y > 0.55;
     if (_up.y < 0.25) state.flipT += dt;
     else state.flipT = 0;
@@ -109,8 +143,8 @@ export function createPlayerController(model, physics) {
 
     if (state.grounded && state.upright) {
       // The commanded speed lives here, not on the body. Reading it back off
-      // the body each frame meant anything that bled velocity (friction, a
-      // scrape, a landing) also erased the throttle's progress.
+      // the body each frame meant anything that bled velocity (a scrape, a
+      // landing) also erased the throttle's progress.
       if (input.throttle > 0) {
         drive += (drive < 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
       } else if (input.throttle < 0) {
@@ -122,20 +156,32 @@ export function createPlayerController(model, physics) {
       drive = THREE.MathUtils.clamp(drive, -SPEC.maxReverse * slowMul, SPEC.maxForward * slowMul);
 
       // but stay honest about walls: bleed the command toward what the body
-      // is actually managing, slowly enough that friction can't win
-      drive += (measured - drive) * Math.min(1, 1.5 * dt);
+      // is actually managing, so the tracks spin against an obstacle instead
+      // of the command running away to top speed
+      drive += (measured - drive) * Math.min(1, SPEC.slipRate * dt);
 
-      const dvF = drive - measured;
+      // Gravity the solver is about to add along the tread plane. Cancelling
+      // it is what lets the tank sit still on a ramp: without this it inherits
+      // a fresh downhill nudge every step and creeps to the bottom. Only when
+      // the tracks are really down, so coyote time can't turn into hovering.
+      const gF = touching ? gravity.x * _fwd.x + gravity.y * _fwd.y + gravity.z * _fwd.z : 0;
+      const gR = touching ? gravity.x * _right.x + gravity.y * _right.y + gravity.z * _right.z : 0;
+
+      // Cap the per-step correction. Pinned against a wall the gap between
+      // commanded and actual can be the full top speed, and dumping that into
+      // the body every frame makes the contact solver jitter.
+      const maxStep = (SPEC.accel + SPEC.brakeAccel) * dt;
+      const dvF = THREE.MathUtils.clamp(drive - measured - gF * dt, -maxStep, maxStep);
       vel.x += _fwd.x * dvF;
       vel.y += _fwd.y * dvF;
       vel.z += _fwd.z * dvF;
 
       // treads don't slide sideways
       const vLat = _vel.dot(_right);
-      const kill = vLat * Math.min(1, 12 * dt);
-      vel.x -= _right.x * kill;
-      vel.y -= _right.y * kill;
-      vel.z -= _right.z * kill;
+      const dvR = -(vLat * Math.min(1, SPEC.gripRate * dt) + gR * dt);
+      vel.x += _right.x * dvR;
+      vel.y += _right.y * dvR;
+      vel.z += _right.z * dvR;
 
       // pivot: steer angular velocity about the hull's own up axis
       const av = body.angularVelocity;
@@ -144,10 +190,14 @@ export function createPlayerController(model, physics) {
       av.x += _up.x * dAv;
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
+
+      if (touching) dampTumble(dt);
     } else {
       drive = measured; // airborne or flipped: the body is on its own
+      if (touching) scrub(dt); // ...but a hull on its roof still drags
     }
-    state.v = drive;
+    state.v = measured; // what the tank is really doing, for HUD and engine
+    state.tread = drive; // what the tracks are trying to do
 
     // --- turret chases the crosshair point within its own limits ----------
     if (Math.hypot(_fwd.x, _fwd.z) > 0.15) {
@@ -171,9 +221,23 @@ export function createPlayerController(model, physics) {
     model.pitchGroup.rotation.z = state.pitch;
 
     // --- treads (counter-rotate on pivot turns) ---
+    // driven by the commanded speed, so the tracks visibly slip when the hull
+    // is held up by a wall
     const av = body.angularVelocity;
     const yawRate = av.x * _up.x + av.y * _up.y + av.z * _up.z;
-    model.updateTreads(dt, state.v - yawRate * SPEC.halfTrack, state.v + yawRate * SPEC.halfTrack);
+    model.updateTreads(dt, state.tread - yawRate * SPEC.halfTrack, state.tread + yawRate * SPEC.halfTrack);
+  }
+
+  // Called instead of update() when the tank is dead: no input, no traction,
+  // just a wreck settling. Keeps the husk from sliding on frictionless ground.
+  function coast(dt) {
+    _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    _up.set(0, 1, 0).applyQuaternion(_q);
+    if (physics.groundedAt(body.position, GROUND_REACH, body)) scrub(dt);
+    drive = 0;
+    state.v = 0;
+    state.tread = 0;
+    model.updateTreads(dt, 0, 0);
   }
 
   // Post-physics: pull the solved transform onto the visual model
@@ -182,7 +246,7 @@ export function createPlayerController(model, physics) {
   }
 
   return {
-    state, body, update, postStep, reset, applyRecoil,
+    state, body, update, coast, postStep, reset, applyRecoil,
     setSlow(mul) { slowMul = Number.isFinite(mul) ? Math.min(1, Math.max(0.35, mul)) : 1; },
   };
 }

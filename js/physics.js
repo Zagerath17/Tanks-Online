@@ -26,14 +26,27 @@ export function createPhysics() {
 
   const groundMat = new CANNON.Material('ground');
   const chassisMat = new CANNON.Material('chassis');
-  // Traction is handled by the controller (it sets forward speed and kills
-  // lateral slip directly), so contact friction must stay LOW. At the old
-  // 0.55 the friction solver erased 0.220 m/s per step while the throttle
-  // only added 0.217 — it cancelled the entire drive input and the tank
-  // could never build speed.
+  // Traction is handled ENTIRELY by the controller: it sets forward speed,
+  // kills lateral slip, holds slopes, and scrubs off speed when nobody is
+  // driving. Solver friction here must therefore be exactly zero, not merely
+  // small, for two reasons:
+  //
+  //  1. cannon-es clamps a friction equation's lambda against `maxForce`
+  //     directly, and maxForce = mu * |g| * reducedMass. That is an IMPULSE
+  //     limit that does not scale with dt, so each contact point could erase
+  //     mu * |g| = 1.44 m/s per step at mu=0.06 — six times what the throttle
+  //     adds in the same step. The tank could never build speed.
+  //  2. Worse, that friction is applied at the tread patch, 0.52 m BELOW the
+  //     centre of mass, while the controller's drive correction is applied at
+  //     the centre of mass. The pair forms a couple that pitches the nose down
+  //     a little more every frame; once the nose dug in, the solver's
+  //     penetration recovery kicked the hull up and the tank somersaulted.
+  //
+  // Zero here means the ONLY thing moving the chassis along the ground is the
+  // controller, which is the whole design. See player.js.
   world.addContactMaterial(
     new CANNON.ContactMaterial(groundMat, chassisMat, {
-      friction: 0.06,
+      friction: 0,
       restitution: 0.0,
     })
   );
