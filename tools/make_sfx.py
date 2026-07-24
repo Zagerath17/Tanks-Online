@@ -156,32 +156,76 @@ def make_engine():
     out = mix(gain(out, 1.0), gain(nz, 0.5))
     return normalize(out, 0.6)
 
-# --- cryo stream (seamless 1.0 s loop) --------------------------------------
+# --- cryo stream (seamless 2.0 s loop) --------------------------------------
 def make_cryo():
-    n = SR  # exactly one second so integer-Hz partials loop cleanly
-    # pressurised hiss: bandpassed noise
-    hiss = highpass(lowpass(noise(n), 5200), 900)
-    # icy shimmer: high sparkle band
-    shimmer = highpass(noise(n), 6500)
-    # low howl of moving air (integer Hz -> loops)
-    howl = [
-        0.5 * math.sin(2 * math.pi * 62 * (i / SR))
-        + 0.32 * math.sin(2 * math.pi * 93 * (i / SR) + 1.1)
-        + 0.2 * math.sin(2 * math.pi * 148 * (i / SR) + 0.4)
-        for i in range(n)
+    """A cold, blizzardy howl: deep wind bed, sweeping gusts, sparse ice
+    crystals. Deliberately light on the mid-high hiss that reads as aerosol.
+
+    Built one crossfade longer than the loop, then the tail is folded over the
+    head, so the wrap point is continuous rather than clicking every cycle.
+    """
+    dur = 2.0
+    n = int(SR * dur)
+    fade = int(0.18 * SR)
+    m = n + fade  # generate the extra tail we fold back over the start
+
+    # low storm bed — partials at multiples of 0.5 Hz, so they wrap over 2 s
+    bed = [
+        0.9 * math.sin(2 * math.pi * 43 * (i / SR))
+        + 0.6 * math.sin(2 * math.pi * 64.5 * (i / SR) + 1.7)
+        + 0.35 * math.sin(2 * math.pi * 96 * (i / SR) + 0.6)
+        for i in range(m)
     ]
-    # slow swell so the stream breathes (integer Hz)
+
+    # wind: noise through a slowly sweeping bandpass, kept low and dark
+    wind = noise(m)
+    wind = lowpass(wind, lambda i: 620 + 380 * math.sin(2 * math.pi * 0.5 * (i / SR)))
+    wind = highpass(wind, 140)
+
+    # a second, higher layer breathing against the first
+    gust = noise(m)
+    gust = lowpass(gust, lambda i: 1500 + 900 * math.sin(2 * math.pi * 1.0 * (i / SR) + 2.1))
+    gust = highpass(gust, 700)
+
+    # sparse ice crystals: short bright decays, not a continuous hiss
+    crystals = [0.0] * m
+    t = 0.05
+    while t < m / SR:
+        i0 = int(t * SR)
+        ln = random.randint(120, 420)
+        amp = random.uniform(0.12, 0.34)
+        f = random.uniform(2600, 5200)
+        for j in range(min(ln, m - i0)):
+            crystals[i0 + j] += (
+                amp * math.sin(2 * math.pi * f * (j / SR)) * math.exp(-j / (ln * 0.34))
+            )
+        t += random.uniform(0.06, 0.22)
+
     out = []
-    for i in range(n):
-        t = i / SR
-        swell = 0.82 + 0.18 * math.sin(2 * math.pi * 3 * t)
-        out.append((hiss[i] * 0.85 + shimmer[i] * 0.3 + howl[i] * 0.22) * swell)
-    # crossfade the seam so the loop is inaudible
-    fade = int(0.08 * SR)
+    for i in range(m):
+        tt = i / SR
+        # gusting: two LFOs at 0.5 and 1.5 Hz, both periodic over the loop
+        gustAmt = (
+            0.62
+            + 0.26 * math.sin(2 * math.pi * 0.5 * tt)
+            + 0.12 * math.sin(2 * math.pi * 1.5 * tt + 0.9)
+        )
+        out.append(
+            bed[i] * 0.30
+            + wind[i] * 1.25 * gustAmt
+            + gust[i] * 0.42 * (0.5 + 0.5 * gustAmt)
+            + crystals[i] * 0.5
+        )
+
+    # darken first, so filter ringing can't reopen the seam afterwards
+    out = lowpass(out, 3200)
+
+    # fold the tail over the head: out[0] becomes what followed out[n-1]
     for i in range(fade):
         w = i / fade
-        out[i] = out[i] * w + out[n - fade + i] * (1 - w)
-    return normalize(out, 0.72)
+        out[i] = out[i] * w + out[n + i] * (1 - w)
+
+    return normalize(out[:n], 0.8)
 
 
 if __name__ == '__main__':
