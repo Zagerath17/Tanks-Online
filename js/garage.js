@@ -1,17 +1,23 @@
 import * as THREE from 'three';
 import { createTankModel } from './tank.js';
 import { TURRET_SPECS } from './tank.js';
+import { createProngArc } from './arc.js';
 import { currentSkin, currentTurret, currentHull } from './loadout.js';
 
-// The garage: your tank on a lit pedestal, an orbiting camera you drag with
-// the mouse, and a gun that fires for real — muzzle flash, smoke, sound, a
-// live shell, and a hull that rocks on its suspension. The tank itself never
-// leaves the turntable: every recoil motion is a spring that returns to zero.
-const STAND = { y: 1.3, radius: 6.4 };
+// The garage: your tank on a workshop platform at the back of a bay whose
+// roller door stands open, an orbiting camera you drag with the mouse, and a
+// gun that fires for real — muzzle flash, smoke, sound, a live shell, and a
+// hull that rocks on its suspension. The tank itself never leaves the deck:
+// every recoil motion is a spring that returns to zero.
+const STAND = { y: 1.3, halfX: 6.5, halfZ: 5.5 };
+const RAMP = { len: 4.2, halfW: 2.6 }; // off the back of the deck to the floor
+const DOOR = { w: 9, h: 6.4 };
+// the tank sits nose-on to the door, which is in the +Z wall
+const FACING = -Math.PI / 2;
 const FIRE_INTERVAL = 2.5;
 const CAM = { dist: 12.5, height: 4.6, look: 1.9 };
 
-export function createGarage({ scene, fx, audio, bullets }) {
+export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   const group = new THREE.Group();
   group.visible = false;
   scene.add(group);
@@ -31,23 +37,64 @@ export function createGarage({ scene, fx, audio, bullets }) {
   floor.receiveShadow = true;
   group.add(floor);
 
-  // hazard stripe ringing the working area
-  const ring = new THREE.Mesh(new THREE.RingGeometry(8.2, 8.7, 64), hazard);
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.012;
-  group.add(ring);
-
-  // walls
+  // walls — the +Z wall is built in three pieces around the door opening
   const wallGeoLong = new THREE.BoxGeometry(BAY.w, BAY.h, 0.4);
   const wallGeoSide = new THREE.BoxGeometry(0.4, BAY.h, BAY.d);
-  for (const [geo, x, z] of [
-    [wallGeoLong, 0, -BAY.d / 2], [wallGeoLong, 0, BAY.d / 2],
-    [wallGeoSide, -BAY.w / 2, 0], [wallGeoSide, BAY.w / 2, 0],
+  for (const [geo, x, y, z] of [
+    [wallGeoLong, 0, BAY.h / 2, -BAY.d / 2],
+    [wallGeoSide, -BAY.w / 2, BAY.h / 2, 0],
+    [wallGeoSide, BAY.w / 2, BAY.h / 2, 0],
   ]) {
     const wall = new THREE.Mesh(geo, painted);
-    wall.position.set(x, BAY.h / 2, z);
+    wall.position.set(x, y, z);
     wall.receiveShadow = true;
     group.add(wall);
+  }
+
+  // ---- the door end -------------------------------------------------------
+  {
+    const z = BAY.d / 2;
+    const jambW = (BAY.w - DOOR.w) / 2;
+    const lintelH = BAY.h - DOOR.h;
+    const jambGeo = new THREE.BoxGeometry(jambW, BAY.h, 0.4);
+    for (const s of [-1, 1]) {
+      const jamb = new THREE.Mesh(jambGeo, painted);
+      jamb.position.set(s * (DOOR.w / 2 + jambW / 2), BAY.h / 2, z);
+      jamb.receiveShadow = true;
+      group.add(jamb);
+    }
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(DOOR.w, lintelH, 0.4), painted);
+    lintel.position.set(0, DOOR.h + lintelH / 2, z);
+    lintel.receiveShadow = true;
+    group.add(lintel);
+
+    // the shutter is up: its curtain is coiled on a drum under the lintel,
+    // with the bottom rail hanging just clear of the opening
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, DOOR.w + 0.3, 18), darkSteel);
+    drum.rotation.z = Math.PI / 2;
+    drum.position.set(0, DOOR.h + 0.72, z - 0.55);
+    group.add(drum);
+    for (let i = 0; i < 5; i++) {
+      const coil = new THREE.Mesh(
+        new THREE.TorusGeometry(0.62 - i * 0.055, 0.035, 6, 24), steel
+      );
+      coil.rotation.y = Math.PI / 2;
+      coil.position.set(-DOOR.w / 2 + 0.5 + i * (DOOR.w - 1) / 4, DOOR.h + 0.72, z - 0.55);
+      group.add(coil);
+    }
+    const bottomRail = new THREE.Mesh(new THREE.BoxGeometry(DOOR.w + 0.2, 0.22, 0.3), steel);
+    bottomRail.position.set(0, DOOR.h + 0.06, z - 0.55);
+    group.add(bottomRail);
+    // guide channels either side of the opening
+    for (const s of [-1, 1]) {
+      const guide = new THREE.Mesh(new THREE.BoxGeometry(0.22, DOOR.h + 0.8, 0.34), steel);
+      guide.position.set(s * (DOOR.w / 2 + 0.11), (DOOR.h + 0.8) / 2, z - 0.55);
+      group.add(guide);
+    }
+    // worn threshold plate across the opening
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(DOOR.w, 0.04, 1.1), steel);
+    sill.position.set(0, 0.02, z - 0.5);
+    group.add(sill);
   }
 
   // ceiling with exposed beams
@@ -201,7 +248,7 @@ export function createGarage({ scene, fx, audio, bullets }) {
   }
 
   // toolbox trolleys either side of the stand
-  for (const [x, z, ry] of [[-5.5, 6.5, 0.4], [5.8, 6.2, -0.5]]) {
+  for (const [x, z, ry] of [[-8.6, 6.5, 0.4], [8.8, 6.2, -0.5]]) {
     const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 0.8), hazard);
     box.position.set(x, 0.68, z);
     box.rotation.y = ry;
@@ -215,34 +262,137 @@ export function createGarage({ scene, fx, audio, bullets }) {
     }
   }
 
-  // roller shutter at the far end
-  const shutter = new THREE.Mesh(new THREE.BoxGeometry(9, 6.4, 0.25), steel);
-  shutter.position.set(0, 3.2, BAY.d / 2 - 0.3);
-  group.add(shutter);
-  for (let i = 0; i < 14; i++) {
-    const slat = new THREE.Mesh(new THREE.BoxGeometry(9, 0.08, 0.32), darkSteel);
-    slat.position.set(0, 0.5 + i * 0.45, BAY.d / 2 - 0.42);
-    group.add(slat);
+  // ---- the workshop platform ----------------------------------------------
+  // A welded steel service deck rather than a display plinth: plated top,
+  // channel-section edge beams, legs, hazard-striped nosing, and a ramp off
+  // the back the tank could actually have driven up.
+  const deckMat = new THREE.MeshStandardMaterial({
+    color: '#59616b', roughness: 0.62, metalness: 0.55,
+  });
+  const plinthMat = new THREE.MeshStandardMaterial({
+    color: '#3b424b', roughness: 0.9, metalness: 0.12,
+  });
+
+  const deck = new THREE.Mesh(
+    new THREE.BoxGeometry(STAND.halfX * 2, 0.22, STAND.halfZ * 2), deckMat
+  );
+  deck.position.y = STAND.y - 0.11;
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  group.add(deck);
+
+  // the mass under the deck, inset so the top plate reads as an overhang
+  const plinth = new THREE.Mesh(
+    new THREE.BoxGeometry(STAND.halfX * 2 - 0.5, STAND.y - 0.22, STAND.halfZ * 2 - 0.5),
+    plinthMat
+  );
+  plinth.position.y = (STAND.y - 0.22) / 2;
+  plinth.castShadow = true;
+  plinth.receiveShadow = true;
+  group.add(plinth);
+
+  // edge beams round the deck, with hazard nosing on the two long sides
+  for (const s of [-1, 1]) {
+    const beamX = new THREE.Mesh(
+      new THREE.BoxGeometry(STAND.halfX * 2 + 0.12, 0.3, 0.16), steel
+    );
+    beamX.position.set(0, STAND.y - 0.16, s * STAND.halfZ);
+    group.add(beamX);
+    const beamZ = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.3, STAND.halfZ * 2 + 0.12), steel
+    );
+    beamZ.position.set(s * STAND.halfX, STAND.y - 0.16, 0);
+    group.add(beamZ);
+
+    const nose = new THREE.Mesh(
+      new THREE.BoxGeometry(0.34, 0.05, STAND.halfZ * 2), hazard
+    );
+    nose.position.set(s * (STAND.halfX - 0.2), STAND.y + 0.005, 0);
+    group.add(nose);
   }
 
-  const pedestal = new THREE.Mesh(
-    new THREE.CylinderGeometry(STAND.radius, STAND.radius + 0.5, STAND.y, 48),
-    new THREE.MeshStandardMaterial({ color: '#3b424b', roughness: 0.85, metalness: 0.15 })
-  );
-  pedestal.position.y = STAND.y / 2;
-  pedestal.castShadow = true;
-  pedestal.receiveShadow = true;
-  group.add(pedestal);
+  // legs at the corners
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const leg = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, STAND.y, 0.3), darkSteel
+      );
+      leg.position.set(sx * (STAND.halfX - 0.35), STAND.y / 2, sz * (STAND.halfZ - 0.35));
+      group.add(leg);
+    }
+  }
 
-  const rim = new THREE.Mesh(
-    new THREE.TorusGeometry(STAND.radius + 0.06, 0.07, 10, 64),
+  // service pit lighting under the deck lip, and a cable run along the floor
+  const underGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(STAND.halfX * 2 - 1.2, 0.05, 0.1),
     new THREE.MeshStandardMaterial({
-      color: '#9cc36e', emissive: '#5d7a3d', emissiveIntensity: 0.7, roughness: 0.5,
+      color: '#cfe6ff', emissive: '#6ea8dc', emissiveIntensity: 0.8, roughness: 0.5,
     })
   );
-  rim.rotation.x = -Math.PI / 2;
-  rim.position.y = STAND.y + 0.01;
-  group.add(rim);
+  underGlow.position.set(0, STAND.y - 0.34, STAND.halfZ - 0.02);
+  group.add(underGlow);
+
+  // ---- ramp off the back of the deck --------------------------------------
+  {
+    const rampGroup = new THREE.Group();
+    rampGroup.name = 'ramp';
+    group.add(rampGroup);
+
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(RAMP.len, 0);
+    shape.lineTo(0, STAND.y);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: RAMP.halfW * 2, bevelEnabled: false });
+    // the profile is drawn with +X running down the slope; turn it so the
+    // slope runs out of the back of the deck, along -Z
+    geo.rotateY(Math.PI / 2);
+    geo.translate(-RAMP.halfW, 0, 0);
+    const ramp = new THREE.Mesh(geo, plinthMat);
+    ramp.position.set(0, 0, -STAND.halfZ);
+    ramp.castShadow = true;
+    ramp.receiveShadow = true;
+    rampGroup.add(ramp);
+
+    // tread strips up the slope, and hazard edging down each side
+    const rise = Math.atan2(STAND.y, RAMP.len);
+    for (let i = 0; i < 7; i++) {
+      const f = (i + 0.5) / 7;
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(RAMP.halfW * 2 - 0.3, 0.035, 0.16), steel);
+      strip.position.set(0, STAND.y * (1 - f) + 0.03, -STAND.halfZ - RAMP.len * f);
+      strip.rotation.x = -rise;
+      rampGroup.add(strip);
+    }
+    for (const s of [-1, 1]) {
+      const kerb = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.1, Math.hypot(RAMP.len, STAND.y)), hazard
+      );
+      kerb.position.set(
+        s * (RAMP.halfW - 0.08), STAND.y / 2 + 0.05, -STAND.halfZ - RAMP.len / 2
+      );
+      kerb.rotation.x = -rise;
+      rampGroup.add(kerb);
+    }
+  }
+
+  // hazard stripe painted on the floor around the working area
+  {
+    const paint = new THREE.MeshBasicMaterial({
+      color: '#b9962c', transparent: true, opacity: 0.5,
+    });
+    const outX = STAND.halfX + 1.9;
+    const outZ = STAND.halfZ + 2.4;
+    for (const s of [-1, 1]) {
+      const long = new THREE.Mesh(new THREE.PlaneGeometry(outX * 2, 0.28), paint);
+      long.rotation.x = -Math.PI / 2;
+      long.position.set(0, 0.012, s * outZ);
+      group.add(long);
+      const side = new THREE.Mesh(new THREE.PlaneGeometry(0.28, outZ * 2), paint);
+      side.rotation.x = -Math.PI / 2;
+      side.position.set(s * outX, 0.012, 0);
+      group.add(side);
+    }
+  }
 
   // work light straight down onto the stand, plus soft fill from the strips
   const key = new THREE.SpotLight('#fff4e0', 320, 40, Math.PI / 5, 0.5, 1.4);
@@ -265,13 +415,105 @@ export function createGarage({ scene, fx, audio, bullets }) {
   const bounce = new THREE.HemisphereLight('#8f9aa8', '#2a2f35', 0.55);
   group.add(bounce);
 
+  // ---- daylight through the open door -------------------------------------
+  // A soft radial falloff, reused for the shaft and the pool it throws on the
+  // floor. Hard-edged quads read as cardboard; this reads as light.
+  function makeFalloff(stops) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0, 0, 0, 128);
+    for (const [at, col] of stops) g.addColorStop(at, col);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  {
+    const z = BAY.d / 2;
+
+    // blown-out daylight filling the opening
+    const sky = new THREE.Mesh(
+      new THREE.PlaneGeometry(DOOR.w + 0.6, DOOR.h + 0.4),
+      new THREE.MeshBasicMaterial({ color: '#fff4dc' })
+    );
+    sky.position.set(0, DOOR.h / 2, z + 0.3);
+    sky.rotation.y = Math.PI;
+    group.add(sky);
+
+    // the sun itself: low and outside, angled in across the deck so the tank
+    // is rim-lit from the front and throws its shadow back into the bay
+    const sun = new THREE.DirectionalLight('#ffe6bd', 2.6);
+    sun.position.set(3.5, 7.5, z + 16);
+    sun.target.position.set(-1.5, 0.6, -3);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.left = -14;
+    sun.shadow.camera.right = 14;
+    sun.shadow.camera.top = 12;
+    sun.shadow.camera.bottom = -6;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 60;
+    sun.shadow.bias = -0.0012;
+    group.add(sun, sun.target);
+
+    // warm fill just inside the threshold, so the doorway wall glows
+    const doorFill = new THREE.PointLight('#ffdfb0', 34, 26, 2);
+    doorFill.position.set(0, 3.2, z - 2.2);
+    group.add(doorFill);
+
+    // the shaft: slabs of lit air leaning in from the opening, brightest at
+    // the door and fading as they reach across the floor. Three of them, set
+    // at slightly different angles — a single flat plane vanishes the moment
+    // the orbiting camera catches it edge-on.
+    const shaftTex = makeFalloff([
+      [0, 'rgba(255,255,255,0)'],
+      [0.22, 'rgba(255,255,255,0.9)'],
+      [1, 'rgba(255,255,255,0)'],
+    ]);
+    const shaftMat = new THREE.MeshBasicMaterial({
+      map: shaftTex, color: '#ffe3b4', transparent: true, opacity: 0.11,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    for (let i = -1; i <= 1; i++) {
+      const shaft = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 18), shaftMat);
+      shaft.position.set(i * 3.0, 3.4, z - 8.0);
+      shaft.rotation.x = -Math.PI / 2 + 0.42; // leaning in and down
+      shaft.rotation.y = i * 0.07;
+      group.add(shaft);
+    }
+
+    // the pool of light it lays on the concrete. The gradient runs bright at
+    // v=0, and rotateX(-90) maps v=0 to +Z, so it is already brightest at the
+    // threshold and fades inward.
+    const poolTex = makeFalloff([
+      [0, 'rgba(255,255,255,0.9)'],
+      [1, 'rgba(255,255,255,0)'],
+    ]);
+    const pool = new THREE.Mesh(
+      new THREE.PlaneGeometry(DOOR.w + 1.5, 15),
+      new THREE.MeshBasicMaterial({
+        map: poolTex, color: '#ffe9c6', transparent: true, opacity: 0.30,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(0, 0.02, z - 7.6);
+    group.add(pool);
+  }
+
   // ---- the tank ------------------------------------------------------------
   const model = createTankModel(currentSkin(), currentTurret(), currentHull());
   model.root.position.set(0, STAND.y, 0);
+  model.root.rotation.y = FACING; // nose-on to the open door
   group.add(model.root);
 
   // ---- camera orbit --------------------------------------------------------
-  let yaw = Math.PI * 0.78;
+  // Opens on a rear three-quarter, which puts the lit doorway in frame beyond
+  // the tank — about 25 degrees off the view axis, well inside the frustum.
+  let yaw = -Math.PI * 0.26;
   let yawVel = 0;
 
   function orbit(dx) {
@@ -318,21 +560,52 @@ export function createGarage({ scene, fx, audio, bullets }) {
     return s && s.mode === 'projectile' ? s : null;
   }
 
-  // the Aegis has nothing to lock onto in the bay, so it just idles there
-  function isBeamWeapon() {
+  // The railgun and the Aegis are neither projectile nor stream weapons, so
+  // the old fire() — which only accepted mode 'projectile' — refused both of
+  // them outright and nothing happened when you pulled the trigger. They get
+  // their own handling below.
+  function railSpec() {
     const s = TURRET_SPECS[model.turretId];
-    return !!(s && s.mode === 'beam');
+    return s && s.mode === 'railgun' ? s : null;
+  }
+
+  function beamSpec() {
+    const s = TURRET_SPECS[model.turretId];
+    return s && s.mode === 'beam' ? s : null;
+  }
+
+  function isBeamWeapon() {
+    return !!beamSpec();
   }
 
   // the stream weapons need to be audible on the stand too
   const cryoSound = audio.loopOn(model.root, 'cryo');
   const flameSound = audio.loopOn(model.root, 'flame');
-  // the bay itself, and the tank ticking over on the stand
-  const roomSound = audio.loopOn(group, 'workshop');
+  const aegisSound = audio.loopOn(model.root, 'aegis');
+  // The bay itself. Non-positional: it is the room, not an object in it, and
+  // as a positional source at refDistance 8 it sat 17 dB under the tank's
+  // own idle by the time it reached an orbiting camera 12.5 m out.
+  const roomSound = audio.ambientLoop('workshop');
   const idleSound = audio.dieselLoop(model.root);
+
+  // ---- railgun and Aegis state --------------------------------------------
+  const rail = { wind: 0, winding: false, trigger: false };
+  let aegisActive = false;
+  let prongArc = null;
+  let prongArcOwner = null;
+  const _pgA = new THREE.Vector3();
+  const _pgB = new THREE.Vector3();
+  const AEGIS_YELLOW = 0xffd23d;
 
   function fire() {
     if (model.hasStream()) return false; // stream weapons fire by holding
+    // A tap is enough to commit the railgun: it spins up on its own from
+    // here, exactly as it does in a match.
+    if (railSpec()) {
+      rail.trigger = true;
+      return true;
+    }
+    if (beamSpec()) return false; // the emitter runs while the trigger is held
     if (cooldown > 0) return false;
     const spec = gunSpec();
     if (!spec) return false;
@@ -376,6 +649,13 @@ export function createGarage({ scene, fx, audio, bullets }) {
     cooldown = 0;
     fuel = 100;
     streaming = false;
+    rail.wind = 0;
+    rail.winding = false;
+    rail.trigger = false;
+    aegisActive = false;
+    model.setCharge(0);
+    if (prongArc) prongArc.setVisible(false);
+    if (railBeam) railBeam.hide();
   }
 
   // ---- cryo stream (test-fire in the bay) ---------------------------------
@@ -398,6 +678,89 @@ export function createGarage({ scene, fx, audio, bullets }) {
   function setTrigger(on) {
     triggerHeld = on;
     if (model.hasStream()) setStream(on);
+  }
+
+  // ---- railgun on the stand ------------------------------------------------
+  const _rp = new THREE.Vector3();
+  const _rd = new THREE.Vector3();
+  const _rq = new THREE.Quaternion();
+
+  function updateRail(dt) {
+    const spec = railSpec();
+    if (!spec) {
+      rail.wind = 0;
+      rail.winding = false;
+      rail.trigger = false;
+      return;
+    }
+    const ready = fuel >= 99.5;
+    if (!rail.winding && rail.trigger && ready) rail.winding = true;
+    rail.trigger = false;
+
+    if (rail.winding) {
+      rail.wind = Math.min(spec.windUp, rail.wind + dt);
+      if (rail.wind >= spec.windUp) {
+        model.muzzle.getWorldPosition(_rp);
+        model.muzzle.getWorldQuaternion(_rq);
+        _rd.set(1, 0, 0).applyQuaternion(_rq);
+        if (railBeam) railBeam.fire(_rp, _rd, spec.range);
+        fx.muzzleFlash(_rp.clone(), _rd.clone(), 'plasma');
+        audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
+        // it kicks the stand hard
+        pitchVel += 4.2;
+        squatVel -= 1.9;
+        fuel = 0;
+        rail.wind = 0;
+        rail.winding = false;
+      }
+    } else {
+      rail.wind = Math.max(0, rail.wind - dt * 2.5);
+      fuel = Math.min(100, fuel + spec.fuelRecharge * dt);
+    }
+    model.setCharge(rail.wind / spec.windUp);
+  }
+
+  // ---- Aegis on the stand --------------------------------------------------
+  // There is nothing in the bay to lock onto, so it does what it does in a
+  // match with an empty sky: powers up, burns charge, hums, and cracks hard
+  // across the prong gap. No lifeline without a target.
+  function updateAegis(dt) {
+    const spec = beamSpec();
+    const anchor = model.arcAnchor;
+    if (!spec || !anchor) {
+      aegisActive = false;
+      if (prongArc) prongArc.setVisible(false);
+      aegisSound.update(1, 0);
+      return;
+    }
+
+    if (aegisActive) {
+      if (!triggerHeld || fuel <= 0) aegisActive = false;
+    } else if (triggerHeld && fuel >= spec.restartAt) {
+      aegisActive = true;
+    }
+    if (aegisActive) {
+      fuel = Math.max(0, fuel - spec.fuelDrain * dt);
+      // the emitter shoves back a little while it draws
+      pitchVel += 0.9 * dt;
+    } else {
+      fuel = Math.min(100, fuel + spec.fuelRecharge * dt);
+    }
+
+    const gap = model.prongGap;
+    if (prongArcOwner !== anchor) {
+      prongArc = createProngArc(anchor, gap ? gap.gapZ / 0.30 : 1);
+      prongArcOwner = anchor;
+    }
+    _pgA.set(gap.x, 0.02, gap.gapZ / 2);
+    _pgB.set(gap.x, 0.02, -gap.gapZ / 2);
+    const pulse = aegisActive ? 0.5 + 0.5 * Math.sin(performance.now() * 0.012) : 0;
+    prongArc.setVisible(true);
+    prongArc.update(
+      dt, _pgA, _pgB, AEGIS_YELLOW,
+      aegisActive ? 0.75 + 0.45 * pulse : 0.4, pulse
+    );
+    aegisSound.update(1, aegisActive ? 0.5 : 0);
   }
 
   function updateStream(dt) {
@@ -435,9 +798,12 @@ export function createGarage({ scene, fx, audio, bullets }) {
   function update(dt, camera) {
     if (cooldown > 0) cooldown -= dt;
     updateStream(dt);
+    updateRail(dt);
+    updateAegis(dt);
+    if (railBeam) railBeam.update(dt);
 
     // ambience: the room hum, and the tank idling where it stands
-    roomSound.update(1, 0.5);
+    roomSound.update(0.85);
     idleSound.update(0, true);
 
     // exhaust haze drifting off the deck
@@ -457,12 +823,13 @@ export function createGarage({ scene, fx, audio, bullets }) {
     model.gun.position.x = -gunRecoil;
 
     // hull rock: damped springs, so the tank always comes back to exactly
-    // where it started — it rocks, it never drives off the turntable
+    // where it started — it rocks, it never rolls off the deck
     pitchVel += (-58 * pitch - 8.5 * pitchVel) * dt;
     pitch += pitchVel * dt;
     squatVel += (-90 * squat - 11 * squatVel) * dt;
     squat += squatVel * dt;
     model.root.rotation.z = pitch;
+    model.root.rotation.y = FACING; // the springs must never spin it off-axis
     model.root.position.set(0, STAND.y + squat, 0);
 
     if (smokeLeft > 0) {
@@ -499,8 +866,14 @@ export function createGarage({ scene, fx, audio, bullets }) {
     squat = 0;
     squatVel = 0;
     smokeLeft = 0;
+    rail.wind = 0;
+    rail.winding = false;
+    rail.trigger = false;
+    aegisActive = false;
+    model.setCharge(0);
+    if (railBeam) railBeam.hide();
     model.gun.position.x = 0;
-    model.root.rotation.set(0, 0, 0);
+    model.root.rotation.set(0, FACING, 0);
     model.root.position.set(0, STAND.y, 0);
   }
 
@@ -508,10 +881,18 @@ export function createGarage({ scene, fx, audio, bullets }) {
     group.visible = false;
     streaming = false;
     triggerHeld = false;
+    aegisActive = false;
+    rail.winding = false;
+    rail.trigger = false;
+    rail.wind = 0;
     model.setStream(false);
+    model.setCharge(0);
+    if (prongArc) prongArc.setVisible(false);
+    if (railBeam) railBeam.hide();
     cryoSound.update(1, 0);
     flameSound.update(1, 0);
-    roomSound.update(1, 0);
+    aegisSound.update(1, 0);
+    roomSound.update(0);
     idleSound.update(0, false);
   }
 
@@ -521,9 +902,11 @@ export function createGarage({ scene, fx, audio, bullets }) {
     fuelFrac: () => fuel / 100,
     isStreamWeapon: () => model.hasStream(),
     isBeamWeapon,
+    // Anything that spends the charge bar rather than reloading between shots.
+    // The railgun was missing here, so its bar sat permanently full.
     usesCharge: () => {
       const g = gunSpec();
-      return model.hasStream() || isBeamWeapon() || !!(g && g.fuelPerShot);
+      return model.hasStream() || isBeamWeapon() || !!railSpec() || !!(g && g.fuelPerShot);
     },
   };
 }

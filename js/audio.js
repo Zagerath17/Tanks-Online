@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 
+// The tank ticking over, turned down 30% from where it was — it was loud
+// enough at a standstill to mask everything else in the mix.
+const IDLE_GAIN = 0.7;
+
 // Real sampled-style WAV effects (generated offline in tools/make_sfx.py),
 // played back positionally so distance and direction read naturally.
 export function createAudio(camera, scene) {
@@ -39,6 +43,33 @@ export function createAudio(camera, scene) {
     holder.add(audio);
     audio.play();
     audio.source.onended = () => scene.remove(holder);
+  }
+
+  // Room tone. Deliberately NOT positional: an extractor-fan hum fills the
+  // whole bay, so panning and attenuating it against a camera that orbits
+  // the middle of that bay is both wrong and — at refDistance 8 with the
+  // camera 12.5 out — quiet enough to vanish under the tank's own idle.
+  function ambientLoop(name) {
+    let audio = null;
+    return {
+      update(volume) {
+        const buffer = buffers[name];
+        if (!buffer || !unlocked) return;
+        if (!audio) {
+          audio = new THREE.Audio(listener);
+          audio.setBuffer(buffer);
+          audio.setLoop(true);
+          audio.play();
+        }
+        audio.setVolume(volume);
+      },
+      stop() {
+        if (audio) {
+          audio.stop();
+          audio = null;
+        }
+      },
+    };
   }
 
   // Generic positional loop (engine rumble, cryo stream, ...)
@@ -100,8 +131,11 @@ export function createAudio(camera, scene) {
         if (!idle || !drive) return;
         const f = Math.max(0, Math.min(1, frac));
         const on = alive ? 1 : 0;
-        // the idle never drops away entirely; the drive note rides on top
-        idle.setVolume(master * on * (0.62 - 0.30 * f));
+        // The idle never drops away entirely; the drive note rides on top.
+        // IDLE_GAIN pulls the ticking-over note down without touching the
+        // drive note, so the tank is quieter sitting still but just as loud
+        // under power — and the garage's room tone is no longer buried.
+        idle.setVolume(master * on * IDLE_GAIN * (0.62 - 0.30 * f));
         idle.setPlaybackRate(0.94 + f * 0.22);
         drive.setVolume(master * on * (0.10 + 0.78 * f * f));
         drive.setPlaybackRate(0.82 + f * 0.55);
@@ -144,5 +178,5 @@ export function createAudio(camera, scene) {
     };
   }
 
-  return { playAt, engineLoop, dieselLoop, loopOn };
+  return { playAt, engineLoop, dieselLoop, loopOn, ambientLoop };
 }

@@ -357,7 +357,10 @@ def make_workshop():
         out.append(fans[i] * 0.85 + hum[i] * 0.20 + hiss[i] * 0.16 + clank[i] * 0.5)
 
     out = steady(lowpass(tile(out), 6000))
-    return normalize(out, 0.55)
+    # Levelled with the rest of the pack rather than 5 dB under it. At the old
+    # 0.55 peak (0.138 RMS) this sat 17 dB below the tank's idle once the
+    # positional falloff was applied, which is to say it was not there at all.
+    return normalize(out, 0.92)
 
 
 # --- cryo stream (seamless 4.0 s loop) --------------------------------------

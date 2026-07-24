@@ -107,7 +107,12 @@ export function createRailBeam(scene) {
 
 // The short arc that jumps between the Aegis's two prong tips. It lives on
 // the turret rather than in the world, so it is parented, not positioned.
-export function createProngArc(parent) {
+//
+// `scale` is the gap it has to bridge relative to the 0.30 the proportions
+// below were drawn for. Ribbon widths and wander amplitude both track it, so
+// a four-times-wider spark gap gets a four-times-heavier arc rather than a
+// hairline strung across a big empty fork.
+export function createProngArc(parent, scale = 1) {
   const SEG = 12;
   const group = new THREE.Group();
   parent.add(group);
@@ -133,7 +138,7 @@ export function createProngArc(parent) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     group.add(mesh);
-    return { geo, mat, w: L.w, base: L.o };
+    return { geo, mat, w: L.w * scale, base: L.o };
   });
 
   const seeds = [];
@@ -146,7 +151,7 @@ export function createProngArc(parent) {
   function update(dt, from, to, colour, strength, pulse) {
     t += dt;
     _c.set(colour);
-    const amp = 0.045 + 0.03 * pulse;
+    const amp = (0.045 + 0.03 * pulse) * scale;
     for (let li = 0; li < ribbons.length; li++) {
       const r = ribbons[li];
       r.mat.color.copy(_c);

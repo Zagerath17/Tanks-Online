@@ -153,24 +153,30 @@ export function createFx(scene) {
 
   // Dust thrown up behind a track. Kicked backwards and out to the side,
   // rising as it slows — heavier and longer-lived the faster you're going.
+  // The colours are deliberately neutral: the old 0x9c9484 / 0x857d6e both
+  // ran R > G > B, which reads as kicked-up brown earth rather than the
+  // concrete and grit these arenas are actually surfaced with.
   function dust(pos, backX, backZ, strength) {
     const s = 0.5 + strength;
+    // a little spread across the greys so the cloud has some depth to it
+    const shade = Math.random();
+    const color = shade < 0.34 ? 0xb4b7ba : shade < 0.67 ? 0x9a9da1 : 0x828589;
     spawn({
       pos: pos.clone().add(new THREE.Vector3(
-        (Math.random() - 0.5) * 0.3, 0.02, (Math.random() - 0.5) * 0.3
+        (Math.random() - 0.5) * 0.45, 0.02, (Math.random() - 0.5) * 0.45
       )),
       vel: new THREE.Vector3(
-        backX * (1.1 + Math.random() * 1.9) * s + (Math.random() - 0.5) * 0.7,
-        0.5 + Math.random() * 0.9 * s,
-        backZ * (1.1 + Math.random() * 1.9) * s + (Math.random() - 0.5) * 0.7
+        backX * (1.3 + Math.random() * 2.3) * s + (Math.random() - 0.5) * 0.9,
+        0.7 + Math.random() * 1.25 * s,
+        backZ * (1.3 + Math.random() * 2.3) * s + (Math.random() - 0.5) * 0.9
       ),
-      life: 0.55 + Math.random() * 0.75,
-      scale: 0.28 + Math.random() * 0.34 * s,
-      grow: 1.5 + strength,
-      color: Math.random() < 0.5 ? 0x9c9484 : 0x857d6e,
-      opacity: 0.20 + 0.16 * strength,
-      drag: 1.5,
-      gravity: -1.1,
+      life: 0.85 + Math.random() * 1.05,
+      scale: 0.42 + Math.random() * 0.5 * s,
+      grow: 2.2 + strength * 1.6,
+      color,
+      opacity: 0.34 + 0.26 * strength,
+      drag: 1.25,
+      gravity: -0.85,
     });
   }
 

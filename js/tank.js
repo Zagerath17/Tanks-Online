@@ -511,6 +511,16 @@ function buildMaterials(p) {
       color: '#8fd0ff', emissive: '#2a7bff', emissiveIntensity: 1.15,
       roughness: 0.3, metalness: 0.15,
     }),
+    // ...and the Aegis's brass emitter gear, which stays brass on every skin.
+    // Textured like the rest of the steel so it reads as a cast, worked
+    // component rather than a flat gold-coloured primitive.
+    brass: new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({
+        base: '#c9a752', shade: '#7d5f1e', grain: 1.5, wear: 1.6, repeat: [2, 2],
+      }),
+      roughness: 0.33,
+      metalness: 0.92,
+    }),
   };
 }
 
@@ -519,7 +529,12 @@ function buildMaterials(p) {
 function rememberBaseColors(M) {
   for (const mat of Object.values(M)) {
     mat.userData.baseColor = mat.color.clone();
-    if (mat.emissive) mat.userData.baseEmissive = mat.emissive.clone();
+    if (mat.emissive) {
+      mat.userData.baseEmissive = mat.emissive.clone();
+      // the railgun's wind-up drives emissiveIntensity, so it needs a resting
+      // value to scale from and fall back to
+      mat.userData.baseEmissiveIntensity = mat.emissiveIntensity;
+    }
   }
   return M;
 }
@@ -973,11 +988,21 @@ function buildPlasmaTurret(M) {
 }
 
 // ---------------------------------------------------------------------------
-// Aegis Emitter: a squat emitter body carrying two heavy prongs. The working
-// end is the gap between their tips, where a permanent arc jumps across —
-// yellow at rest, red or green once it has hold of someone.
+// Aegis Emitter: a squat emitter body carrying two heavy prongs SIDE BY SIDE
+// on a wide brass yoke. The working end is the gap between their tips, where
+// a permanent arc jumps across — yellow at rest, red or green once it has
+// hold of someone.
 // ---------------------------------------------------------------------------
-export const AEGIS_PRONG = { gapY: 0.30, x: 1.62 };
+// gapZ, not gapY: the prongs sit left and right of the barrel line rather
+// than stacked one above the other, and they are set four times as far apart
+// as they were. The arc that bridges them is scaled to match (see arc.js).
+//
+// The horizontal layout also fixes the arc itself. createProngArc builds its
+// ribbon by offsetting each path point +/- w in Y — with the tips stacked
+// vertically that offset ran ALONG the arc, collapsing every quad to a
+// sliver. Across a horizontal gap the same offset is perpendicular, so the
+// ribbon has real area for the first time.
+export const AEGIS_PRONG = { gapZ: 1.20, x: 1.62 };
 
 function buildAegisTurret(M) {
   const t = new THREE.Group();
@@ -1002,22 +1027,19 @@ function buildAegisTurret(M) {
   body.position.y = 0.08;
   t.add(body);
 
-  // insulator stacks flanking the breech, feeding the prongs
+  // Brass feed lines running forward along each flank to the yoke. The
+  // insulator stacks and glowing terminal spheres that used to stand on the
+  // roof are gone — the deck is clean now.
   for (const side of [-1, 1]) {
-    for (let i = 0; i < 3; i++) {
-      const r = 0.15 - i * 0.02;
-      const disc = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.055, 14), M.metal);
-      disc.position.set(-0.18, 0.70 + i * 0.085, side * 0.34);
-      t.add(disc);
-    }
-    const term = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), M.plasma);
-    term.position.set(-0.18, 0.95, side * 0.34);
-    t.add(term);
-
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 1.1, 8), M.plasma);
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.15, 10), M.brass);
     cable.rotation.z = Math.PI / 2;
-    cable.position.set(0.36, 0.44, side * 0.34);
+    cable.position.set(0.34, 0.40, side * 0.44);
     t.add(cable);
+    // a collar where each line leaves the body
+    const ferrule = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.09, 10), M.brass);
+    ferrule.rotation.z = Math.PI / 2;
+    ferrule.position.set(-0.16, 0.40, side * 0.44);
+    t.add(ferrule);
   }
 
   const pitchGroup = new THREE.Group();
@@ -1030,41 +1052,46 @@ function buildAegisTurret(M) {
   const gun = new THREE.Group();
   pitchGroup.add(gun);
 
-  // emitter block the prongs are rooted in
-  const block = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.44, 0.5), M.barrel);
-  block.position.set(0.36, 0.02, 0);
+  const half = AEGIS_PRONG.gapZ / 2;
+
+  // emitter block, and the wide brass yoke that carries the prongs out to
+  // their full spread
+  const block = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.44, 0.62), M.barrel);
+  block.position.set(0.32, 0.02, 0);
   gun.add(block);
 
-  // two thick prongs reaching forward, one above the other, with the working
-  // gap between their tips
-  const gap = AEGIS_PRONG.gapY / 2;
+  const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, half * 2 + 0.22), M.brass);
+  yoke.position.set(0.54, 0.02, 0);
+  gun.add(yoke);
+
+  // two thick prongs reaching forward, one either side, with the working gap
+  // between their tips
   for (const dir of [1, -1]) {
-    const armGeo = new THREE.BoxGeometry(1.15, 0.15, 0.19);
-    const arm = new THREE.Mesh(armGeo, M.barrel);
-    arm.position.set(1.06, 0.02 + dir * gap * 0.72, 0);
-    arm.rotation.z = dir * 0.10;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.17, 0.21), M.barrel);
+    arm.position.set(1.06, 0.02, dir * (half - 0.04));
+    arm.rotation.y = -dir * 0.078; // a slight splay out toward the tips
     gun.add(arm);
 
-    // a heavier root where each prong leaves the block
-    const root = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.26), M.barrel);
-    root.position.set(0.6, 0.02 + dir * gap * 0.45, 0);
+    // a heavier root where each prong leaves the yoke
+    const root = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.26, 0.3), M.barrel);
+    root.position.set(0.62, 0.02, dir * (half - 0.08));
     gun.add(root);
 
     // banded insulation along the prong
     for (let i = 0; i < 3; i++) {
-      const band = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.19, 0.23), M.metal);
-      band.position.set(0.78 + i * 0.26, 0.02 + dir * gap * (0.55 + i * 0.09), 0);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.21, 0.25), M.metal);
+      band.position.set(0.78 + i * 0.26, 0.02, dir * (half - 0.062 + i * 0.021));
       gun.add(band);
     }
 
     // the charged tip the arc springs from
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.088, 14, 12), M.plasma);
-    tip.position.set(AEGIS_PRONG.x, 0.02 + dir * gap, 0);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.10, 14, 12), M.brass);
+    tip.position.set(AEGIS_PRONG.x, 0.02, dir * half);
     gun.add(tip);
 
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.24, 12), M.metal);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.26, 12), M.brass);
     cone.rotation.z = -Math.PI / 2;
-    cone.position.set(AEGIS_PRONG.x - 0.16, 0.02 + dir * gap, 0);
+    cone.position.set(AEGIS_PRONG.x - 0.17, 0.02, dir * half);
     gun.add(cone);
   }
 
@@ -1361,6 +1388,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
       [M.hull, 'hull'], [M.turret, 'turret'], [M.barrel, 'barrel'],
       [M.track, 'track'], [M.metal, 'metal'], [M.tyre, 'tyre'],
       [M.hub, 'hub'], [M.cryo, 'cryo'], [M.ember, 'ember'], [M.plasma, 'plasma'],
+      [M.brass, 'brass'],
     ]);
     meshes.length = 0;
     root.traverse((o) => {
@@ -1497,17 +1525,32 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
       }
       applyChillTint();
     },
-    // 0 = idle, 1 = fully wound up. Drives whatever glowing parts the
-    // equipped turret registered — rings spin faster and swell as it charges.
+    // 0 = idle, 1 = fully wound up. The charged parts brighten as the shot
+    // builds — they used to physically swell (scale 1 -> 1.45), which read as
+    // the hardware inflating rather than as energy going into it.
+    //
+    // Driving the shared plasma material is safe and cheap: M.plasma is only
+    // ever used by turret hardware, and on the railgun every part built from
+    // it is a charge part, so nothing else on the tank can be caught by the
+    // brightening. Doing it with an added PointLight would look better still
+    // but would change the scene's light count, and three.js recompiles every
+    // shader when that happens — with a dozen railguns in a lobby that is a
+    // hitch per spawn.
     setCharge(frac) {
+      const mat = M.plasma;
       const parts = parts_.chargeParts;
-      if (!parts) return;
       const f = Math.max(0, Math.min(1, frac));
+      if (mat) {
+        const base = mat.userData.baseEmissiveIntensity;
+        if (base !== undefined) {
+          // ramps hard at the top so the last quarter second really lights up
+          mat.emissiveIntensity = base * (1 + 4.2 * f * f);
+        }
+      }
+      if (!parts) return;
+      // the rings still turn as it winds; only the swelling is gone
       for (let i = 0; i < parts.length; i++) {
-        const p = parts[i];
-        const s = 1 + f * 0.45;
-        p.scale.setScalar(s);
-        p.rotation.z = (p.rotation.z || 0) + f * 0.42;
+        parts[i].rotation.z += f * 0.42;
       }
     },
     // 0 = normal, 1 = fully frozen (blue overlay) / fully alight (red overlay)

@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.28
+# Tank Remake — prototype 0.29
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -8,9 +8,11 @@ Play holds the future modes (TDM / FFA / CTF — placeholders for now), Settings
 
 ## Garage
 
-A working tank bay: gantry crane on rails with the hook slung over the stand, strip lights under exposed roof beams, benches with pegboards and tools, parts racks, oil drums, stacked spare track links, a barrel up on trestles, toolbox trolleys and a roller shutter at the far end. The room hums — extractor fans, mains buzz, a compressor line and the odd distant clank — and your tank sits there idling with exhaust haze drifting off the deck.
+A working tank bay with the roller door standing open at the far end. Daylight pours through the opening, throws a pool across the concrete and rim-lights the tank from the front, and the shutter's curtain is coiled on its drum overhead. Inside: a gantry crane on rails with the hook slung over the stand, strip lights under exposed roof beams, benches with pegboards and tools, parts racks, oil drums, stacked spare track links, a barrel up on trestles and toolbox trolleys. The room hums — extractor fans, mains buzz, a compressor line and the odd distant clank — and your tank sits there idling with exhaust haze drifting off the deck.
 
-Your tank on a lit turntable. Drag anywhere to spin the camera around it, and click (or hit space) to actually fire — full muzzle flash, smoke, sound, a live shell downrange, and the hull rearing back on its suspension. The recoil is spring-driven, so the tank rocks hard and settles back to exactly where it stood; it never drifts off the stand.
+The tank stands on a welded steel service platform: plated deck, channel edge beams, corner legs, hazard nosing, and a drive-up ramp off the back so it got there under its own power. It faces the open door, nose out, ready to roll. Drag anywhere to spin the camera around it, and click (or hit space) to actually fire — full muzzle flash, smoke, sound, a live shell downrange, and the hull rearing back on its suspension. The recoil is spring-driven, so the tank rocks hard and settles back to exactly where it stood; it never drifts off the deck.
+
+Every weapon test-fires on the stand, not just the shell guns: the stream weapons pour while you hold, the plasma repeater runs on its charge bar, the railgun spins up on a tap and lets its lance go down the bay, and the Aegis powers up and cracks across its prongs — with nothing in the bay to lock onto it does exactly what it does under an empty sky, burning charge and holding no lifeline.
 
 The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon and **Arctic Snap** work today, the rest are reserved. **Hulls** lists six, three of them working: **Vanguard** is the standard chassis at 1000 hull; **Pioneer** is a compact scout — smaller in every dimension, 800 hull, 20% quicker; **Falcon** is smaller again at 650 hull and another 12% on top of that, a stripped-down runner on four tight road wheels; **Paladin** goes the other way — a heavy chassis at 1250 hull, 10% slower, larger in every dimension, riding on six road wheels and a third return roller; and **Ironclad** is the heaviest of the lot at 1500 hull, slower again, on seven road wheels and the widest track the arena ramps will take.
 
@@ -44,11 +46,13 @@ Twin emitters set wide apart, fed from a charged accumulator sphere cradled betw
 
 The bolts are layered — an unlit blazing core inside a pulsing plasma shell, a soft halo, and a billboarded corona, shedding glowing motes as they fly. They travel at half the cannon shell's speed, fly perfectly flat with no drop, and burn out at 70 m. Each one does 25 damage, and impacts burst blue instead of orange.
 
-Tanks throw up dust behind their tracks as they drive, and leave tread marks pressed into the ground, one grouser imprint per track link at the tread's own pitch — grouser bars with worn ends and scuffed soil between them, laid under both tracks as you drive. They hold for twenty seconds before fading away.
+## Tracks and dust
+
+Tanks throw up grey dust behind their tracks as they drive — concrete grit, not soil — and press tread marks into the ground behind them. Each mark is one imprint three links long, with the grouser bars lying **across** the track the way real links land, laid under both tracks and spaced by distance covered rather than by frame, so the trail is continuous at any frame rate and at any hull's top speed. They hold for twenty seconds before fading away.
 
 ## Aegis Emitter
 
-A squat emitter body carrying two heavy prongs, one above the other, with a permanent electric arc jumping the gap between their tips. The arc sits yellow at rest. Hold the trigger and the emitter powers up whether or not anything is in range — it burns charge, hums, and the arc pulses hard across the gap. When it does find someone, a lifeline strikes from the gap to whichever tank sits closest to your aim, inside a 24-degree cone out to 26 m, and holds the lock until it drifts well outside.
+A squat emitter body carrying two heavy prongs set wide apart on a brass yoke, one either side of the barrel line, with a permanent electric arc jumping the gap between their tips. The brass gear — yoke, feed lines, tips and cones — keeps its finish on every skin; the deck above the breech is bare. The arc sits yellow at rest. Hold the trigger and the emitter powers up whether or not anything is in range — it burns charge, hums, and the arc pulses hard across the gap. When it does find someone, a lifeline strikes from the gap to whichever tank sits closest to your aim, inside a 24-degree cone out to 26 m, and holds the lock until it drifts well outside.
 
 On a teammate both arcs run green and it mends 50 health a second. On an enemy they run red, draining 75 a second and feeding a fifth of that back into your own hull. Both tick ten times a second, and it runs off the same charge bar as the other sustained weapons.
 
@@ -56,7 +60,7 @@ Because it needs to tell friend from foe, players in a Custom lobby are now alte
 
 ## Railgun
 
-A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Tap the trigger and it spins up for a second — you don't need to keep holding — rings swell and turn, the capacitor bands and the muzzle core brighten — then it lets go with an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
+A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Tap the trigger and it spins up for a second — you don't need to keep holding — the accelerator rings turn and the capacitor bands, the tower caps and the muzzle core all brighten, glowing harder the closer it gets to letting go; nothing swells or changes size, the energy shows as light. Then it releases an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
 
 ## Editor
 
@@ -163,7 +167,7 @@ Two browser windows (or a window + a phone on the same deploy) make a quick two-
 
 ## Structure
 
-`index.html` holds the menu markup and HUD; `css/style.css` styles both; `js/main.js` owns phases (menu → lobby → match), the local tank, combat, and the loop; `js/net.js` is the Firebase lobby/state/shot transport; `js/remote.js` mirrors the other players' tanks; `js/menu.js` drives the screens; `js/player.js` is local physics and turret traverse; `js/tank.js` the model, treads, and hitboxes; `js/bullets.js`, `js/fx.js`, `js/audio.js` shells, particles, positional sound; `js/map.js` the arena, platform, spawn ring, and terrain heights; `js/physics.js` the cannon-es world and colliders; `js/editor.js` the build mode; `js/firebase-config.js` your credentials.
+`index.html` holds the menu markup and HUD; `css/style.css` styles both; `js/main.js` owns phases (menu → lobby → match), the local tank, combat, and the loop; `js/net.js` is the Firebase lobby/state/shot transport; `js/remote.js` mirrors the other players' tanks; `js/menu.js` drives the screens; `js/player.js` is local physics and turret traverse; `js/tank.js` the model, treads, and hitboxes; `js/garage.js` the bay and everything test-fired in it; `js/bullets.js`, `js/fx.js`, `js/audio.js` shells, particles, positional sound; `js/tracks.js` the tread marks pressed into the ground; `js/arc.js` the Aegis lifeline, its prong arc and the railgun lance; `js/map.js` the arena, platform, spawn ring, and terrain heights; `js/physics.js` the cannon-es world and colliders; `js/editor.js` the build mode; `js/firebase-config.js` your credentials.
 
 ## Roadmap ideas
 

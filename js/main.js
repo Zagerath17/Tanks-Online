@@ -91,7 +91,7 @@ const arcBeam = createArcBeam(scene);
 const railBeam = createRailBeam(scene);
 const editor = createEditor({ scene, physics });
 loadSelection();
-const garage = createGarage({ scene, fx, audio, bullets });
+const garage = createGarage({ scene, fx, audio, bullets, railBeam });
 
 // compile every shader / effect during the menu so the first shot in a
 // match never hitches
@@ -545,7 +545,7 @@ function leaveGarage() {
   menu.show('scr-main');
 }
 
-// drag to spin the turntable; a click without dragging pulls the trigger
+// drag to spin the view; a click without dragging pulls the trigger
 let gDrag = null;
 
 renderer.domElement.addEventListener('mousedown', (e) => {
@@ -1306,13 +1306,15 @@ function updateProngArc(dt, powered, colour) {
     if (prongArc) prongArc.setVisible(false);
     return;
   }
+  const gap = playerModel.prongGap;
   if (prongArcOwner !== anchor) {
-    prongArc = createProngArc(anchor);
+    // the arc is drawn for a 0.30 gap, so hand it the ratio to scale by
+    prongArc = createProngArc(anchor, gap ? gap.gapZ / 0.30 : 1);
     prongArcOwner = anchor;
   }
-  const gap = playerModel.prongGap;
-  _pgA.set(gap.x, 0.02 + gap.gapY / 2, 0);
-  _pgB.set(gap.x, 0.02 - gap.gapY / 2, 0);
+  // the tips sit either side of the barrel line now, not above and below it
+  _pgA.set(gap.x, 0.02, gap.gapZ / 2);
+  _pgB.set(gap.x, 0.02, -gap.gapZ / 2);
   // idles steadily; pulses hard while the emitter is drawing power
   const pulse = powered ? 0.5 + 0.5 * Math.sin(performance.now() * 0.012) : 0;
   prongArc.setVisible(true);
@@ -1778,8 +1780,8 @@ renderer.setAnimationLoop(() => {
 
       // dust off the back of both tracks, the faster the heavier
       const spdFrac = Math.min(1, Math.abs(player.state.tread) / playerModel.hull.move.maxForward);
-      if (player.state.contact && spdFrac > 0.12) {
-        dustAcc += dt * (0.5 + spdFrac * 2.4);
+      if (player.state.contact && spdFrac > 0.06) {
+        dustAcc += dt * (1.2 + spdFrac * 4.3);
         const tread = playerModel.hull.tread;
         const h = player.state.heading;
         const fx_ = Math.cos(h);

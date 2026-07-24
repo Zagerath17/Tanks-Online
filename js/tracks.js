@@ -15,12 +15,13 @@ const FADE = 6;
 // One track imprint, three grousers long. The canvas u axis runs ALONG the
 // direction of travel, so the bars sit across the track exactly the way the
 // real links do, and BARS here is matched to the stamp length so the bar
-// pitch equals the tread's own link pitch.
+// pitch equals the tread's own link pitch. See createTreadMarks for the
+// geometry that actually holds that promise — it used to break it.
 const BARS = 3;
 
 function makeTreadTexture() {
-  const w = 192; // 64 px per grouser
-  const h = 96;
+  const w = 192; // 64 px per grouser, along the direction of travel
+  const h = 128; // across the track; 1.5 is close to the real stamp aspect
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -112,11 +113,20 @@ void main() {
 
 export function createTreadMarks(scene) {
   const tex = makeTreadTexture();
-  // lie flat with the quad's LENGTH along local X — the same axis a heading
-  // rotation maps forward onto — and its width across local Z
+  // Lie the quad flat with its LENGTH along local X — the axis a heading
+  // rotation maps forward onto — and its width across local Z.
+  //
+  // rotateX(-90) alone does exactly that AND carries the UVs with it: +u ends
+  // up along local +X (travel) and +v along local -Z (across the track),
+  // which is what makeTreadTexture is drawn for. There used to be a second
+  // rotateY(90) here, which spun the texture 90 degrees against the quad and
+  // caused both of the visible faults at once:
+  //   * the grouser bars, meant to lie across the track, ran ALONG it;
+  //   * the edge-softening gradient, meant to feather the track's two SIDES,
+  //     instead ate 10% off each END of every stamp — so consecutive marks
+  //     could never meet and the trail came out as dashes.
   const geo = new THREE.PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI / 2);
-  geo.rotateY(Math.PI / 2);
 
   const ages = new Float32Array(MAX).fill(-1);
   geo.setAttribute('aAge', new THREE.InstancedBufferAttribute(ages, 1));
@@ -165,39 +175,88 @@ export function createTreadMarks(scene) {
   }
 
   // Lay marks under both tracks of a tank that's actually on the ground.
-  // key identifies the tank so each one keeps its own spacing counter.
+  // key identifies the tank so each one keeps its own trail anchor.
+  //
+  // Spacing is measured from where the LAST pair of marks actually went down,
+  // not from a counter that gets zeroed. The old code did `e.d += moved; if
+  // (e.d < span) return; e.d = 0;`, which threw away however far past the
+  // span that frame had carried — so the real gap between stamps was
+  // ceil(span / moved) * moved, up to a whole frame's travel too long. At
+  // 30 fps in a Pioneer that is a 0.33 m hole in a 0.79 m stamp.
   function trail(key, model, groundY, heading, moved, onGround) {
-    if (!onGround || moved <= 0) return;
     const tread = model.hull.tread;
     // One stamp covers exactly BARS links, so consecutive stamps butt up and
     // the printed grousers land at the tread's own pitch.
     const linkPitch = tread.length / tread.linkCount;
     const span = linkPitch * BARS;
 
+    const px = model.root.position.x;
+    const pz = model.root.position.z;
+
     let e = emitters.get(key);
     if (!e) {
-      e = { d: 0 };
+      e = { x: px, z: pz, primed: false };
       emitters.set(key, e);
     }
-    e.d += moved;
-    if (e.d < span) return;
-    e.d = 0;
+    // Off the ground (or standing still) the anchor just follows the tank, so
+    // landing again starts a fresh trail instead of drawing a line across the
+    // arena from wherever it took off.
+    if (!onGround || moved <= 0) {
+      e.x = px;
+      e.z = pz;
+      e.primed = onGround;
+      return;
+    }
+    if (!e.primed) {
+      e.x = px;
+      e.z = pz;
+      e.primed = true;
+      return;
+    }
+
+    let dx = px - e.x;
+    let dz = pz - e.z;
+    let gap = Math.hypot(dx, dz);
+    if (gap < span) return;
+    // a respawn or a fall through the world teleports the tank: re-anchor
+    // rather than paving the whole way there
+    if (gap > span * 24) {
+      e.x = px;
+      e.z = pz;
+      return;
+    }
 
     const width = tread.linkW;
     // right vector for this heading, to sit each mark under its own track
     const rx = Math.sin(heading);
     const rz = Math.cos(heading);
-    for (const side of [-1, 1]) {
-      const oz = side * tread.z;
-      stamp(
-        model.root.position.x + rx * oz,
-        groundY + 0.015,
-        model.root.position.z + rz * oz,
-        heading,
-        width,
-        span * 1.02 // a hair of overlap so there is no seam between stamps
-      );
+    // Drop every stamp the distance covers, evenly along the way — one frame
+    // at top speed can be worth more than one mark, and at low frame rates it
+    // regularly is.
+    const n = Math.floor(gap / span);
+    const ux = dx / gap;
+    const uz = dz / gap;
+    for (let k = 1; k <= n; k++) {
+      const sx = e.x + ux * span * k;
+      const sz = e.z + uz * span * k;
+      for (const side of [-1, 1]) {
+        const oz = side * tread.z;
+        stamp(
+          sx + rx * oz,
+          groundY + 0.015,
+          sz + rz * oz,
+          heading,
+          width,
+          // Overlap along travel. Consecutive marks are laid exactly `span`
+          // apart, so this is pure insurance: on a turn the rectangles pivot
+          // about their own centres and would otherwise open a wedge on the
+          // outside of the corner.
+          span * 1.12
+        );
+      }
     }
+    e.x += ux * span * n;
+    e.z += uz * span * n;
   }
 
   function forget(key) {
