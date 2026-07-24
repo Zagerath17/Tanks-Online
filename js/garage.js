@@ -16,14 +16,214 @@ export function createGarage({ scene, fx, audio, bullets }) {
   group.visible = false;
   scene.add(group);
 
-  // ---- stand ---------------------------------------------------------------
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(46, 64),
-    new THREE.MeshStandardMaterial({ color: '#2b3037', roughness: 0.95 })
-  );
+  // ---- the bay -------------------------------------------------------------
+  const BAY = { w: 30, d: 34, h: 11 };
+
+  const concrete = new THREE.MeshStandardMaterial({ color: '#33383f', roughness: 0.96 });
+  const painted = new THREE.MeshStandardMaterial({ color: '#3d444c', roughness: 0.85, metalness: 0.1 });
+  const steel = new THREE.MeshStandardMaterial({ color: '#4a5159', roughness: 0.5, metalness: 0.75 });
+  const darkSteel = new THREE.MeshStandardMaterial({ color: '#23272c', roughness: 0.6, metalness: 0.6 });
+  const rubber = new THREE.MeshStandardMaterial({ color: '#1d2024', roughness: 0.9 });
+  const hazard = new THREE.MeshStandardMaterial({ color: '#b9962c', roughness: 0.8 });
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), concrete);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   group.add(floor);
+
+  // hazard stripe ringing the working area
+  const ring = new THREE.Mesh(new THREE.RingGeometry(8.2, 8.7, 64), hazard);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.012;
+  group.add(ring);
+
+  // walls
+  const wallGeoLong = new THREE.BoxGeometry(BAY.w, BAY.h, 0.4);
+  const wallGeoSide = new THREE.BoxGeometry(0.4, BAY.h, BAY.d);
+  for (const [geo, x, z] of [
+    [wallGeoLong, 0, -BAY.d / 2], [wallGeoLong, 0, BAY.d / 2],
+    [wallGeoSide, -BAY.w / 2, 0], [wallGeoSide, BAY.w / 2, 0],
+  ]) {
+    const wall = new THREE.Mesh(geo, painted);
+    wall.position.set(x, BAY.h / 2, z);
+    wall.receiveShadow = true;
+    group.add(wall);
+  }
+
+  // ceiling with exposed beams
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), painted);
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.y = BAY.h;
+  group.add(ceiling);
+  for (let i = -2; i <= 2; i++) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(BAY.w, 0.5, 0.42), darkSteel);
+    beam.position.set(0, BAY.h - 0.4, i * 6);
+    group.add(beam);
+  }
+
+  // overhead gantry crane on rails, hook hanging over the tank
+  const railL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, BAY.d - 1), steel);
+  railL.position.set(-7.5, BAY.h - 1.1, 0);
+  const railR = railL.clone();
+  railR.position.x = 7.5;
+  group.add(railL, railR);
+
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(16.4, 0.55, 0.9), steel);
+  bridge.position.set(0, BAY.h - 1.6, -1.5);
+  group.add(bridge);
+  const trolley = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 1.3), darkSteel);
+  trolley.position.set(1.2, BAY.h - 2.2, -1.5);
+  group.add(trolley);
+  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 3.6, 6), darkSteel);
+  cable.position.set(1.2, BAY.h - 4.3, -1.5);
+  group.add(cable);
+  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.07, 8, 14), steel);
+  hook.position.set(1.2, BAY.h - 6.2, -1.5);
+  group.add(hook);
+
+  // strip lights under the beams
+  const lampMat = new THREE.MeshStandardMaterial({
+    color: '#fff6e2', emissive: '#ffeccb', emissiveIntensity: 1.5, roughness: 0.4,
+  });
+  for (const z of [-9, -3, 3, 9]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(9, 0.16, 0.5), lampMat);
+    lamp.position.set(0, BAY.h - 0.75, z);
+    group.add(lamp);
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(9.4, 0.3, 0.8), darkSteel);
+    housing.position.set(0, BAY.h - 0.6, z);
+    group.add(housing);
+  }
+
+  // --- workbenches, racks and clutter round the walls ----------------------
+  function bench(x, z, ry, len) {
+    const g = new THREE.Group();
+    const top = new THREE.Mesh(new THREE.BoxGeometry(len, 0.12, 1.1), steel);
+    top.position.y = 0.95;
+    top.castShadow = true;
+    g.add(top);
+    for (const sx of [-len / 2 + 0.3, len / 2 - 0.3]) {
+      for (const sz of [-0.42, 0.42]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.95, 0.1), darkSteel);
+        leg.position.set(sx, 0.47, sz);
+        g.add(leg);
+      }
+    }
+    // pegboard behind it with hanging tools
+    const board = new THREE.Mesh(new THREE.BoxGeometry(len, 1.5, 0.08), painted);
+    board.position.set(0, 1.85, -0.5);
+    g.add(board);
+    for (let i = 0; i < Math.floor(len); i++) {
+      const tool = new THREE.Mesh(
+        new THREE.BoxGeometry(0.07, 0.3 + Math.random() * 0.4, 0.06), darkSteel
+      );
+      tool.position.set(-len / 2 + 0.6 + i * 0.9, 1.75 + Math.random() * 0.3, -0.44);
+      g.add(tool);
+    }
+    // a couple of boxes on the top
+    for (let i = 0; i < 3; i++) {
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3 + Math.random() * 0.3, 0.22, 0.28), hazard
+      );
+      box.position.set(-len / 2 + 1 + Math.random() * (len - 2), 1.12, Math.random() * 0.4 - 0.2);
+      box.rotation.y = Math.random();
+      g.add(box);
+    }
+    g.position.set(x, 0, z);
+    g.rotation.y = ry;
+    return g;
+  }
+
+  group.add(bench(-11, -6, Math.PI / 2, 7));
+  group.add(bench(-11, 6, Math.PI / 2, 6));
+  group.add(bench(11, 2, -Math.PI / 2, 8));
+
+  // parts racks
+  function rack(x, z, ry) {
+    const g = new THREE.Group();
+    for (let s = 0; s < 4; s++) {
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.09, 1.0), steel);
+      shelf.position.y = 0.5 + s * 0.85;
+      g.add(shelf);
+      for (let i = 0; i < 3; i++) {
+        const crate = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7 + Math.random() * 0.3, 0.45, 0.7),
+          Math.random() < 0.4 ? hazard : darkSteel
+        );
+        crate.position.set(-1.2 + i * 1.1, 0.78 + s * 0.85, 0);
+        crate.rotation.y = (Math.random() - 0.5) * 0.3;
+        g.add(crate);
+      }
+    }
+    for (const sx of [-1.7, 1.7]) {
+      for (const sz of [-0.45, 0.45]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.6, 0.1), darkSteel);
+        post.position.set(sx, 1.8, sz);
+        g.add(post);
+      }
+    }
+    g.position.set(x, 0, z);
+    g.rotation.y = ry;
+    return g;
+  }
+
+  group.add(rack(-6, -15.5, 0));
+  group.add(rack(6, -15.5, 0));
+  group.add(rack(12, -9, -Math.PI / 2));
+
+  // oil drums and spare track links
+  for (const [x, z] of [[-13, 12], [-12.1, 13], [-13.2, 13.9], [12.6, 12.4], [13.4, 11.2]]) {
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.1, 16), hazard);
+    drum.position.set(x, 0.55, z);
+    drum.castShadow = true;
+    group.add(drum);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.07, 16), darkSteel);
+    lid.position.set(x, 1.12, z);
+    group.add(lid);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const link = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.11, 0.66), rubber);
+    link.position.set(-9 + Math.random() * 1.2, 0.06 + i * 0.115, 11 + Math.random() * 0.6);
+    link.rotation.y = (Math.random() - 0.5) * 0.4;
+    group.add(link);
+  }
+
+  // a spare turret barrel on a trestle
+  const spare = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.14, 4.4, 12), darkSteel);
+  spare.rotation.z = Math.PI / 2;
+  spare.position.set(9.5, 1.15, 7);
+  spare.rotation.y = 0.3;
+  group.add(spare);
+  for (const dx of [-1.5, 1.5]) {
+    const trestle = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.05, 0.9), steel);
+    trestle.position.set(9.5 + dx * Math.cos(0.3), 0.52, 7 - dx * Math.sin(0.3));
+    group.add(trestle);
+  }
+
+  // toolbox trolleys either side of the stand
+  for (const [x, z, ry] of [[-5.5, 6.5, 0.4], [5.8, 6.2, -0.5]]) {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 0.8), hazard);
+    box.position.set(x, 0.68, z);
+    box.rotation.y = ry;
+    box.castShadow = true;
+    group.add(box);
+    for (let d = 0; d < 3; d++) {
+      const drawer = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.06, 0.06), darkSteel);
+      drawer.position.set(x, 0.35 + d * 0.32, z + 0.42 * Math.cos(ry));
+      drawer.rotation.y = ry;
+      group.add(drawer);
+    }
+  }
+
+  // roller shutter at the far end
+  const shutter = new THREE.Mesh(new THREE.BoxGeometry(9, 6.4, 0.25), steel);
+  shutter.position.set(0, 3.2, BAY.d / 2 - 0.3);
+  group.add(shutter);
+  for (let i = 0; i < 14; i++) {
+    const slat = new THREE.Mesh(new THREE.BoxGeometry(9, 0.08, 0.32), darkSteel);
+    slat.position.set(0, 0.5 + i * 0.45, BAY.d / 2 - 0.42);
+    group.add(slat);
+  }
 
   const pedestal = new THREE.Mesh(
     new THREE.CylinderGeometry(STAND.radius, STAND.radius + 0.5, STAND.y, 48),
@@ -44,16 +244,26 @@ export function createGarage({ scene, fx, audio, bullets }) {
   rim.position.y = STAND.y + 0.01;
   group.add(rim);
 
-  const key = new THREE.SpotLight('#fff4e0', 260, 60, Math.PI / 5, 0.45, 1.6);
-  key.position.set(9, 17, 11);
+  // work light straight down onto the stand, plus soft fill from the strips
+  const key = new THREE.SpotLight('#fff4e0', 320, 40, Math.PI / 5, 0.5, 1.4);
+  key.position.set(3.5, 9.5, 4);
   key.target.position.set(0, STAND.y + 1, 0);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
   group.add(key, key.target);
 
-  const fill = new THREE.PointLight('#8fb8e8', 55, 44, 2);
-  fill.position.set(-11, 7, -9);
+  for (const z of [-9, -3, 3, 9]) {
+    const strip = new THREE.PointLight('#ffeccb', 26, 22, 2);
+    strip.position.set(0, BAY.h - 1.2, z);
+    group.add(strip);
+  }
+
+  const fill = new THREE.PointLight('#8fb8e8', 22, 30, 2);
+  fill.position.set(-9, 5, -8);
   group.add(fill);
+
+  const bounce = new THREE.HemisphereLight('#8f9aa8', '#2a2f35', 0.55);
+  group.add(bounce);
 
   // ---- the tank ------------------------------------------------------------
   const model = createTankModel(currentSkin(), currentTurret(), currentHull());
@@ -81,6 +291,9 @@ export function createGarage({ scene, fx, audio, bullets }) {
 
   // ---- recoil springs (never translate the tank) ---------------------------
   let cooldown = 0;
+  let hazeAcc = 0;
+  const _haze = new THREE.Vector3();
+  const _hazeDir = new THREE.Vector3(-0.25, 1, 0).normalize();
   let gunRecoil = 0;
   let smokeLeft = 0;
   let smokeAcc = 0;
@@ -114,6 +327,9 @@ export function createGarage({ scene, fx, audio, bullets }) {
   // the stream weapons need to be audible on the stand too
   const cryoSound = audio.loopOn(model.root, 'cryo');
   const flameSound = audio.loopOn(model.root, 'flame');
+  // the bay itself, and the tank ticking over on the stand
+  const roomSound = audio.loopOn(group, 'workshop');
+  const idleSound = audio.dieselLoop(model.root);
 
   function fire() {
     if (model.hasStream()) return false; // stream weapons fire by holding
@@ -220,6 +436,22 @@ export function createGarage({ scene, fx, audio, bullets }) {
     if (cooldown > 0) cooldown -= dt;
     updateStream(dt);
 
+    // ambience: the room hum, and the tank idling where it stands
+    roomSound.update(1, 0.5);
+    idleSound.update(0, true);
+
+    // exhaust haze drifting off the deck
+    hazeAcc += dt;
+    while (hazeAcc > 0.34) {
+      hazeAcc -= 0.34;
+      _haze.set(
+        model.root.position.x - 1.7 + (Math.random() - 0.5) * 0.5,
+        model.root.position.y + 0.9,
+        model.root.position.z + (Math.random() - 0.5) * 1.2
+      );
+      fx.barrelSmoke(_haze, _hazeDir);
+    }
+
     // barrel slides back and returns
     gunRecoil = Math.max(0, gunRecoil - dt * (0.4 + gunRecoil * 9));
     model.gun.position.x = -gunRecoil;
@@ -279,6 +511,8 @@ export function createGarage({ scene, fx, audio, bullets }) {
     model.setStream(false);
     cryoSound.update(1, 0);
     flameSound.update(1, 0);
+    roomSound.update(1, 0);
+    idleSound.update(0, false);
   }
 
   return {

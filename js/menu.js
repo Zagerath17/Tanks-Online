@@ -45,6 +45,10 @@ export function createMenu(handlers) {
     if (e.key === 'Enter') el('btn-login').click();
   });
   el('btn-forgot').addEventListener('click', () => handlers.onForgot(el('login-user').value.trim()));
+  el('btn-resend').addEventListener('click', () => handlers.onResend({
+    username: el('login-user').value.trim(),
+    password: el('login-pass').value,
+  }));
 
   el('btn-signup').addEventListener('click', () => handlers.onSignUp({
     email: el('signup-email').value.trim(),

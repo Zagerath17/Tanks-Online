@@ -151,6 +151,29 @@ export function createFx(scene) {
     });
   }
 
+  // Dust thrown up behind a track. Kicked backwards and out to the side,
+  // rising as it slows — heavier and longer-lived the faster you're going.
+  function dust(pos, backX, backZ, strength) {
+    const s = 0.5 + strength;
+    spawn({
+      pos: pos.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 0.3, 0.02, (Math.random() - 0.5) * 0.3
+      )),
+      vel: new THREE.Vector3(
+        backX * (1.1 + Math.random() * 1.9) * s + (Math.random() - 0.5) * 0.7,
+        0.5 + Math.random() * 0.9 * s,
+        backZ * (1.1 + Math.random() * 1.9) * s + (Math.random() - 0.5) * 0.7
+      ),
+      life: 0.55 + Math.random() * 0.75,
+      scale: 0.28 + Math.random() * 0.34 * s,
+      grow: 1.5 + strength,
+      color: Math.random() < 0.5 ? 0x9c9484 : 0x857d6e,
+      opacity: 0.20 + 0.16 * strength,
+      drag: 1.5,
+      gravity: -1.1,
+    });
+  }
+
   function plasmaTrail(pos) {
     spawn({
       pos,
@@ -232,6 +255,7 @@ export function createFx(scene) {
     spawn({ pos: p, life: 0.1, scale: 0.3, color: 0x888888, opacity: 0.2, additive: true });
     bulletTrail(p.clone());
     plasmaTrail(p.clone());
+    dust(p.clone(), 0, 0, 0);
     flashLight(p, { intensity: 0.01, life: 0.08 });
   }
 
@@ -266,7 +290,7 @@ export function createFx(scene) {
   }
 
   return {
-    muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, plasmaTrail, ember,
+    muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, plasmaTrail, ember, dust,
     impact, plasmaImpact, explosion, prewarm, update,
   };
 }

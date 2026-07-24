@@ -842,3 +842,7 @@ body.railweapon #cryofill {
   text-transform: uppercase;
   color: var(--olive-200);
 }
+
+
+/* the garage has its own HUD; the driving one has no business showing there */
+body.garage #gamehud { display: none; }

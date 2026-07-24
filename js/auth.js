@@ -141,9 +141,43 @@ export async function signUp({ email, username, password }) {
     throw new Error('that username is already taken');
   }
 
-  await sendEmailVerification(cred.user).catch(() => {});
+  // Do NOT swallow this: if the mail fails to go out, the player needs to be
+  // told, not left waiting for a message that was never sent.
+  let sent = true;
+  let sendError = '';
+  try {
+    await sendEmailVerification(cred.user);
+  } catch (e) {
+    sent = false;
+    sendError = readable(e);
+  }
   await signOut(a);
-  return { email };
+  return { email, sent, sendError };
+}
+
+// Sign in just far enough to send the link again, then sign back out.
+export async function resendVerification({ username, password }) {
+  const { auth: a } = ensure();
+  const rec = await usernameRecord(username);
+  if (!rec || !rec.email) throw new Error('wrong username or password');
+  let cred;
+  try {
+    cred = await signInWithEmailAndPassword(a, rec.email, password);
+  } catch (e) {
+    throw new Error(readable(e));
+  }
+  if (cred.user.emailVerified) {
+    await signOut(a);
+    throw new Error('that email is already verified — just log in');
+  }
+  try {
+    await sendEmailVerification(cred.user);
+  } catch (e) {
+    await signOut(a);
+    throw new Error(readable(e));
+  }
+  await signOut(a);
+  return rec.email;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,9 +196,16 @@ export async function signIn({ username, password }) {
   }
 
   if (!cred.user.emailVerified) {
-    await sendEmailVerification(cred.user).catch(() => {});
+    let resent = true;
+    try {
+      await sendEmailVerification(cred.user);
+    } catch {
+      resent = false;
+    }
     await signOut(a);
-    throw new Error('verify your email first — we have sent the link again');
+    throw new Error(resent
+      ? 'verify your email first — link sent again, check your spam folder'
+      : 'verify your email first (could not resend the link just now)');
   }
 
   profile = { uid: cred.user.uid, username: rec.username || username, email: rec.email };

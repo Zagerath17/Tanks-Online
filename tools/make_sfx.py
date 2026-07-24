@@ -203,25 +203,162 @@ def make_hit():
     return normalize(softclip(out, 1.9), 0.92)
 
 # --- engine idle loop (seamless: 1.0 s, integer-Hz partials) ----------------
-def make_engine():
-    n = SR  # exactly 1 second so integer frequencies loop cleanly
-    harmonics = [(28, 1.0), (56, 0.55), (84, 0.38), (112, 0.24), (140, 0.15), (196, 0.09)]
+def _diesel(dur, fire_hz, harmonics, rumble_gain, clatter_gain, breath_hz, seed):
+    """Shared diesel model. A big slow engine is mostly its firing order —
+    a lumpy train of cylinder impulses — plus a low harmonic bed, mechanical
+    clatter and induction breath. Every rate divides the loop length, so it
+    wraps seamlessly.
+    """
+    random.seed(seed)
+    n = int(SR * dur)
+
+    # --- cylinder firing impulses: this is what makes it sound like an engine
+    fires = [0.0] * n
+    period = SR / fire_hz
+    k = 0
+    while k * period < n:
+        i0 = int(k * period)
+        # each cylinder is a little different, and the order is slightly uneven
+        amp = 0.75 + 0.25 * math.sin(k * 1.7)
+        ln = int(period * 0.85)
+        for j in range(ln):
+            idx = (i0 + j) % n
+            env = math.exp(-j / (period * 0.16))
+            # a low thump with a bit of grit on the leading edge
+            fires[idx] += amp * env * (
+                math.sin(2 * math.pi * 46 * (j / SR))
+                + 0.5 * math.sin(2 * math.pi * 92 * (j / SR))
+                + 0.35 * random.uniform(-1, 1) * math.exp(-j / (period * 0.03))
+            )
+        k += 1
+
+    # --- harmonic bed, giving it body and pitch
     phases = {f: random.uniform(0, math.pi * 2) for f, _ in harmonics}
+    bed = []
+    for i in range(n):
+        t = i / SR
+        bed.append(sum(a * math.sin(2 * math.pi * f * t + phases[f]) for f, a in harmonics))
+
+    # --- deep rumble under everything. The noise block must itself be
+    # periodic over the loop, then filtered across a doubled copy, or the
+    # filter state at the wrap won't match and the loop clicks.
+    rnoise = [random.uniform(-1, 1) for _ in range(n)]
+    rumble = lowpass(rnoise + rnoise, 90)[n:]
+
+    # --- valvetrain clatter
+    clatter = [0.0] * n
+    t = 0.0
+    while t < dur:
+        i0 = int(t * SR)
+        ln = random.randint(20, 70)
+        amp = random.uniform(0.2, 1.0)
+        for j in range(ln):
+            clatter[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.3))
+        t += random.uniform(0.5 / fire_hz, 1.6 / fire_hz)
+    clatter = highpass(lowpass(clatter + clatter, 4200), 1100)[n:]
+
+    # --- induction breath
+    bnoise = [random.uniform(-1, 1) for _ in range(n)]
+    breath = lowpass(bnoise + bnoise, 700)[n:]
+
     out = []
     for i in range(n):
         t = i / SR
-        s = sum(a * math.sin(2 * math.pi * f * t + phases[f]) for f, a in harmonics)
-        # 14 Hz cylinder chug (integer Hz -> loops)
-        chug = 0.55 + 0.45 * max(0.0, math.sin(2 * math.pi * 14 * t)) ** 2
-        out.append(s * chug)
-    # mechanical breath: looped filtered noise, crossfaded at the seam
-    nz = lowpass(noise(n), 360)
-    fade = int(0.1 * SR)
-    for i in range(fade):
-        w = i / fade
-        nz[i] = nz[i] * w + nz[n - fade + i] * (1 - w)
-    out = mix(gain(out, 1.0), gain(nz, 0.5))
-    return normalize(out, 0.6)
+        # slow lope, so an idle never sounds like a held tone
+        lope = 0.86 + 0.14 * math.sin(2 * math.pi * breath_hz * t)
+        out.append(
+            fires[i] * 1.25 * lope
+            + bed[i] * 0.55
+            + rumble[i] * rumble_gain
+            + clatter[i] * clatter_gain
+            + breath[i] * 0.22
+        )
+
+    # every source above is periodic over the loop, so the only thing that
+    # can break the wrap now is the final filter's start-up — run it across
+    # a doubled copy and keep the second half
+    out = lowpass(out + out, 5000)[n:]
+    return normalize(softclip(out, 1.25), 0.95)
+
+
+def make_engine_idle():
+    """Ticking over: slow, lumpy, mostly bottom end."""
+    # 8 Hz firing (about 480 rpm on a big diesel), 2 s loop -> wraps exactly
+    return _diesel(
+        dur=2.0, fire_hz=8,
+        harmonics=[(24, 1.0), (48, 0.5), (72, 0.3), (96, 0.16), (144, 0.08)],
+        rumble_gain=1.5, clatter_gain=0.42, breath_hz=1.5, seed=21,
+    )
+
+
+def make_engine_drive():
+    """Under load: faster firing, harder edge, more air."""
+    # 22 Hz firing, 1 s loop
+    return _diesel(
+        dur=1.0, fire_hz=22,
+        harmonics=[(44, 1.0), (88, 0.55), (132, 0.34), (176, 0.2), (264, 0.1)],
+        rumble_gain=1.15, clatter_gain=0.6, breath_hz=3.0, seed=57,
+    )
+
+
+# kept so the old name still works
+def make_engine():
+    return make_engine_idle()
+
+
+# --- workshop ambience (seamless 4.0 s loop) --------------------------------
+def make_workshop():
+    """The bay the tank sits in: extractor fans, a low electrical hum, the
+    hiss of a compressor line and the odd distant clank of tools."""
+    random.seed(88)
+    dur = 4.0
+    n = int(SR * dur)
+
+    def tile(p):
+        return p + p
+
+    def steady(x2n):
+        return x2n[n:]
+
+    def pnoise():
+        return tile([random.uniform(-1, 1) for _ in range(n)])
+
+    # extractor fans: broadband air, slowly wavering
+    fans = steady(lowpass(pnoise(), lambda i: 340 + 120 * math.sin(2 * math.pi * 0.5 * ((i % n) / SR))))
+
+    # mains hum and its harmonics
+    hum = []
+    for i in range(n):
+        t = i / SR
+        hum.append(
+            0.6 * math.sin(2 * math.pi * 50 * t)
+            + 0.3 * math.sin(2 * math.pi * 100 * t + 0.6)
+            + 0.15 * math.sin(2 * math.pi * 150 * t + 1.2)
+        )
+
+    # compressor line hiss, well up the spectrum and quiet
+    hiss = steady(highpass(lowpass(pnoise(), 5200), 2600))
+
+    # distant clanks: sparse metallic hits
+    clank = [0.0] * n
+    t = random.uniform(0.2, 1.0)
+    while t < dur:
+        i0 = int(t * SR)
+        f = random.uniform(320, 1400)
+        tau = random.uniform(0.05, 0.16)
+        amp = random.uniform(0.15, 0.4)
+        ln = int(tau * 4 * SR)
+        for j in range(ln):
+            clank[(i0 + j) % n] += amp * math.sin(2 * math.pi * f * (j / SR)) * math.exp(-j / (tau * SR))
+        t += random.uniform(0.9, 2.2)
+
+    out = []
+    for i in range(n):
+        out.append(fans[i] * 0.85 + hum[i] * 0.20 + hiss[i] * 0.16 + clank[i] * 0.5)
+
+    out = steady(lowpass(tile(out), 6000))
+    return normalize(out, 0.55)
+
 
 # --- cryo stream (seamless 4.0 s loop) --------------------------------------
 def make_cryo():
@@ -457,45 +594,115 @@ def make_plasma():
 
 # --- railgun discharge ------------------------------------------------------
 def make_rail():
-    """A capacitor bank emptying at once: a rising whine cut off by a hard
-    crack, then a long metallic ring down the rails. Heavier and longer than
-    anything else in the pack, because it only goes off every five seconds."""
-    n = int(SR * 1.1)
+    """The heaviest thing in the pack, and it needs to feel like it.
 
-    # the crack itself
-    crack = [s * e for s, e in zip(noise(n), env_exp(n, 0.012))]
-    crack = highpass(crack, 1200)
+    The previous build measured thin because almost all of its energy sat
+    above 300 Hz — a crack with nothing underneath it. This one is built
+    around the bottom end: a sub-bass drop that starts below hearing and
+    slams, a long body, a wide blast of air, and only then the rail ring on
+    top. It runs 2.2 s so the report has somewhere to go.
+    """
+    n = int(SR * 2.2)
 
-    # a hard downward sweep — the slug leaving the rails
-    sweep = []
+    # sub drop: the actual weight. Starts high-ish, falls to near-DC.
+    sub = []
     phase = 0.0
     for i in range(n):
         t = i / SR
-        f = 2400 * math.exp(-t / 0.05) + 90
+        f = 190 * math.exp(-t / 0.10) + 26
         phase += 2 * math.pi * f / SR
-        sweep.append(math.sin(phase) * math.exp(-i / (0.09 * SR)))
+        sub.append(math.sin(phase) * math.exp(-i / (0.42 * SR)))
 
-    # deep body
-    body = [
-        0.9 * math.sin(2 * math.pi * 54 * (i / SR)) * math.exp(-i / (0.22 * SR))
-        + 0.5 * math.sin(2 * math.pi * 81 * (i / SR) + 0.7) * math.exp(-i / (0.16 * SR))
-        for i in range(n)
-    ]
+    # second, slower drop an octave up, filling out the body
+    body = []
+    phase = 0.0
+    for i in range(n):
+        t = i / SR
+        f = 420 * math.exp(-t / 0.14) + 58
+        phase += 2 * math.pi * f / SR
+        body.append(math.sin(phase) * math.exp(-i / (0.30 * SR)))
 
-    # rails ringing afterwards
+    # the crack: short, hard, wide
+    crack = [s * e for s, e in zip(noise(n), env_exp(n, 0.016))]
+    crack = highpass(crack, 900)
+
+    # blast of displaced air behind it, sweeping downward
+    blast = [s * e for s, e in zip(noise(n), env_exp(n, 0.34))]
+    blast = lowpass(blast, lambda i: 2600 * math.exp(-i / (0.25 * SR)) + 110)
+
+    # rails ringing, kept well under the low end this time
     ring = [0.0] * n
-    for f, tau, amp in [(340, 0.30, 1.0), (521, 0.24, 0.6), (869, 0.17, 0.34), (1310, 0.12, 0.2)]:
+    for f, tau, amp in [(196, 0.55, 1.0), (312, 0.42, 0.55), (523, 0.30, 0.3), (784, 0.20, 0.16)]:
         ph = random.uniform(0, math.pi * 2)
         for i in range(n):
             ring[i] += amp * math.sin(2 * math.pi * f * (i / SR) + ph) * math.exp(-i / (tau * SR))
 
-    # ionised wash trailing off
-    wash = [s * e for s, e in zip(noise(n), env_exp(n, 0.28))]
-    wash = highpass(lowpass(wash, 2600), 300)
+    # a long tail of settling air so it doesn't stop dead
+    tail = [s * e for s, e in zip(noise(n), env_exp(n, 0.9))]
+    tail = lowpass(tail, 420)
 
-    out = mix(gain(crack, 0.9), gain(sweep, 0.85), gain(body, 1.1),
-              gain(ring, 0.42), gain(wash, 0.3))
-    return normalize(softclip(out, 1.4), 0.94)
+    out = mix(
+        gain(sub, 2.1),
+        gain(body, 1.35),
+        gain(crack, 0.7),
+        gain(blast, 0.85),
+        gain(ring, 0.30),
+        gain(tail, 0.30),
+    )
+    out = softclip(out, 1.15)
+    return normalize(out, 0.97)
+
+
+# --- aegis emitter (seamless 2.0 s loop) ------------------------------------
+def make_aegis():
+    """A tesla set idling under load: a mains-like buzz with its harmonics,
+    a high corona hiss, and irregular spits as the gap breaks down. Every
+    source is periodic over the loop and filtered across a doubled copy, so
+    the wrap is continuous."""
+    dur = 2.0
+    n = int(SR * dur)
+
+    def tile(p):
+        return p + p
+
+    def steady(x2n):
+        return x2n[n:]
+
+    def periodic_noise():
+        return tile([random.uniform(-1, 1) for _ in range(n)])
+
+    # buzz: a sawtooth-ish stack on 60 Hz, all multiples of 0.5 Hz so it wraps
+    buzz = []
+    for i in range(n):
+        t = i / SR
+        s = 0.0
+        for k, amp in [(1, 1.0), (2, 0.5), (3, 0.34), (4, 0.2), (6, 0.12), (8, 0.07)]:
+            s += amp * math.sin(2 * math.pi * 60 * k * t)
+        buzz.append(s * 0.4)
+
+    # corona hiss around the electrodes
+    corona = steady(highpass(lowpass(periodic_noise(), 6500), 2400))
+
+    # spits: the gap arcing over irregularly
+    spit = [0.0] * n
+    t = 0.0
+    while t < dur:
+        i0 = int(t * SR)
+        ln = random.randint(60, 260)
+        amp = random.uniform(0.3, 1.0)
+        for j in range(ln):
+            spit[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.25))
+        t += random.uniform(0.05, 0.19)
+    spit = steady(highpass(lowpass(tile(spit), 5200), 900))
+
+    out = []
+    for i in range(n):
+        tt = i / SR
+        wob = 0.85 + 0.15 * math.sin(2 * math.pi * 3.5 * tt)
+        out.append(buzz[i] * 0.9 * wob + corona[i] * 0.34 + spit[i] * 0.45)
+
+    out = steady(lowpass(tile(out), 7000))
+    return normalize(out, 0.72)
 
 
 if __name__ == '__main__':
@@ -504,8 +711,11 @@ if __name__ == '__main__':
     write_wav(os.path.join(dest, 'shot.wav'), make_shot())
     write_wav(os.path.join(dest, 'explosion.wav'), make_explosion())
     write_wav(os.path.join(dest, 'hit.wav'), make_hit())
-    write_wav(os.path.join(dest, 'engine.wav'), make_engine())
+    write_wav(os.path.join(dest, 'engine.wav'), make_engine_idle())
+    write_wav(os.path.join(dest, 'engine_drive.wav'), make_engine_drive())
+    write_wav(os.path.join(dest, 'workshop.wav'), make_workshop())
     write_wav(os.path.join(dest, 'cryo.wav'), make_cryo())
     write_wav(os.path.join(dest, 'flame.wav'), make_flame())
     write_wav(os.path.join(dest, 'plasma.wav'), make_plasma())
     write_wav(os.path.join(dest, 'rail.wav'), make_rail())
+    write_wav(os.path.join(dest, 'aegis.wav'), make_aegis())

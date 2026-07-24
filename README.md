@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.26
+# Tank Remake — prototype 0.28
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -7,6 +7,8 @@ A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win
 Play holds the future modes (TDM / FFA / CTF — placeholders for now), Settings is a stub, and **Custom** is the working mode: online multiplayer on the arena map for up to 12 players. Create a lobby to get a 4-digit code, or join with a code someone gives you. Only the host can start the match.
 
 ## Garage
+
+A working tank bay: gantry crane on rails with the hook slung over the stand, strip lights under exposed roof beams, benches with pegboards and tools, parts racks, oil drums, stacked spare track links, a barrel up on trestles, toolbox trolleys and a roller shutter at the far end. The room hums — extractor fans, mains buzz, a compressor line and the odd distant clank — and your tank sits there idling with exhaust haze drifting off the deck.
 
 Your tank on a lit turntable. Drag anywhere to spin the camera around it, and click (or hit space) to actually fire — full muzzle flash, smoke, sound, a live shell downrange, and the hull rearing back on its suspension. The recoil is spring-driven, so the tank rocks hard and settles back to exactly where it stood; it never drifts off the stand.
 
@@ -42,19 +44,19 @@ Twin emitters set wide apart, fed from a charged accumulator sphere cradled betw
 
 The bolts are layered — an unlit blazing core inside a pulsing plasma shell, a soft halo, and a billboarded corona, shedding glowing motes as they fly. They travel at half the cannon shell's speed, fly perfectly flat with no drop, and burn out at 70 m. Each one does 25 damage, and impacts burst blue instead of orange.
 
-Tanks leave tread marks pressed into the ground — grouser bars with worn ends and scuffed soil between them, laid under both tracks as you drive. They hold for twenty seconds before fading away.
+Tanks throw up dust behind their tracks as they drive, and leave tread marks pressed into the ground, one grouser imprint per track link at the tread's own pitch — grouser bars with worn ends and scuffed soil between them, laid under both tracks as you drive. They hold for twenty seconds before fading away.
 
 ## Aegis Emitter
 
-A tesla set: an insulator stack carrying a wound coil and a copper toroid, with two swept prongs out front holding a charged sphere in the gap they leave. Hold the trigger and an electrified lifeline strikes from that gap to whichever tank sits closest to your aim — the beam finds its own target inside a 24-degree cone out to 26 m, and holds the lock until it drifts well outside.
+A squat emitter body carrying two heavy prongs, one above the other, with a permanent electric arc jumping the gap between their tips. The arc sits yellow at rest. Hold the trigger and the emitter powers up whether or not anything is in range — it burns charge, hums, and the arc pulses hard across the gap. When it does find someone, a lifeline strikes from the gap to whichever tank sits closest to your aim, inside a 24-degree cone out to 26 m, and holds the lock until it drifts well outside.
 
-On a teammate the arc runs green and mends 50 health a second. On an enemy it runs red, draining 75 a second and feeding a fifth of that back into your own hull. Both tick ten times a second, and it runs off the same charge bar as the other sustained weapons.
+On a teammate both arcs run green and it mends 50 health a second. On an enemy they run red, draining 75 a second and feeding a fifth of that back into your own hull. Both tick ten times a second, and it runs off the same charge bar as the other sustained weapons.
 
 Because it needs to tell friend from foe, players in a Custom lobby are now alternated onto two sides as they join, shown in the lobby list.
 
 ## Railgun
 
-A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Hold the trigger and it spins up for a second — rings swell and turn, the capacitor bands and the muzzle core brighten — then it lets go with an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
+A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Tap the trigger and it spins up for a second — you don't need to keep holding — rings swell and turn, the capacitor bands and the muzzle core brighten — then it lets go with an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
 
 ## Editor
 
@@ -121,7 +123,7 @@ Until the config is filled in the game still runs — the account screen and the
 
 Sign up with an email, a username and a password. Firebase emails you a verification link, and the game refuses to sign you in until you've clicked it — if you try, it resends the link. Usernames are 3–16 characters of letters, numbers or underscores, are claimed the moment you sign up, and can't be taken by anyone else; an email can only back one account.
 
-Log in with your **username** and password. "Forgot password" emails a reset link to whatever address is behind that username.
+Log in with your **username** and password. If the verification email hasn't turned up, check your spam folder first — Firebase sends from a `firebaseapp.com` address and it often lands there. There's a **resend verification** button on the login screen, and if a send ever fails the game now says so rather than telling you to check an inbox nothing was sent to. "Forgot password" emails a reset link to whatever address is behind that username.
 
 Your name sits in the top-left of the menu. Clicking it offers **Log out** and **Delete account** — deleting asks for your password, then erases the profile, releases the username, and removes the login itself.
 

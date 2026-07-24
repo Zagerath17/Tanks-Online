@@ -973,10 +973,12 @@ function buildPlasmaTurret(M) {
 }
 
 // ---------------------------------------------------------------------------
-// Aegis Emitter: a tesla set. A stepped insulator stack carries a wound coil
-// and a copper toroid; out front, two swept prongs hold a charged sphere in
-// the gap they leave, and that gap is where the lifeline strikes from.
+// Aegis Emitter: a squat emitter body carrying two heavy prongs. The working
+// end is the gap between their tips, where a permanent arc jumps across —
+// yellow at rest, red or green once it has hold of someone.
 // ---------------------------------------------------------------------------
+export const AEGIS_PRONG = { gapY: 0.30, x: 1.62 };
+
 function buildAegisTurret(M) {
   const t = new THREE.Group();
 
@@ -988,9 +990,9 @@ function buildAegisTurret(M) {
   profile.moveTo(-0.74, 0.0);
   profile.lineTo(0.62, 0.0);
   profile.lineTo(0.78, 0.18);
-  profile.lineTo(0.52, 0.48);
-  profile.lineTo(-0.40, 0.58);
-  profile.lineTo(-0.78, 0.38);
+  profile.lineTo(0.52, 0.52);
+  profile.lineTo(-0.40, 0.62);
+  profile.lineTo(-0.78, 0.40);
   profile.closePath();
   const bodyGeo = new THREE.ExtrudeGeometry(profile, {
     depth: 1.16, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1,
@@ -1000,36 +1002,21 @@ function buildAegisTurret(M) {
   body.position.y = 0.08;
   t.add(body);
 
-  // insulator stack: ceramic discs of decreasing size
-  for (let i = 0; i < 4; i++) {
-    const r = 0.24 - i * 0.028;
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.05, 16), M.metal);
-    disc.position.set(-0.34, 0.68 + i * 0.09, 0);
-    t.add(disc);
-  }
-
-  // wound coil above the stack
-  const coil = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.30, 16), M.barrel);
-  coil.position.set(-0.34, 1.10, 0);
-  t.add(coil);
-  for (let i = 0; i < 5; i++) {
-    const wind = new THREE.Mesh(new THREE.TorusGeometry(0.163, 0.021, 8, 18), M.plasma);
-    wind.position.set(-0.34, 0.99 + i * 0.055, 0);
-    wind.rotation.x = Math.PI / 2;
-    t.add(wind);
-  }
-
-  // copper toroid capping the coil
-  const toroid = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.062, 10, 22), M.plasma);
-  toroid.position.set(-0.34, 1.30, 0);
-  toroid.rotation.x = Math.PI / 2;
-  t.add(toroid);
-
-  // conduits running forward to the emitter
+  // insulator stacks flanking the breech, feeding the prongs
   for (const side of [-1, 1]) {
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.02, 8), M.plasma);
+    for (let i = 0; i < 3; i++) {
+      const r = 0.15 - i * 0.02;
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.055, 14), M.metal);
+      disc.position.set(-0.18, 0.70 + i * 0.085, side * 0.34);
+      t.add(disc);
+    }
+    const term = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), M.plasma);
+    term.position.set(-0.18, 0.95, side * 0.34);
+    t.add(term);
+
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 1.1, 8), M.plasma);
     cable.rotation.z = Math.PI / 2;
-    cable.position.set(0.16, 0.50, side * 0.2);
+    cable.position.set(0.36, 0.44, side * 0.34);
     t.add(cable);
   }
 
@@ -1037,53 +1024,61 @@ function buildAegisTurret(M) {
   pitchGroup.position.set(0.74, 0.36, 0);
   t.add(pitchGroup);
 
-  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.44, 0.66), M.turret);
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.46, 0.70), M.turret);
   pitchGroup.add(mantlet);
 
   const gun = new THREE.Group();
   pitchGroup.add(gun);
 
-  // stubby emitter housing
-  const housingGeo = new THREE.CylinderGeometry(0.17, 0.19, 0.6, 10);
-  housingGeo.rotateZ(Math.PI / 2);
-  const housing = new THREE.Mesh(housingGeo, M.barrel);
-  housing.position.set(0.42, 0.02, 0);
-  gun.add(housing);
+  // emitter block the prongs are rooted in
+  const block = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.44, 0.5), M.barrel);
+  block.position.set(0.36, 0.02, 0);
+  gun.add(block);
 
-  // two swept prongs holding the gap
-  for (const side of [-1, 1]) {
-    const prong = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.07), M.metal);
-    prong.position.set(0.98, 0.02, side * 0.15);
-    prong.rotation.y = -side * 0.20;
-    gun.add(prong);
+  // two thick prongs reaching forward, one above the other, with the working
+  // gap between their tips
+  const gap = AEGIS_PRONG.gapY / 2;
+  for (const dir of [1, -1]) {
+    const armGeo = new THREE.BoxGeometry(1.15, 0.15, 0.19);
+    const arm = new THREE.Mesh(armGeo, M.barrel);
+    arm.position.set(1.06, 0.02 + dir * gap * 0.72, 0);
+    arm.rotation.z = dir * 0.10;
+    gun.add(arm);
 
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 10), M.plasma);
-    tip.position.set(1.28, 0.02, side * 0.09);
+    // a heavier root where each prong leaves the block
+    const root = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.26), M.barrel);
+    root.position.set(0.6, 0.02 + dir * gap * 0.45, 0);
+    gun.add(root);
+
+    // banded insulation along the prong
+    for (let i = 0; i < 3; i++) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.19, 0.23), M.metal);
+      band.position.set(0.78 + i * 0.26, 0.02 + dir * gap * (0.55 + i * 0.09), 0);
+      gun.add(band);
+    }
+
+    // the charged tip the arc springs from
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.088, 14, 12), M.plasma);
+    tip.position.set(AEGIS_PRONG.x, 0.02 + dir * gap, 0);
     gun.add(tip);
+
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.24, 12), M.metal);
+    cone.rotation.z = -Math.PI / 2;
+    cone.position.set(AEGIS_PRONG.x - 0.16, 0.02 + dir * gap, 0);
+    gun.add(cone);
   }
 
-  // the charged sphere suspended between them
-  const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.105, 1), M.plasma);
-  orb.position.set(1.18, 0.02, 0);
-  gun.add(orb);
-
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.03, 8, 18), M.metal);
-  ring.position.set(0.78, 0.02, 0);
-  ring.rotation.y = Math.PI / 2;
-  gun.add(ring);
+  // the arc between the tips is created by the game and parented here
+  const arcAnchor = new THREE.Object3D();
+  gun.add(arcAnchor);
 
   const muzzle = new THREE.Object3D();
-  muzzle.position.set(1.42, 0.02, 0);
+  muzzle.position.set(AEGIS_PRONG.x + 0.1, 0.02, 0);
   gun.add(muzzle);
 
-  return { turret: t, pitchGroup, gun, muzzle };
+  return { turret: t, pitchGroup, gun, muzzle, arcAnchor, prongGap: AEGIS_PRONG };
 }
 
-// ---------------------------------------------------------------------------
-// Railgun: a tall, narrow mount carrying a very long two-rail barrel. Twin
-// capacitor towers flank the breech and a stack of accelerator rings runs the
-// length of the rails; both light up and spin as the shot winds up.
-// ---------------------------------------------------------------------------
 function buildRailgunTurret(M) {
   const t = new THREE.Group();
   const charge = []; // parts the wind-up animates
@@ -1431,6 +1426,8 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
     gun,
     muzzle,
     muzzles: parts.muzzles || null,
+    get arcAnchor() { return parts.arcAnchor || null; },
+    get prongGap() { return parts.prongGap || null; },
     turretId,
     hull,
     hullId: hull.id,

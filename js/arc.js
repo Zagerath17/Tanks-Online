@@ -1,5 +1,25 @@
 import * as THREE from 'three';
 
+// Sprites need a texture: an untextured SpriteMaterial renders as a flat
+// opaque square, which is exactly what showed up in front of the railgun.
+function makeGlowTexture() {
+  const s = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = s;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const GLOW = makeGlowTexture();
+
 // The Aegis Emitter's lifeline: a jagged electrical arc strung between the
 // emitter and whatever it has locked. Built as three nested camera-facing
 // ribbons following one shared path — a white-hot core, a coloured body, and
@@ -40,7 +60,7 @@ export function createRailBeam(scene) {
   });
 
   const flashMat = new THREE.SpriteMaterial({
-    color: 0xbfe0ff, transparent: true, opacity: 0, depthWrite: false,
+    map: GLOW, color: 0xbfe0ff, transparent: true, opacity: 0, depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
   const flash = new THREE.Sprite(flashMat);
@@ -85,6 +105,78 @@ export function createRailBeam(scene) {
   return { fire, update, hide };
 }
 
+// The short arc that jumps between the Aegis's two prong tips. It lives on
+// the turret rather than in the world, so it is parented, not positioned.
+export function createProngArc(parent) {
+  const SEG = 12;
+  const group = new THREE.Group();
+  parent.add(group);
+
+  const layers = [
+    { w: 0.028, c: 0xffffff, o: 0.95 },
+    { w: 0.075, c: 0xffd23d, o: 0.6 },
+    { w: 0.17, c: 0xffa914, o: 0.25 },
+  ];
+  const ribbons = layers.map((L) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((SEG + 1) * 2 * 3), 3));
+    const idx = [];
+    for (let i = 0; i < SEG; i++) {
+      const a = i * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+    geo.setIndex(idx);
+    const mat = new THREE.MeshBasicMaterial({
+      color: L.c, transparent: true, opacity: L.o,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    group.add(mesh);
+    return { geo, mat, w: L.w, base: L.o };
+  });
+
+  const seeds = [];
+  for (let i = 0; i <= SEG; i++) seeds.push({ a: Math.random() * 6.28, s: 14 + Math.random() * 22 });
+
+  const _c = new THREE.Color();
+  let t = 0;
+
+  // from/to are in the parent's local space; colour is the beam's state
+  function update(dt, from, to, colour, strength, pulse) {
+    t += dt;
+    _c.set(colour);
+    const amp = 0.045 + 0.03 * pulse;
+    for (let li = 0; li < ribbons.length; li++) {
+      const r = ribbons[li];
+      r.mat.color.copy(_c);
+      if (li === 0) r.mat.color.lerp(new THREE.Color(0xffffff), 0.7);
+      r.mat.opacity = r.base * strength * (0.75 + 0.25 * Math.sin(t * 18 + li));
+      const pos = r.geo.attributes.position;
+      for (let i = 0; i <= SEG; i++) {
+        const f = i / SEG;
+        const taper = Math.sin(f * Math.PI);
+        const s = seeds[i];
+        const jy = Math.sin(t * s.s + s.a) * amp * taper;
+        const jx = Math.cos(t * s.s * 0.7 + s.a) * amp * taper;
+        const x = from.x + (to.x - from.x) * f + jx;
+        const y = from.y + (to.y - from.y) * f + jy;
+        const z = from.z + (to.z - from.z) * f;
+        const w = r.w * (0.5 + 0.5 * taper);
+        pos.setXYZ(i * 2, x, y + w, z);
+        pos.setXYZ(i * 2 + 1, x, y - w, z);
+      }
+      pos.needsUpdate = true;
+      r.geo.computeBoundingSphere();
+    }
+  }
+
+  function setVisible(v) { group.visible = v; }
+  setVisible(false);
+
+  return { update, setVisible, group };
+}
+
 export function createArcBeam(scene) {
   const group = new THREE.Group();
   group.visible = false;
@@ -116,7 +208,7 @@ export function createArcBeam(scene) {
 
   // muzzle flare and a bloom where the arc lands
   const flareMat = new THREE.SpriteMaterial({
-    color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
+    map: GLOW, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
   const flare = new THREE.Sprite(flareMat);

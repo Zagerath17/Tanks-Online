@@ -10,7 +10,7 @@ import { createMenu } from './menu.js';
 import { createRemoteManager } from './remote.js';
 import { createPhysics } from './physics.js';
 import { createTreadMarks } from './tracks.js';
-import { createArcBeam, createRailBeam } from './arc.js';
+import { createArcBeam, createRailBeam, createProngArc } from './arc.js';
 import { createEditor } from './editor.js';
 import { createColorWheel } from './colorwheel.js';
 import { createGarage } from './garage.js';
@@ -126,15 +126,18 @@ const local = {
   emberAcc: 0,
 };
 
-const engine = audio.engineLoop(playerModel.root);
+const engine = audio.dieselLoop(playerModel.root);
 const cryoSound = audio.loopOn(playerModel.root, 'cryo');
 const flameSound = audio.loopOn(playerModel.root, 'flame');
+const aegisSound = audio.loopOn(playerModel.root, 'aegis');
 
 // Arctic Snap trigger + fuel
 let firingHeld = false;
 let lastTrackX = 0;
 let lastTrackZ = 0;
 const _trackFwd = new THREE.Vector3();
+const _dustPos = new THREE.Vector3();
+let dustAcc = 0;
 const cryo = { fuel: 100, streaming: false };
 
 // ---------------------------------------------------------------------------
@@ -233,12 +236,26 @@ const menu = createMenu({
     if (!accounts.authConfigured()) { menu.err('signup-err', CONFIG_MSG); return; }
     menu.err('signup-err', 'creating account...');
     try {
-      await accounts.signUp({ email, username, password });
-      menu.err('signup-err', 'check your email to verify, then log in');
+      const res = await accounts.signUp({ email, username, password });
       menu.show('scr-login');
-      menu.err('login-err', 'verify your email, then sign in');
+      menu.err('login-err', res.sent
+        ? `verification sent to ${res.email} — check your spam folder, then log in`
+        : `account made, but the email failed: ${res.sendError}. Use "resend" below.`);
     } catch (e) {
       menu.err('signup-err', String(e.message || e));
+    }
+  },
+  onResend: async ({ username, password }) => {
+    if (!accounts.authConfigured()) { menu.err('login-err', CONFIG_MSG); return; }
+    if (!username || !password) {
+      menu.err('login-err', 'enter your username and password first');
+      return;
+    }
+    try {
+      const to = await accounts.resendVerification({ username, password });
+      menu.err('login-err', `verification resent to ${to} — check spam`);
+    } catch (e) {
+      menu.err('login-err', String(e.message || e));
     }
   },
   onForgot: async (username) => {
@@ -391,6 +408,7 @@ function stopStreaming() {
   aegis.active = false;
   aegis.lock = null;
   arcBeam.hide();
+  aegisSound.update(1, 0);
 }
 
 function leaveToMenu() {
@@ -956,6 +974,7 @@ canvas.addEventListener('mousedown', (e) => {
     return;
   }
   firingHeld = true;
+  rail.trigger = true;
   if (!playerModel.hasStream()) tryPlayerFire();
 });
 
@@ -1167,7 +1186,7 @@ function tickDamage(unit, key, hit, spec, dt) {
 // instant and punches straight through everything in its path, shedding
 // damage with each tank it passes.
 // ---------------------------------------------------------------------------
-const rail = { wind: 0 };
+const rail = { wind: 0, winding: false, trigger: false };
 const _rp = new THREE.Vector3();
 const _rd = new THREE.Vector3();
 const _rq = new THREE.Quaternion();
@@ -1215,12 +1234,19 @@ function updateRailgun(dt) {
   const spec = railSpecOf(playerModel.turretId);
   if (!spec) {
     rail.wind = 0;
+    rail.winding = false;
+    rail.trigger = false;
     playerModel.setCharge(0);
     return;
   }
 
   const ready = cryo.fuel >= 99.5;
-  const wants = firingHeld && local.alive && ready;
+  // A tap is enough: pressing the trigger latches the wind-up, and it runs
+  // to completion on its own whether or not the button is still down.
+  if (!rail.winding && rail.trigger && local.alive && ready) rail.winding = true;
+  rail.trigger = false;
+  if (!local.alive) rail.winding = false;
+  const wants = rail.winding;
 
   if (wants) {
     rail.wind = Math.min(spec.windUp, rail.wind + dt);
@@ -1236,6 +1262,7 @@ function updateRailgun(dt) {
       resolveRailShot(_rp, _rd, local, spec);
       cryo.fuel = 0;
       rail.wind = 0;
+      rail.winding = false;
       if (phase === 'playing') {
         net.sendShot({
           x: r3(_rp.x), y: r3(_rp.y), z: r3(_rp.z),
@@ -1245,7 +1272,7 @@ function updateRailgun(dt) {
       }
     }
   } else {
-    rail.wind = Math.max(0, rail.wind - dt * 2.5); // spins back down if released
+    rail.wind = Math.max(0, rail.wind - dt * 2.5);
     cryo.fuel = Math.min(100, cryo.fuel + spec.fuelRecharge * dt);
   }
 
@@ -1264,6 +1291,33 @@ const _atv = new THREE.Vector3();
 const _aq = new THREE.Quaternion();
 const AEGIS_GREEN = 0x53e07a;
 const AEGIS_RED = 0xff4a3d;
+const AEGIS_YELLOW = 0xffd23d;
+
+// The prong arc belongs to the turret, so it is rebuilt whenever the turret
+// changes and lives in the emitter's own local space.
+let prongArc = null;
+let prongArcOwner = null;
+const _pgA = new THREE.Vector3();
+const _pgB = new THREE.Vector3();
+
+function updateProngArc(dt, powered, colour) {
+  const anchor = playerModel.arcAnchor;
+  if (!anchor) {
+    if (prongArc) prongArc.setVisible(false);
+    return;
+  }
+  if (prongArcOwner !== anchor) {
+    prongArc = createProngArc(anchor);
+    prongArcOwner = anchor;
+  }
+  const gap = playerModel.prongGap;
+  _pgA.set(gap.x, 0.02 + gap.gapY / 2, 0);
+  _pgB.set(gap.x, 0.02 - gap.gapY / 2, 0);
+  // idles steadily; pulses hard while the emitter is drawing power
+  const pulse = powered ? 0.5 + 0.5 * Math.sin(performance.now() * 0.012) : 0;
+  prongArc.setVisible(true);
+  prongArc.update(dt, _pgA, _pgB, colour, powered ? 0.75 + 0.45 * pulse : 0.4, pulse);
+}
 
 function pickAegisTarget(spec) {
   playerModel.muzzle.getWorldPosition(_amz);
@@ -1295,6 +1349,8 @@ function updateAegis(dt) {
     aegis.lock = null;
     aegis.active = false;
     arcBeam.hide();
+    if (prongArc) prongArc.setVisible(false);
+    aegisSound.update(1, 0);
     return;
   }
 
@@ -1304,6 +1360,9 @@ function updateAegis(dt) {
   } else if (wants && cryo.fuel >= spec.restartAt) {
     aegis.active = true;
   }
+  // The emitter runs whenever it's switched on — an empty sky just means it
+  // burns charge and crackles across the prongs with nothing to hold.
+  const powered = aegis.active;
 
   // hold a lock while it stays valid, otherwise look for a new one
   if (aegis.active) {
@@ -1315,8 +1374,8 @@ function updateAegis(dt) {
     aegis.lock = null;
   }
 
-  const firing = aegis.active && !!aegis.lock;
-  if (firing) {
+  const firing = powered && !!aegis.lock;
+  if (powered) {
     cryo.fuel = Math.max(0, cryo.fuel - spec.fuelDrain * dt);
   } else {
     cryo.fuel = Math.min(100, cryo.fuel + spec.fuelRecharge * dt);
@@ -1344,6 +1403,11 @@ function updateAegis(dt) {
     _atv.y += 1.0;
   }
   arcBeam.update(dt, camera, _amz, _atv, firing, friendly ? AEGIS_GREEN : AEGIS_RED);
+
+  // the arc across the prong tips: yellow idle, and it takes the beam's
+  // colour once the emitter has hold of somebody
+  updateProngArc(dt, powered, firing ? (friendly ? AEGIS_GREEN : AEGIS_RED) : AEGIS_YELLOW);
+  aegisSound.update(1, powered ? 0.5 : 0);
   elCryoFill.style.transform = `scaleX(${cryo.fuel / 100})`;
 }
 
@@ -1711,6 +1775,29 @@ renderer.setAnimationLoop(() => {
       );
       lastTrackX = p.x;
       lastTrackZ = p.z;
+
+      // dust off the back of both tracks, the faster the heavier
+      const spdFrac = Math.min(1, Math.abs(player.state.tread) / playerModel.hull.move.maxForward);
+      if (player.state.contact && spdFrac > 0.12) {
+        dustAcc += dt * (0.5 + spdFrac * 2.4);
+        const tread = playerModel.hull.tread;
+        const h = player.state.heading;
+        const fx_ = Math.cos(h);
+        const fz_ = -Math.sin(h);
+        const rx_ = Math.sin(h);
+        const rz_ = Math.cos(h);
+        const back = player.state.tread >= 0 ? -1 : 1;
+        while (dustAcc > 0.06) {
+          dustAcc -= 0.06;
+          const side = Math.random() < 0.5 ? -1 : 1;
+          _dustPos.set(
+            p.x + fx_ * back * tread.runHalf + rx_ * side * tread.z,
+            p.y,
+            p.z + fz_ * back * tread.runHalf + rz_ * side * tread.z
+          );
+          fx.dust(_dustPos, fx_ * back, fz_ * back, spdFrac);
+        }
+      }
     }
     for (const ru of remote.targets()) {
       if (!ru.alive || !ru.model.root.visible) continue;
@@ -1752,16 +1839,14 @@ renderer.setAnimationLoop(() => {
     if (!flying) updateCamera(dt);
 
     const sunAnchor = flying ? camera.position : playerModel.root.position;
+    sun.intensity = 1.9;
     sun.position.copy(sunAnchor).add(SUN_OFFSET);
     sun.target.position.copy(sunAnchor);
 
     // the engine note follows the tracks (it roars while they slip against a
     // wall), the speedo below follows how fast the hull is actually moving
     const speedFrac = Math.abs(player.state.tread) / playerModel.hull.move.maxForward;
-    engine.update(
-      0.72 + speedFrac * 0.65,
-      local.alive && !flying ? 0.16 + speedFrac * 0.14 : 0
-    );
+    engine.update(speedFrac, local.alive && !flying);
 
     if (phase === 'playing') {
       stateAcc += dt;
@@ -1780,15 +1865,18 @@ renderer.setAnimationLoop(() => {
     garage.update(dt, camera);
     bullets.update(dt, [], () => {}, (pos) => fx.impact(pos.clone()), ENV_GARAGE);
     fx.update(dt);
-    engine.update(0.72, 0);
+    engine.update(0, false);
+    // the bay is lit by its own fittings; keep the sun out of it
     sun.position.set(18, 30, 14);
     sun.target.position.set(0, 0, 0);
+    sun.intensity = 0.25;
     elGarageReload.style.transform = `scaleX(${garage.usesCharge() ? garage.fuelFrac() : garage.reloadFrac()})`;
   } else {
     updateIdleCamera(dt);
     fx.update(dt);
     remote.update(dt);
-    engine.update(0.72, 0);
+    engine.update(0, false);
+    sun.intensity = 1.9;
     sun.position.copy(SUN_OFFSET);
     sun.target.position.set(0, 0, 0);
   }

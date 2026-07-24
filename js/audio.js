@@ -8,7 +8,10 @@ export function createAudio(camera, scene) {
 
   const buffers = {};
   const loader = new THREE.AudioLoader();
-  for (const name of ['shot', 'explosion', 'hit', 'engine', 'cryo', 'flame', 'plasma', 'rail']) {
+  for (const name of [
+    'shot', 'explosion', 'hit', 'engine', 'engine_drive', 'workshop',
+    'cryo', 'flame', 'plasma', 'rail', 'aegis',
+  ]) {
     loader.load(`./assets/sfx/${name}.wav`, (b) => { buffers[name] = b; });
   }
 
@@ -66,6 +69,53 @@ export function createAudio(camera, scene) {
     };
   }
 
+  // The engine is two loops running at once — a lumpy idle and a harder
+  // drive note — crossfaded by how hard the tracks are turning. That reads
+  // far better than pitching one clip up and down, and it means the tank is
+  // always audibly ticking over even at a standstill.
+  function dieselLoop(object3d) {
+    let idle = null;
+    let drive = null;
+    let master = 1;
+
+    function attach(name, ref) {
+      const buffer = buffers[name];
+      if (!buffer || !unlocked) return null;
+      const a = new THREE.PositionalAudio(listener);
+      a.setBuffer(buffer);
+      a.setLoop(true);
+      a.setRefDistance(ref);
+      a.setVolume(0);
+      object3d.add(a);
+      a.play();
+      return a;
+    }
+
+    return {
+      setMaster(v) { master = v; },
+      // frac: 0 at a standstill, 1 at full track speed
+      update(frac, alive) {
+        if (!idle) idle = attach('engine', 14);
+        if (!drive) drive = attach('engine_drive', 14);
+        if (!idle || !drive) return;
+        const f = Math.max(0, Math.min(1, frac));
+        const on = alive ? 1 : 0;
+        // the idle never drops away entirely; the drive note rides on top
+        idle.setVolume(master * on * (0.62 - 0.30 * f));
+        idle.setPlaybackRate(0.94 + f * 0.22);
+        drive.setVolume(master * on * (0.10 + 0.78 * f * f));
+        drive.setPlaybackRate(0.82 + f * 0.55);
+      },
+      stop() {
+        for (const a of [idle, drive]) {
+          if (a) { a.stop(); object3d.remove(a); }
+        }
+        idle = null;
+        drive = null;
+      },
+    };
+  }
+
   // Looping engine attached to the player's hull; rate/volume follow speed
   function engineLoop(object3d) {
     let audio = null;
@@ -94,5 +144,5 @@ export function createAudio(camera, scene) {
     };
   }
 
-  return { playAt, engineLoop, loopOn };
+  return { playAt, engineLoop, dieselLoop, loopOn };
 }
