@@ -29,27 +29,34 @@ function makeTreadTexture() {
   ctx.clearRect(0, 0, w, h);
 
   // ground scuffed up between the bars
-  ctx.fillStyle = 'rgba(0,0,0,0.13)';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
   ctx.fillRect(0, 3, w, h - 6);
   for (let i = 0; i < 1100; i++) {
-    ctx.fillStyle = `rgba(0,0,0,${0.02 + Math.random() * 0.06})`;
+    ctx.fillStyle = `rgba(0,0,0,${0.03 + Math.random() * 0.09})`;
     ctx.fillRect(Math.random() * w, 3 + Math.random() * (h - 6), 1 + Math.random() * 2, 1 + Math.random() * 2);
   }
 
-  // the grousers: one bar per link, spanning the full width of the track
+  // The grousers: one bar per link, spanning the full width of the track.
+  //
+  // These run ACROSS the direction of travel, which means that from a chase
+  // camera they repeat along the axis of maximum foreshortening — the mip
+  // chain averages them together and what survives on screen is close to the
+  // texture's MEAN alpha rather than its peaks. So the bars are wide and the
+  // scuff between them is dark: the average is what has to read, not the
+  // contrast between them.
   const pitch = w / BARS;
   for (let i = 0; i < BARS; i++) {
     const x = i * pitch;
-    const barW = pitch * 0.42; // the raised ridge is about this much of a link
+    const barW = pitch * 0.52; // the raised ridge is about this much of a link
     const g = ctx.createLinearGradient(x, 0, x + barW, 0);
-    g.addColorStop(0, 'rgba(0,0,0,0.34)');
-    g.addColorStop(0.45, 'rgba(0,0,0,0.66)');
-    g.addColorStop(1, 'rgba(0,0,0,0.30)');
+    g.addColorStop(0, 'rgba(0,0,0,0.46)');
+    g.addColorStop(0.45, 'rgba(0,0,0,0.80)');
+    g.addColorStop(1, 'rgba(0,0,0,0.42)');
     ctx.fillStyle = g;
     ctx.fillRect(x, 4, barW, h - 8);
 
     // the fine detail lines: each link's cleats, running across the bar
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillStyle = 'rgba(0,0,0,0.26)';
     for (let k = 0; k < 7; k++) {
       const y = 6 + k * ((h - 12) / 6.4);
       ctx.fillRect(x - pitch * 0.05, y, barW + pitch * 0.10, 1.5);
@@ -81,7 +88,12 @@ function makeTreadTexture() {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.anisotropy = 8;
+  // Bars that lie across the track repeat along the direction the chase
+  // camera is most foreshortened in, which is precisely the case trilinear
+  // mipmapping smears worst. Anisotropic filtering is the fix for that, so
+  // ask for as much of it as the GPU has (three clamps this to the hardware
+  // maximum on upload).
+  tex.anisotropy = 16;
   return tex;
 }
 
@@ -107,7 +119,7 @@ void main() {
   float k = 1.0 - clamp((vAge - uHold) / uFade, 0.0, 1.0);
   if (k <= 0.001) discard;
   vec4 t = texture2D(uMap, vUv);
-  gl_FragColor = vec4(0.04, 0.035, 0.03, t.a * k * 0.85);
+  gl_FragColor = vec4(0.035, 0.031, 0.027, t.a * k * 0.95);
 }
 `;
 

@@ -332,11 +332,14 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   underGlow.position.set(0, STAND.y - 0.34, STAND.halfZ - 0.02);
   group.add(underGlow);
 
-  // ---- ramp off the back of the deck --------------------------------------
-  {
-    const rampGroup = new THREE.Group();
-    rampGroup.name = 'ramp';
-    group.add(rampGroup);
+  // ---- ramps off both ends of the deck ------------------------------------
+  // dir -1 runs out of the back of the bay, dir +1 runs out toward the door,
+  // so the tank can drive straight in off the apron, up onto the deck, and
+  // out the other side.
+  function buildRamp(dir) {
+    const g = new THREE.Group();
+    g.name = dir < 0 ? 'ramp-rear' : 'ramp-door';
+    group.add(g);
 
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
@@ -345,35 +348,38 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     shape.closePath();
     const geo = new THREE.ExtrudeGeometry(shape, { depth: RAMP.halfW * 2, bevelEnabled: false });
     // the profile is drawn with +X running down the slope; turn it so the
-    // slope runs out of the back of the deck, along -Z
-    geo.rotateY(Math.PI / 2);
-    geo.translate(-RAMP.halfW, 0, 0);
+    // slope runs out of the chosen end of the deck
+    geo.rotateY(dir < 0 ? Math.PI / 2 : -Math.PI / 2);
+    geo.translate(dir < 0 ? -RAMP.halfW : RAMP.halfW, 0, 0);
     const ramp = new THREE.Mesh(geo, plinthMat);
-    ramp.position.set(0, 0, -STAND.halfZ);
+    ramp.position.set(0, 0, dir * STAND.halfZ);
     ramp.castShadow = true;
     ramp.receiveShadow = true;
-    rampGroup.add(ramp);
+    g.add(ramp);
 
     // tread strips up the slope, and hazard edging down each side
     const rise = Math.atan2(STAND.y, RAMP.len);
     for (let i = 0; i < 7; i++) {
       const f = (i + 0.5) / 7;
       const strip = new THREE.Mesh(new THREE.BoxGeometry(RAMP.halfW * 2 - 0.3, 0.035, 0.16), steel);
-      strip.position.set(0, STAND.y * (1 - f) + 0.03, -STAND.halfZ - RAMP.len * f);
-      strip.rotation.x = -rise;
-      rampGroup.add(strip);
+      strip.position.set(0, STAND.y * (1 - f) + 0.03, dir * (STAND.halfZ + RAMP.len * f));
+      strip.rotation.x = dir * rise;
+      g.add(strip);
     }
     for (const s of [-1, 1]) {
       const kerb = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.1, Math.hypot(RAMP.len, STAND.y)), hazard
       );
       kerb.position.set(
-        s * (RAMP.halfW - 0.08), STAND.y / 2 + 0.05, -STAND.halfZ - RAMP.len / 2
+        s * (RAMP.halfW - 0.08), STAND.y / 2 + 0.05, dir * (STAND.halfZ + RAMP.len / 2)
       );
-      kerb.rotation.x = -rise;
-      rampGroup.add(kerb);
+      kerb.rotation.x = dir * rise;
+      g.add(kerb);
     }
   }
+
+  buildRamp(-1);
+  buildRamp(1);
 
   // hazard stripe painted on the floor around the working area
   {
@@ -416,20 +422,29 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   group.add(bounce);
 
   // ---- daylight through the open door -------------------------------------
-  // A soft radial falloff, reused for the shaft and the pool it throws on the
-  // floor. Hard-edged quads read as cardboard; this reads as light.
-  function makeFalloff(stops) {
+  // A soft blob that fades to nothing on EVERY edge. The previous shafts used
+  // a gradient that only faded along their length, so their long sides ended
+  // as hard straight cuts — and where those flat cards passed through a wall
+  // or the floor they left a crisp diagonal seam across it. That is what made
+  // them read as grey cardboard rather than as light.
+  function makeSoftBlob() {
+    const s = 128;
     const c = document.createElement('canvas');
-    c.width = c.height = 128;
+    c.width = c.height = s;
     const ctx = c.getContext('2d');
-    const g = ctx.createLinearGradient(0, 0, 0, 128);
-    for (const [at, col] of stops) g.addColorStop(at, col);
+    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    g.addColorStop(0, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.35)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillRect(0, 0, s, s);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }
+
+  const shafts = [];
+  const sunDir = new THREE.Vector3();
 
   {
     const z = BAY.d / 2;
@@ -458,50 +473,63 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     sun.shadow.camera.far = 60;
     sun.shadow.bias = -0.0012;
     group.add(sun, sun.target);
+    sunDir.subVectors(sun.target.position, sun.position).normalize();
 
     // warm fill just inside the threshold, so the doorway wall glows
     const doorFill = new THREE.PointLight('#ffdfb0', 34, 26, 2);
     doorFill.position.set(0, 3.2, z - 2.2);
     group.add(doorFill);
 
-    // the shaft: slabs of lit air leaning in from the opening, brightest at
-    // the door and fading as they reach across the floor. Three of them, set
-    // at slightly different angles — a single flat plane vanishes the moment
-    // the orbiting camera catches it edge-on.
-    const shaftTex = makeFalloff([
-      [0, 'rgba(255,255,255,0)'],
-      [0.22, 'rgba(255,255,255,0.9)'],
-      [1, 'rgba(255,255,255,0)'],
-    ]);
+    // The shafts: soft streaks of lit air lying along the sun's own axis.
+    // Each one is spun about that axis every frame to face the camera, so it
+    // never flattens out or shows a silhouette — and because the sprite fades
+    // to zero all round, where it does pass through the floor there is no
+    // edge to see.
+    const blob = makeSoftBlob();
     const shaftMat = new THREE.MeshBasicMaterial({
-      map: shaftTex, color: '#ffe3b4', transparent: true, opacity: 0.11,
+      map: blob, color: '#ffe0ac', transparent: true, opacity: 0.10,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     });
     for (let i = -1; i <= 1; i++) {
-      const shaft = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 18), shaftMat);
-      shaft.position.set(i * 3.0, 3.4, z - 8.0);
-      shaft.rotation.x = -Math.PI / 2 + 0.42; // leaning in and down
-      shaft.rotation.y = i * 0.07;
-      group.add(shaft);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 13), shaftMat);
+      // spaced across the opening and pushed back along the sun's direction
+      mesh.position.set(i * 2.9, DOOR.h / 2, z).addScaledVector(sunDir, 6.5);
+      mesh.renderOrder = 2;
+      group.add(mesh);
+      shafts.push(mesh);
     }
 
-    // the pool of light it lays on the concrete. The gradient runs bright at
-    // v=0, and rotateX(-90) maps v=0 to +Z, so it is already brightest at the
-    // threshold and fades inward.
-    const poolTex = makeFalloff([
-      [0, 'rgba(255,255,255,0.9)'],
-      [1, 'rgba(255,255,255,0)'],
-    ]);
+    // the pool of light it lays on the concrete, soft on every edge for the
+    // same reason
     const pool = new THREE.Mesh(
-      new THREE.PlaneGeometry(DOOR.w + 1.5, 15),
+      new THREE.PlaneGeometry(DOOR.w + 4, 17),
       new THREE.MeshBasicMaterial({
-        map: poolTex, color: '#ffe9c6', transparent: true, opacity: 0.30,
+        map: blob, color: '#ffe9c6', transparent: true, opacity: 0.26,
         blending: THREE.AdditiveBlending, depthWrite: false,
       })
     );
     pool.rotation.x = -Math.PI / 2;
-    pool.position.set(0, 0.02, z - 7.6);
+    pool.position.set(0.6, 0.02, z - 8.5);
     group.add(pool);
+  }
+
+  // Cylindrical billboard: keep each shaft's length on the sun axis while
+  // rolling it about that axis to present its face to the camera.
+  const _sx = new THREE.Vector3();
+  const _sz = new THREE.Vector3();
+  const _toCam = new THREE.Vector3();
+  const _basis = new THREE.Matrix4();
+
+  function aimShafts(camera) {
+    for (const s of shafts) {
+      _toCam.copy(camera.position).sub(s.position);
+      _sx.crossVectors(sunDir, _toCam);
+      if (_sx.lengthSq() < 1e-6) continue; // camera on the axis: leave it be
+      _sx.normalize();
+      _sz.crossVectors(_sx, sunDir).normalize();
+      _basis.makeBasis(_sx, sunDir, _sz);
+      s.quaternion.setFromRotationMatrix(_basis);
+    }
   }
 
   // ---- the tank ------------------------------------------------------------
@@ -802,9 +830,12 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     updateAegis(dt);
     if (railBeam) railBeam.update(dt);
 
-    // ambience: the room hum, and the tank idling where it stands
-    roomSound.update(0.85);
+    // ambience: the room hum, and the tank idling where it stands. The bay
+    // tone is deliberately well down in the mix — it is background, not a
+    // feature.
+    roomSound.update(0.34);
     idleSound.update(0, true);
+    aimShafts(camera);
 
     // exhaust haze drifting off the deck
     hazeAcc += dt;

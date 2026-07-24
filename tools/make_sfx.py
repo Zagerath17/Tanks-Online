@@ -308,8 +308,27 @@ def make_engine():
 
 # --- workshop ambience (seamless 4.0 s loop) --------------------------------
 def make_workshop():
-    """The bay the tank sits in: extractor fans, a low electrical hum, the
-    hiss of a compressor line and the odd distant clank of tools."""
+    """The bay the tank sits in: extractor fans, a compressor line, and the
+    odd distant clank of tools.
+
+    Deliberately tuneless. The previous version had two things in it that the
+    ear files as MUSIC rather than as a room:
+
+      * a stack of 50 / 100 / 150 Hz sines - a sustained low chord;
+      * clanks synthesised as a single pure sine at a random pitch between
+        320 and 1400 Hz, decaying like a struck bell. Three of those in a
+        four-second loop is a little melody.
+
+    Both are gone. The low end is now a heavy lowpass of the fan air, so it
+    has weight but no pitch to hear, and the clanks are noise driven through
+    two INHARMONIC resonances - the way real struck metal behaves. Plenty of
+    ring, nothing you could hum.
+
+    The random draws are deliberately unchanged in number and order: every
+    sound generated after this one inherits this generator's RNG state, so
+    altering the draw count here would silently re-roll cryo, flame, plasma,
+    rail and aegis as well.
+    """
     random.seed(88)
     dur = 4.0
     n = int(SR * dur)
@@ -323,23 +342,22 @@ def make_workshop():
     def pnoise():
         return tile([random.uniform(-1, 1) for _ in range(n)])
 
-    # extractor fans: broadband air, slowly wavering
-    fans = steady(lowpass(pnoise(), lambda i: 340 + 120 * math.sin(2 * math.pi * 0.5 * ((i % n) / SR))))
+    # extractor fans: broadband air, slowly wavering   [noise draw 1 of 2]
+    air = pnoise()
+    fans = steady(lowpass(air, lambda i: 340 + 120 * math.sin(2 * math.pi * 0.5 * ((i % n) / SR))))
 
-    # mains hum and its harmonics
-    hum = []
-    for i in range(n):
-        t = i / SR
-        hum.append(
-            0.6 * math.sin(2 * math.pi * 50 * t)
-            + 0.3 * math.sin(2 * math.pi * 100 * t + 0.6)
-            + 0.15 * math.sin(2 * math.pi * 150 * t + 1.2)
-        )
+    # the weight of the room: the same air taken right down. No partials, so
+    # there is no pitch in it to follow.
+    rumble = steady(lowpass(air, 52))
 
-    # compressor line hiss, well up the spectrum and quiet
-    hiss = steady(highpass(lowpass(pnoise(), 5200), 2600))
+    # compressor line hiss, well up the spectrum and quiet   [noise draw 2 of 2]
+    grit = pnoise()
+    hiss = steady(highpass(lowpass(grit, 5200), 2600))
 
-    # distant clanks: sparse metallic hits
+    # Distant clanks: struck metal rather than struck bells. Noise driven
+    # through two inharmonic resonances (a plate's first two modes sit around
+    # 1 : 2.76 apart, nothing like a harmonic series) with a fast decay. Same
+    # four draws per hit as the sine version it replaces.
     clank = [0.0] * n
     t = random.uniform(0.2, 1.0)
     while t < dur:
@@ -348,18 +366,19 @@ def make_workshop():
         tau = random.uniform(0.05, 0.16)
         amp = random.uniform(0.15, 0.4)
         ln = int(tau * 4 * SR)
+        seg = [grit[(i0 + j) % n] * math.exp(-j / (tau * SR * 0.4)) for j in range(ln)]
+        lo = svf_band(seg, min(f, 3000.0), q=0.55)
+        hi = svf_band(seg, min(f * 2.76, 7000.0), q=0.9)
         for j in range(ln):
-            clank[(i0 + j) % n] += amp * math.sin(2 * math.pi * f * (j / SR)) * math.exp(-j / (tau * SR))
+            clank[(i0 + j) % n] += amp * 2.6 * (lo[j] + 0.55 * hi[j])
         t += random.uniform(0.9, 2.2)
+    clank = steady(highpass(lowpass(tile(clank), 7200), 220))
 
     out = []
     for i in range(n):
-        out.append(fans[i] * 0.85 + hum[i] * 0.20 + hiss[i] * 0.16 + clank[i] * 0.5)
+        out.append(fans[i] * 0.9 + rumble[i] * 0.55 + hiss[i] * 0.18 + clank[i] * 0.5)
 
     out = steady(lowpass(tile(out), 6000))
-    # Levelled with the rest of the pack rather than 5 dB under it. At the old
-    # 0.55 peak (0.138 RMS) this sat 17 dB below the tank's idle once the
-    # positional falloff was applied, which is to say it was not there at all.
     return normalize(out, 0.92)
 
 

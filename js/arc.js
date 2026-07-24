@@ -19,6 +19,7 @@ function makeGlowTexture() {
 }
 
 const GLOW = makeGlowTexture();
+const WHITE = new THREE.Color(0xffffff);
 
 // The Aegis Emitter's lifeline: a jagged electrical arc strung between the
 // emitter and whatever it has locked. Built as three nested camera-facing
@@ -108,27 +109,43 @@ export function createRailBeam(scene) {
 // The short arc that jumps between the Aegis's two prong tips. It lives on
 // the turret rather than in the world, so it is parented, not positioned.
 //
-// `scale` is the gap it has to bridge relative to the 0.30 the proportions
-// below were drawn for. Ribbon widths and wander amplitude both track it, so
-// a four-times-wider spark gap gets a four-times-heavier arc rather than a
-// hairline strung across a big empty fork.
+// Built as three nested TUBES, not flat ribbons. The ribbon version offset
+// each path point by +/- w in Y, which meant the strip only had area when the
+// gap ran across Y — and once the prongs went horizontal and the widths were
+// scaled with the gap, the outer layer became a 1.4 m flat card hanging in
+// mid-air that swung about as the camera moved. A tube reads as a bolt from
+// every angle and needs no billboarding.
+//
+// `scale` is the gap it bridges relative to the 0.30 it was drawn for. It
+// drives how far the bolt WANDERS, which is the part that should grow with
+// the gap; the radii stay small and absolute, because a spark does not get
+// fatter just because the electrodes moved apart.
+const ARC_SEG = 14;   // points along the bolt
+const ARC_SIDES = 6;  // faces around it
+
 export function createProngArc(parent, scale = 1) {
-  const SEG = 12;
   const group = new THREE.Group();
   parent.add(group);
 
   const layers = [
-    { w: 0.028, c: 0xffffff, o: 0.95 },
-    { w: 0.075, c: 0xffd23d, o: 0.6 },
-    { w: 0.17, c: 0xffa914, o: 0.25 },
+    { r: 0.022, c: 0xffffff, o: 0.95 },
+    { r: 0.055, c: 0xffd23d, o: 0.55 },
+    { r: 0.095, c: 0xffa914, o: 0.20 },
   ];
-  const ribbons = layers.map((L) => {
+
+  const tubes = layers.map((L) => {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((SEG + 1) * 2 * 3), 3));
+    const verts = (ARC_SEG + 1) * ARC_SIDES;
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
     const idx = [];
-    for (let i = 0; i < SEG; i++) {
-      const a = i * 2;
-      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    for (let i = 0; i < ARC_SEG; i++) {
+      for (let s = 0; s < ARC_SIDES; s++) {
+        const a = i * ARC_SIDES + s;
+        const b = i * ARC_SIDES + ((s + 1) % ARC_SIDES);
+        const c = a + ARC_SIDES;
+        const d = b + ARC_SIDES;
+        idx.push(a, c, b, b, c, d);
+      }
     }
     geo.setIndex(idx);
     const mat = new THREE.MeshBasicMaterial({
@@ -138,41 +155,78 @@ export function createProngArc(parent, scale = 1) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     group.add(mesh);
-    return { geo, mat, w: L.w * scale, base: L.o };
+    return { geo, mat, r: L.r, base: L.o };
   });
 
   const seeds = [];
-  for (let i = 0; i <= SEG; i++) seeds.push({ a: Math.random() * 6.28, s: 14 + Math.random() * 22 });
+  for (let i = 0; i <= ARC_SEG; i++) {
+    seeds.push({ a: Math.random() * 6.28, b: Math.random() * 6.28, s: 14 + Math.random() * 22 });
+  }
 
   const _c = new THREE.Color();
+  const _pt = new THREE.Vector3();
+  const _tan = new THREE.Vector3();
+  const _n = new THREE.Vector3();
+  const _bn = new THREE.Vector3();
+  const _ref = new THREE.Vector3();
+  const path = [];
+  for (let i = 0; i <= ARC_SEG; i++) path.push(new THREE.Vector3());
   let t = 0;
 
   // from/to are in the parent's local space; colour is the beam's state
   function update(dt, from, to, colour, strength, pulse) {
     t += dt;
     _c.set(colour);
-    const amp = (0.045 + 0.03 * pulse) * scale;
-    for (let li = 0; li < ribbons.length; li++) {
-      const r = ribbons[li];
-      r.mat.color.copy(_c);
-      if (li === 0) r.mat.color.lerp(new THREE.Color(0xffffff), 0.7);
-      r.mat.opacity = r.base * strength * (0.75 + 0.25 * Math.sin(t * 18 + li));
-      const pos = r.geo.attributes.position;
-      for (let i = 0; i <= SEG; i++) {
-        const f = i / SEG;
-        const taper = Math.sin(f * Math.PI);
-        const s = seeds[i];
-        const jy = Math.sin(t * s.s + s.a) * amp * taper;
-        const jx = Math.cos(t * s.s * 0.7 + s.a) * amp * taper;
-        const x = from.x + (to.x - from.x) * f + jx;
-        const y = from.y + (to.y - from.y) * f + jy;
-        const z = from.z + (to.z - from.z) * f;
-        const w = r.w * (0.5 + 0.5 * taper);
-        pos.setXYZ(i * 2, x, y + w, z);
-        pos.setXYZ(i * 2 + 1, x, y - w, z);
+
+    // one shared jittered path, so every layer sits concentric
+    const amp = (0.015 + 0.010 * pulse) * scale;
+    for (let i = 0; i <= ARC_SEG; i++) {
+      const f = i / ARC_SEG;
+      const taper = Math.sin(f * Math.PI); // pinned at both tips
+      const s = seeds[i];
+      path[i].set(
+        from.x + (to.x - from.x) * f + Math.cos(t * s.s * 0.7 + s.a) * amp * taper,
+        from.y + (to.y - from.y) * f + Math.sin(t * s.s + s.a) * amp * taper,
+        from.z + (to.z - from.z) * f + Math.sin(t * s.s * 0.55 + s.b) * amp * taper * 0.6
+      );
+    }
+
+    for (let li = 0; li < tubes.length; li++) {
+      const tube = tubes[li];
+      tube.mat.color.copy(_c);
+      if (li === 0) tube.mat.color.lerp(WHITE, 0.7);
+      tube.mat.opacity = tube.base * strength * (0.75 + 0.25 * Math.sin(t * 18 + li));
+
+      const pos = tube.geo.attributes.position;
+      for (let i = 0; i <= ARC_SEG; i++) {
+        _pt.copy(path[i]);
+        // tangent from the neighbours, so the tube follows the wander
+        _tan.copy(path[Math.min(ARC_SEG, i + 1)]).sub(path[Math.max(0, i - 1)]);
+        if (_tan.lengthSq() < 1e-9) _tan.set(0, 0, 1);
+        _tan.normalize();
+        // any reference not parallel to the tangent gives a stable ring
+        _ref.set(0, 1, 0);
+        if (Math.abs(_tan.y) > 0.9) _ref.set(1, 0, 0);
+        _n.crossVectors(_tan, _ref).normalize();
+        _bn.crossVectors(_tan, _n).normalize();
+
+        const f = i / ARC_SEG;
+        // taper to a point at each tip so it springs off the electrodes
+        const r = tube.r * (0.35 + 0.65 * Math.sin(f * Math.PI) ** 0.5);
+        for (let s = 0; s < ARC_SIDES; s++) {
+          const ang = (s / ARC_SIDES) * Math.PI * 2;
+          const cx = Math.cos(ang) * r;
+          const cy = Math.sin(ang) * r;
+          pos.setXYZ(
+            i * ARC_SIDES + s,
+            _pt.x + _n.x * cx + _bn.x * cy,
+            _pt.y + _n.y * cx + _bn.y * cy,
+            _pt.z + _n.z * cx + _bn.z * cy
+          );
+        }
       }
       pos.needsUpdate = true;
-      r.geo.computeBoundingSphere();
+      tube.geo.computeBoundingSphere();
     }
   }
 

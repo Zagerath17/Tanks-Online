@@ -1781,7 +1781,7 @@ renderer.setAnimationLoop(() => {
       // dust off the back of both tracks, the faster the heavier
       const spdFrac = Math.min(1, Math.abs(player.state.tread) / playerModel.hull.move.maxForward);
       if (player.state.contact && spdFrac > 0.06) {
-        dustAcc += dt * (1.2 + spdFrac * 4.3);
+        dustAcc += dt * (1.1 + spdFrac * 3.5);
         const tread = playerModel.hull.tread;
         const h = player.state.heading;
         const fx_ = Math.cos(h);

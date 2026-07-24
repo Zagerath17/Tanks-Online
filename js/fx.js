@@ -156,27 +156,34 @@ export function createFx(scene) {
   // The colours are deliberately neutral: the old 0x9c9484 / 0x857d6e both
   // ran R > G > B, which reads as kicked-up brown earth rather than the
   // concrete and grit these arenas are actually surfaced with.
+  //
+  // Sizing matters more than it looks. `grow` is metres per second added to
+  // the sprite's width, so raising grow AND life together compounds: an
+  // earlier pass had puffs finishing nearly five metres across with over a
+  // hundred of them alive at once — about sixteen times the screen coverage
+  // it started with. That is not dust, it is weather, and it greyed out the
+  // whole strip of ground behind the tank where the tread marks are. This is
+  // roughly twice the original coverage, which reads as plenty.
   function dust(pos, backX, backZ, strength) {
     const s = 0.5 + strength;
-    // a little spread across the greys so the cloud has some depth to it
     const shade = Math.random();
     const color = shade < 0.34 ? 0xb4b7ba : shade < 0.67 ? 0x9a9da1 : 0x828589;
     spawn({
       pos: pos.clone().add(new THREE.Vector3(
-        (Math.random() - 0.5) * 0.45, 0.02, (Math.random() - 0.5) * 0.45
+        (Math.random() - 0.5) * 0.4, 0.14, (Math.random() - 0.5) * 0.4
       )),
       vel: new THREE.Vector3(
-        backX * (1.3 + Math.random() * 2.3) * s + (Math.random() - 0.5) * 0.9,
-        0.7 + Math.random() * 1.25 * s,
-        backZ * (1.3 + Math.random() * 2.3) * s + (Math.random() - 0.5) * 0.9
+        backX * (1.2 + Math.random() * 2.0) * s + (Math.random() - 0.5) * 0.8,
+        1.4 + Math.random() * 1.6 * s,
+        backZ * (1.2 + Math.random() * 2.0) * s + (Math.random() - 0.5) * 0.8
       ),
-      life: 0.85 + Math.random() * 1.05,
-      scale: 0.42 + Math.random() * 0.5 * s,
-      grow: 2.2 + strength * 1.6,
+      life: 0.75 + Math.random() * 0.7,
+      scale: 0.34 + Math.random() * 0.38 * s,
+      grow: 1.0 + strength * 0.7,
       color,
-      opacity: 0.34 + 0.26 * strength,
-      drag: 1.25,
-      gravity: -0.85,
+      opacity: 0.34 + 0.24 * strength,
+      drag: 1.3,
+      gravity: -0.55,
     });
   }
 
