@@ -1,19 +1,24 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { SPEC } from './tank.js';
 import { heightAt } from './map.js';
-import { CHASSIS, MODEL_OFF_Y } from './physics.js';
 
 // The barrel's real vertical travel — the turret aims within this
 export const AIM_PITCH = { min: -0.12, max: 0.17 };
 
 const TURRET_RATE = 2.2; // rad/s traverse — the turret chases the aim
 const PITCH_RATE = 1.1;
-const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 
 export function createPlayerController(model, physics) {
-  const body = physics.createChassis();
+  // every dimension and speed comes from whichever hull the model is wearing
+  let hull = model.hull;
+  const body = physics.createChassis(hull.chassis);
   const gravity = physics.world.gravity;
+
+  // called when the garage swaps hulls: new collision box, speeds, offsets
+  function syncHull() {
+    hull = model.hull;
+    physics.reshapeBody(body, hull.chassis);
+  }
   let slowMul = 1; // 1 = normal, 0.5 = fully frozen
   let airborne = 0; // seconds since the last confirmed ground contact
   let drive = 0;    // the speed the controller is commanding, in m/s
@@ -40,7 +45,7 @@ export function createPlayerController(model, physics) {
 
   function syncModel() {
     _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
-    _off.set(0, MODEL_OFF_Y, 0).applyQuaternion(_q);
+    _off.set(0, hull.chassis.modelOffY, 0).applyQuaternion(_q);
     model.root.position.set(
       body.position.x + _off.x,
       body.position.y + _off.y,
@@ -51,7 +56,7 @@ export function createPlayerController(model, physics) {
 
   function reset(spawn) {
     const gy = spawn.y !== undefined ? spawn.y : heightAt(spawn.x, spawn.z);
-    body.position.set(spawn.x, gy - MODEL_OFF_Y + 0.06, spawn.z);
+    body.position.set(spawn.x, gy - hull.chassis.modelOffY + 0.06, spawn.z);
     body.quaternion.setFromAxisAngle(_yAxis, spawn.heading);
     body.velocity.setZero();
     body.angularVelocity.setZero();
@@ -75,17 +80,17 @@ export function createPlayerController(model, physics) {
   // version was pure linear velocity, which the drive controller read as
   // "briefly reversing" — this pitches the nose up around the axis
   // perpendicular to the shot, so the whole tank visibly bucks.
-  function applyRecoil(dir) {
+  function applyRecoil(dir, scale = 1) {
     const dh = Math.hypot(dir.x, dir.z) || 1;
     const dx = dir.x / dh;
     const dz = dir.z / dh;
     body.applyImpulse(new CANNON.Vec3(
-      -dx * body.mass * 0.45,
+      -dx * body.mass * 0.45 * scale,
       0,
-      -dz * body.mass * 0.45
+      -dz * body.mass * 0.45 * scale
     ));
     // nose-up axis = shotDir x worldUp = (-dz, 0, dx)
-    const rock = 1.05;
+    const rock = 1.05 * scale;
     body.angularVelocity.x += -dz * rock;
     body.angularVelocity.z += dx * rock;
   }
@@ -94,7 +99,7 @@ export function createPlayerController(model, physics) {
   // its roof. Contact friction is zero by design (see physics.js), so without
   // this the wreck would skate away across the arena forever.
   function scrub(dt) {
-    const k = Math.min(1, SPEC.scrub * dt);
+    const k = Math.min(1, hull.move.scrub * dt);
     const vel = body.velocity;
     vel.x -= vel.x * k;
     vel.z -= vel.z * k;
@@ -111,7 +116,7 @@ export function createPlayerController(model, physics) {
   // without touching how the tank behaves once it is actually airborne.
   function dampTumble(dt) {
     const av = body.angularVelocity;
-    const k = Math.min(1, SPEC.stabilize * dt);
+    const k = Math.min(1, hull.move.stabilize * dt);
     const upComp = av.x * _up.x + av.y * _up.y + av.z * _up.z;
     av.x -= (av.x - _up.x * upComp) * k;
     av.y -= (av.y - _up.y * upComp) * k;
@@ -128,7 +133,7 @@ export function createPlayerController(model, physics) {
 
     // coyote time: keep drive authority through brief contact dropouts
     // (cresting a ramp, rolling over a seam) instead of going inert
-    const touching = physics.groundedAt(body.position, GROUND_REACH, body);
+    const touching = physics.groundedAt(body.position, hull.chassis.groundReach, body);
     if (touching) airborne = 0;
     else airborne += dt;
     state.grounded = airborne < 0.16;
@@ -146,19 +151,19 @@ export function createPlayerController(model, physics) {
       // the body each frame meant anything that bled velocity (a scrape, a
       // landing) also erased the throttle's progress.
       if (input.throttle > 0) {
-        drive += (drive < 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
+        drive += (drive < 0 ? hull.move.brakeAccel : hull.move.accel) * slowMul * dt;
       } else if (input.throttle < 0) {
-        drive -= (drive > 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
+        drive -= (drive > 0 ? hull.move.brakeAccel : hull.move.accel) * slowMul * dt;
       } else {
-        const d = SPEC.drag * dt;
+        const d = hull.move.drag * dt;
         drive = Math.abs(drive) <= d ? 0 : drive - Math.sign(drive) * d;
       }
-      drive = THREE.MathUtils.clamp(drive, -SPEC.maxReverse * slowMul, SPEC.maxForward * slowMul);
+      drive = THREE.MathUtils.clamp(drive, -hull.move.maxReverse * slowMul, hull.move.maxForward * slowMul);
 
       // but stay honest about walls: bleed the command toward what the body
       // is actually managing, so the tracks spin against an obstacle instead
       // of the command running away to top speed
-      drive += (measured - drive) * Math.min(1, SPEC.slipRate * dt);
+      drive += (measured - drive) * Math.min(1, hull.move.slipRate * dt);
 
       // Gravity the solver is about to add along the tread plane. Cancelling
       // it is what lets the tank sit still on a ramp: without this it inherits
@@ -170,7 +175,7 @@ export function createPlayerController(model, physics) {
       // Cap the per-step correction. Pinned against a wall the gap between
       // commanded and actual can be the full top speed, and dumping that into
       // the body every frame makes the contact solver jitter.
-      const maxStep = (SPEC.accel + SPEC.brakeAccel) * dt;
+      const maxStep = (hull.move.accel + hull.move.brakeAccel) * dt;
       const dvF = THREE.MathUtils.clamp(drive - measured - gF * dt, -maxStep, maxStep);
       vel.x += _fwd.x * dvF;
       vel.y += _fwd.y * dvF;
@@ -178,7 +183,7 @@ export function createPlayerController(model, physics) {
 
       // treads don't slide sideways
       const vLat = _vel.dot(_right);
-      const dvR = -(vLat * Math.min(1, SPEC.gripRate * dt) + gR * dt);
+      const dvR = -(vLat * Math.min(1, hull.move.gripRate * dt) + gR * dt);
       vel.x += _right.x * dvR;
       vel.y += _right.y * dvR;
       vel.z += _right.z * dvR;
@@ -186,7 +191,7 @@ export function createPlayerController(model, physics) {
       // pivot: steer angular velocity about the hull's own up axis
       const av = body.angularVelocity;
       const avUp = av.x * _up.x + av.y * _up.y + av.z * _up.z;
-      const dAv = (input.turn * SPEC.turnRate * slowMul - avUp) * Math.min(1, SPEC.turnResponse * dt);
+      const dAv = (input.turn * hull.move.turnRate * slowMul - avUp) * Math.min(1, hull.move.turnResponse * dt);
       av.x += _up.x * dAv;
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
@@ -225,7 +230,7 @@ export function createPlayerController(model, physics) {
     // is held up by a wall
     const av = body.angularVelocity;
     const yawRate = av.x * _up.x + av.y * _up.y + av.z * _up.z;
-    model.updateTreads(dt, state.tread - yawRate * SPEC.halfTrack, state.tread + yawRate * SPEC.halfTrack);
+    model.updateTreads(dt, state.tread - yawRate * hull.move.halfTrack, state.tread + yawRate * hull.move.halfTrack);
   }
 
   // Called instead of update() when the tank is dead: no input, no traction,
@@ -233,7 +238,7 @@ export function createPlayerController(model, physics) {
   function coast(dt) {
     _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
     _up.set(0, 1, 0).applyQuaternion(_q);
-    if (physics.groundedAt(body.position, GROUND_REACH, body)) scrub(dt);
+    if (physics.groundedAt(body.position, hull.chassis.groundReach, body)) scrub(dt);
     drive = 0;
     state.v = 0;
     state.tread = 0;
@@ -246,7 +251,7 @@ export function createPlayerController(model, physics) {
   }
 
   return {
-    state, body, update, coast, postStep, reset, applyRecoil,
+    state, body, update, coast, postStep, reset, applyRecoil, syncHull,
     setSlow(mul) { slowMul = Number.isFinite(mul) ? Math.min(1, Math.max(0.35, mul)) : 1; },
   };
 }

@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.17
+# Tank Remake — prototype 0.23
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -10,21 +10,37 @@ Play holds the future modes (TDM / FFA / CTF — placeholders for now), Settings
 
 Your tank on a lit turntable. Drag anywhere to spin the camera around it, and click (or hit space) to actually fire — full muzzle flash, smoke, sound, a live shell downrange, and the hull rearing back on its suspension. The recoil is spring-driven, so the tank rocks hard and settles back to exactly where it stood; it never drifts off the stand.
 
-The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon and **Arctic Snap** work today, the rest are reserved. **Hulls** lists six, the base one working. **Skins** are all live: eight repaints, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
+The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon and **Arctic Snap** work today, the rest are reserved. **Hulls** lists six, three of them working: **Vanguard** is the standard chassis at 1000 hull; **Pioneer** is a compact scout — smaller in every dimension, 800 hull, 20% quicker; **Falcon** is smaller again at 650 hull and another 12% on top of that, a stripped-down runner on four tight road wheels; **Paladin** goes the other way — a heavy chassis at 1250 hull, 10% slower, larger in every dimension, riding on six road wheels and a third return roller; and **Ironclad** is the heaviest of the lot at 1500 hull, slower again, on seven road wheels and the widest track the arena ramps will take.
+
+The five working hulls span 1.8x in length, 2.3x in health and 1.8x in speed:
+
+| hull | hull points | top speed | size (L x W x H) |
+| --- | --- | --- | --- |
+| Ironclad | 1500 | 7.27 | 6.30 x 3.84 x 1.48 |
+| Paladin | 1250 | 8.55 | 5.36 x 3.34 x 1.28 |
+| Vanguard | 1000 | 9.50 | 4.90 x 3.02 x 1.16 |
+| Pioneer | 800 | 11.40 | 4.20 x 2.74 x 1.02 |
+| Falcon | 650 | 12.77 | 3.50 x 2.56 x 0.90 | A hull carries its own silhouette, tread layout, hit boxes, collision body, health pool and top speed, all derived from its own model so they can never disagree. **Skins** are all live: eight repaints, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
 
 ## Arctic Snap
 
 A cryo projector: finned heat-exchanger barrel, twin coolant bottles, a flared nozzle. Instead of shells it pours a blizzard about a tank and a half in front of you — three layered noise-shaded cone shells with ice motes tumbling through them, so the plume has real depth and never repeats.
 
-Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains over about ten seconds of continuous stream and starts refilling the instant you release, taking around eighteen seconds to come back. The stream does 50 damage every half second, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact — it slows driving, hull pivot, and turret traverse alike, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
+Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains over about ten seconds of continuous stream and starts refilling the instant you release, taking around eighteen seconds to come back. The stream does 100 damage a second in tenth-second ticks, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact — it slows driving, hull pivot, and turret traverse alike, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
 
 ## Torrential Inferno
 
-The Arctic Snap's opposite number: a flamethrower with an armoured fuel drum across the back, heat-shielded flanks, a wide-bore barrel and igniter prongs ringing a pilot flame. Same fuel bar, same range, same hold-to-pour handling — but it hits for 75 every half second and sets tanks alight.
+The Arctic Snap's opposite number: a flamethrower with an armoured fuel drum across the back, heat-shielded flanks, a wide-bore barrel and igniter prongs ringing a pilot flame. Same fuel bar, same range, same hold-to-pour handling — but it hits for 60 a second in tenth-second ticks and sets tanks alight.
 
-The burn builds exactly like the freeze does: a few seconds of unbroken contact to reach full, holding a couple of seconds after you break off before it cools at the rate it came on. While it's alight it keeps eating hull on its own — at full burn, 20% of the flamethrower's own output, so 30 a second — so a solid burn keeps working long after you've stopped firing. Burning tanks glow red in proportion to how alight they are and throw embers.
+The burn builds exactly like the freeze does: a few seconds of unbroken contact to reach full, holding a couple of seconds after you break off before it cools at the rate it came on. While it's alight it keeps eating hull on its own — at full burn, 20% of the flamethrower's own output, so 12 a second — so a solid burn keeps working long after you've stopped firing. Burning tanks glow red in proportion to how alight they are and throw embers.
 
 It sounds nothing like the Arctic Snap either, which took some doing: both loops started life as filtered noise under a smooth tremolo, which is a recipe for wind whichever way you tilt it. The Inferno is built instead around what actually identifies fire — dense irregular crackle, gusting driven by random contours rather than sine waves, and a resonant low throat over a pressurised gas jet — and it deliberately stays out of the midrange band where the blizzard howls.
+
+## Dual Plasma
+
+Twin emitters set wide apart, fed from a charged accumulator sphere cradled between them, with a capacitor bank on the roof and acceleration coils stepping down each barrel. The barrels alternate: a bolt every quarter second, so each side fires twice a second.
+
+The bolts are layered — an unlit blazing core inside a pulsing plasma shell, a soft halo, and a billboarded corona, shedding glowing motes as they fly. They travel at half the cannon shell's speed, fly perfectly flat with no drop, and burn out at exactly 100 m. Each one does 25 damage, and impacts burst blue instead of orange.
 
 ## Editor
 

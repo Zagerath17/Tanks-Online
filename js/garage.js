@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createTankModel } from './tank.js';
 import { TURRET_SPECS } from './tank.js';
-import { currentSkin, currentTurret } from './loadout.js';
+import { currentSkin, currentTurret, currentHull } from './loadout.js';
 
 // The garage: your tank on a lit pedestal, an orbiting camera you drag with
 // the mouse, and a gun that fires for real — muzzle flash, smoke, sound, a
@@ -56,7 +56,7 @@ export function createGarage({ scene, fx, audio, bullets }) {
   group.add(fill);
 
   // ---- the tank ------------------------------------------------------------
-  const model = createTankModel(currentSkin(), currentTurret());
+  const model = createTankModel(currentSkin(), currentTurret(), currentHull());
   model.root.position.set(0, STAND.y, 0);
   group.add(model.root);
 
@@ -93,25 +93,41 @@ export function createGarage({ scene, fx, audio, bullets }) {
   const _md = new THREE.Vector3();
   const _mq = new THREE.Quaternion();
 
-  function muzzle(outPos, outDir) {
-    model.muzzle.getWorldPosition(outPos);
-    model.muzzle.getWorldQuaternion(_mq);
+  function muzzle(outPos, outDir, node) {
+    const m = node || model.muzzle;
+    m.getWorldPosition(outPos);
+    m.getWorldQuaternion(_mq);
     outDir.set(1, 0, 0).applyQuaternion(_mq);
+  }
+
+  function gunSpec() {
+    const s = TURRET_SPECS[model.turretId];
+    return s && s.mode === 'projectile' ? s : null;
   }
 
   function fire() {
     if (model.hasStream()) return false; // stream weapons fire by holding
     if (cooldown > 0) return false;
-    cooldown = FIRE_INTERVAL;
-    gunRecoil = 0.22;
-    smokeLeft = 2;
-    muzzle(_mp, _md);
-    bullets.fire({}, _mp.clone().addScaledVector(_md, 0.15), _md.clone());
-    fx.muzzleFlash(_mp.clone(), _md.clone());
-    audio.playAt('shot', _mp, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
+    const spec = gunSpec();
+    if (!spec) return false;
+    const plasma = spec.projectile === 'plasma';
+
+    cooldown = spec.fireInterval;
+    gunRecoil = spec.recoil !== undefined ? spec.recoil : 0.22;
+    smokeLeft = spec.smokeTime !== undefined ? spec.smokeTime : 2;
+
+    const node = spec.dual ? model.nextMuzzle() : model.muzzle;
+    muzzle(_mp, _md, node);
+    bullets.fire({}, _mp.clone().addScaledVector(_md, 0.15), _md.clone(), spec.projectile);
+    fx.muzzleFlash(_mp.clone(), _md.clone(), plasma ? 'plasma' : 'fire');
+    audio.playAt(plasma ? 'plasma' : 'shot', _mp, {
+      volume: plasma ? 0.62 : 0.9,
+      rate: 0.94 + Math.random() * 0.12,
+    });
     // the whole hull bucks: nose lifts, suspension compresses, both settle
-    pitchVel += 2.4;
-    squatVel -= 1.1;
+    const kick = plasma ? 0.35 : 1;
+    pitchVel += 2.4 * kick;
+    squatVel -= 1.1 * kick;
     return true;
   }
 
@@ -119,8 +135,14 @@ export function createGarage({ scene, fx, audio, bullets }) {
     model.setSkin(skin);
   }
 
+  function applyHull(id) {
+    model.setHull(id);
+    model.resetMuzzleCycle();
+  }
+
   function applyTurret(id) {
     model.setTurret(id);
+    model.resetMuzzleCycle();
     cooldown = 0;
     fuel = 100;
     streaming = false;
@@ -202,6 +224,7 @@ export function createGarage({ scene, fx, audio, bullets }) {
   function enter() {
     group.visible = true;
     model.setSkin(currentSkin());
+    model.setHull(currentHull());
     model.setTurret(currentTurret());
     fuel = 100;
     streaming = false;
@@ -224,8 +247,8 @@ export function createGarage({ scene, fx, audio, bullets }) {
   }
 
   return {
-    enter, exit, update, fire, orbit, flingOrbit, applySkin, applyTurret, setStream,
-    reloadFrac: () => 1 - Math.max(0, cooldown) / FIRE_INTERVAL,
+    enter, exit, update, fire, orbit, flingOrbit, applySkin, applyTurret, applyHull, setStream,
+    reloadFrac: () => 1 - Math.max(0, cooldown) / ((gunSpec() || { fireInterval: FIRE_INTERVAL }).fireInterval),
     fuelFrac: () => fuel / 100,
     isStreamWeapon: () => model.hasStream(),
   };

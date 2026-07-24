@@ -9,7 +9,7 @@ export const TURRETS = [
   { id: 'cannon', name: 'Cannon', locked: false },
   { id: 'arctic', name: 'Arctic Snap', locked: false },
   { id: 'inferno', name: 'Torrential Inferno', locked: false },
-  { id: 'railgun', name: 'Railgun', locked: true },
+  { id: 'plasma', name: 'Dual Plasma', locked: false },
   { id: 'mortar', name: 'Mortar', locked: true },
   { id: 'laser', name: 'Laser', locked: true },
   { id: 'scatter', name: 'Scattergun', locked: true },
@@ -18,11 +18,11 @@ export const TURRETS = [
 ];
 
 export const HULLS = [
-  { id: 'standard', name: 'Standard', locked: false },
-  { id: 'scout', name: 'Scout', locked: true },
-  { id: 'hunter', name: 'Hunter', locked: true },
-  { id: 'guardian', name: 'Guardian', locked: true },
-  { id: 'vanguard', name: 'Vanguard', locked: true },
+  { id: 'vanguard', name: 'Vanguard', locked: false },
+  { id: 'pioneer', name: 'Pioneer', locked: false },
+  { id: 'falcon', name: 'Falcon', locked: false },
+  { id: 'paladin', name: 'Paladin', locked: false },
+  { id: 'ironclad', name: 'Ironclad', locked: false },
   { id: 'juggernaut', name: 'Juggernaut', locked: true },
 ];
 
@@ -30,17 +30,28 @@ const KEY = 'tank-loadout';
 
 export const selection = { turret: 0, hull: 0, skin: 0 };
 
+// Selections are stored by id. They used to be stored as array indices,
+// which meant adding or reordering a roster entry silently changed what a
+// player had equipped — old numeric saves are still read, once.
+function resolve(list, value, allowLocked) {
+  let i = -1;
+  if (typeof value === 'string') i = list.findIndex((x) => x.id === value);
+  else if (Number.isInteger(value)) i = value; // legacy index format
+  if (i < 0 || !list[i]) return -1;
+  if (!allowLocked && list[i].locked) return -1;
+  return i;
+}
+
 export function loadSelection() {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY));
     if (raw && typeof raw === 'object') {
-      if (Number.isInteger(raw.turret) && TURRETS[raw.turret] && !TURRETS[raw.turret].locked) {
-        selection.turret = raw.turret;
-      }
-      if (Number.isInteger(raw.hull) && HULLS[raw.hull] && !HULLS[raw.hull].locked) {
-        selection.hull = raw.hull;
-      }
-      if (Number.isInteger(raw.skin) && SKINS[raw.skin]) selection.skin = raw.skin;
+      const t = resolve(TURRETS, raw.turret, false);
+      if (t >= 0) selection.turret = t;
+      const h = resolve(HULLS, raw.hull, false);
+      if (h >= 0) selection.hull = h;
+      const s = resolve(SKINS, raw.skin, true);
+      if (s >= 0) selection.skin = s;
     }
   } catch { /* no saved loadout */ }
   return selection;
@@ -48,7 +59,11 @@ export function loadSelection() {
 
 export function saveSelection() {
   try {
-    localStorage.setItem(KEY, JSON.stringify(selection));
+    localStorage.setItem(KEY, JSON.stringify({
+      turret: (TURRETS[selection.turret] || TURRETS[0]).id,
+      hull: (HULLS[selection.hull] || HULLS[0]).id,
+      skin: (SKINS[selection.skin] || SKINS[0]).id,
+    }));
   } catch { /* storage unavailable */ }
 }
 
@@ -58,6 +73,10 @@ export function currentSkin() {
 
 export function currentTurret() {
   return (TURRETS[selection.turret] || TURRETS[0]).id;
+}
+
+export function currentHull() {
+  return (HULLS[selection.hull] || HULLS[0]).id;
 }
 
 export function skinIndexOf(id) {

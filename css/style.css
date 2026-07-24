@@ -709,3 +709,21 @@ body.flameweapon #cryofill {
   background: linear-gradient(90deg, #e04a10, #ffc070);
   box-shadow: 0 0 6px rgba(255, 150, 70, 0.55);
 }
+
+
+/* ---- hull stat chips (v0.20) ------------------------------------------ */
+
+.gstat {
+  display: block;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--olive-200);
+}
+
+.gstat em {
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  opacity: 0.65;
+  margin-left: 2px;
+}

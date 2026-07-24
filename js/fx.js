@@ -71,11 +71,17 @@ export function createFx(scene) {
 
   // ---- effect recipes ------------------------------------------------------
 
-  function muzzleFlash(pos, dir) {
-    spawn({ pos, life: 0.07, scale: 1.7, grow: 8, color: 0xffdf9e, opacity: 1, additive: true });
+  const FLASH_TINTS = {
+    fire: { hot: 0xffdf9e, mid: 0xffa244, spark: 0xffc26a, light: 0xffb45e, scale: 1 },
+    plasma: { hot: 0xe8f5ff, mid: 0x4f9dff, spark: 0x8fd0ff, light: 0x4f9dff, scale: 0.7 },
+  };
+
+  function muzzleFlash(pos, dir, tint = 'fire') {
+    const T = FLASH_TINTS[tint] || FLASH_TINTS.fire;
+    spawn({ pos, life: 0.07, scale: 1.7 * T.scale, grow: 8 * T.scale, color: T.hot, opacity: 1, additive: true });
     spawn({
       pos: pos.clone().addScaledVector(dir, 0.5),
-      life: 0.06, scale: 1.0, grow: 5, color: 0xffa244, opacity: 0.9, additive: true,
+      life: 0.06, scale: 1.0 * T.scale, grow: 5 * T.scale, color: T.mid, opacity: 0.9, additive: true,
     });
     for (let i = 0; i < 5; i++) {
       const v = dir.clone().multiplyScalar(9 + Math.random() * 7);
@@ -83,11 +89,11 @@ export function createFx(scene) {
       v.y += (Math.random() - 0.5) * 4;
       v.z += (Math.random() - 0.5) * 4;
       spawn({
-        pos, vel: v, life: 0.14 + Math.random() * 0.1, scale: 0.22,
-        color: 0xffc26a, additive: true, drag: 4,
+        pos, vel: v, life: 0.14 + Math.random() * 0.1, scale: 0.22 * T.scale,
+        color: T.spark, additive: true, drag: 4,
       });
     }
-    flashLight(pos);
+    flashLight(pos, { color: T.light, intensity: 30 * T.scale });
   }
 
   function barrelSmoke(pos, dir) {
@@ -145,6 +151,37 @@ export function createFx(scene) {
     });
   }
 
+  function plasmaTrail(pos) {
+    spawn({
+      pos,
+      vel: new THREE.Vector3(
+        (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6
+      ),
+      life: 0.16 + Math.random() * 0.12,
+      scale: 0.3 + Math.random() * 0.12,
+      grow: -0.35,
+      color: Math.random() < 0.35 ? 0xdff1ff : 0x4f9dff,
+      opacity: 0.5,
+      additive: true,
+      drag: 3,
+    });
+  }
+
+  function plasmaImpact(pos) {
+    spawn({ pos, life: 0.1, scale: 1.5, grow: 9, color: 0xd8ecff, additive: true });
+    spawn({ pos, life: 0.2, scale: 0.9, grow: 5, color: 0x3f8dff, opacity: 0.85, additive: true });
+    for (let i = 0; i < 9; i++) {
+      const v = new THREE.Vector3(
+        (Math.random() - 0.5) * 11, Math.random() * 6, (Math.random() - 0.5) * 11
+      );
+      spawn({
+        pos, vel: v, life: 0.22 + Math.random() * 0.16, scale: 0.16,
+        color: 0x7cc2ff, additive: true, drag: 3.2,
+      });
+    }
+    flashLight(pos, { color: 0x4f9dff, intensity: 18, distance: 12, life: 0.08 });
+  }
+
   function impact(pos) {
     spawn({ pos, life: 0.08, scale: 1.1, grow: 6, color: 0xffd08a, additive: true });
     for (let i = 0; i < 6; i++) {
@@ -194,6 +231,7 @@ export function createFx(scene) {
     spawn({ pos: p, life: 0.1, scale: 0.3, color: 0x888888, opacity: 0.2 });
     spawn({ pos: p, life: 0.1, scale: 0.3, color: 0x888888, opacity: 0.2, additive: true });
     bulletTrail(p.clone());
+    plasmaTrail(p.clone());
     flashLight(p, { intensity: 0.01, life: 0.08 });
   }
 
@@ -227,5 +265,8 @@ export function createFx(scene) {
     }
   }
 
-  return { muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, ember, impact, explosion, prewarm, update };
+  return {
+    muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, plasmaTrail, ember,
+    impact, plasmaImpact, explosion, prewarm, update,
+  };
 }

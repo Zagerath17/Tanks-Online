@@ -35,6 +35,37 @@ function slopeHeight(d) {
 // own corner, and the material tiles a single 1x1-unit grid cell — so cells
 // are the same size everywhere and lines land on piece edges.
 // ---------------------------------------------------------------------------
+// Re-project a placed piece's UVs from WORLD position rather than from its
+// own corner. One texture tile is one world unit, so grid lines land on world
+// integers on every face of every piece — two pieces sitting side by side at
+// the same height have lines that carry straight across the join.
+const _wp = new THREE.Vector3();
+const _wn = new THREE.Vector3();
+const _nm = new THREE.Matrix3();
+
+function worldAlignUVs(mesh) {
+  mesh.updateMatrixWorld(true);
+  const geo = mesh.geometry;
+  const pos = geo.getAttribute('position');
+  const nor = geo.getAttribute('normal');
+  const uv = geo.getAttribute('uv');
+  if (!pos || !nor || !uv) return;
+  _nm.getNormalMatrix(mesh.matrixWorld);
+
+  for (let i = 0; i < pos.count; i++) {
+    _wp.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    _wn.fromBufferAttribute(nor, i).applyMatrix3(_nm).normalize();
+    const ax = Math.abs(_wn.x);
+    const ay = Math.abs(_wn.y);
+    const az = Math.abs(_wn.z);
+    // project along whichever world axis the face points down most
+    if (ay >= ax && ay >= az) uv.setXY(i, _wp.x, _wp.z);
+    else if (ax >= az) uv.setXY(i, _wp.z, _wp.y);
+    else uv.setXY(i, _wp.x, _wp.y);
+  }
+  uv.needsUpdate = true;
+}
+
 function makeFaceGeometry(build) {
   const pos = [];
   const nor = [];
@@ -385,12 +416,13 @@ export function createEditor({ scene, physics }) {
       if (key !== decalGhostKey) {
         decalGhostKey = key;
         _euler.setFromQuaternion(_q);
-        const geo = new DecalGeometry(
+        let geo = new DecalGeometry(
           hit.object,
           new THREE.Vector3(px, py, pz),
           _euler,
           decalSize(decal)
         );
+        geo = clipDecalToFace(geo, _n);
         decalGhost.geometry.dispose();
         decalGhost.geometry = geo;
         lastDecalHit = {
@@ -424,14 +456,77 @@ export function createEditor({ scene, physics }) {
   }
 
   // ---- place ---------------------------------------------------------------
+  // DecalGeometry happily wraps a projection around a corner onto the
+  // neighbouring face. Drop any triangle whose normal has turned away from
+  // the face we aimed at, so the decal stops dead at the edge.
+  const _fn = new THREE.Vector3();
+  const _vn = new THREE.Vector3();
+
+  function clipDecalToFace(geo, dir) {
+    const pos = geo.getAttribute('position');
+    const nor = geo.getAttribute('normal');
+    const uv = geo.getAttribute('uv');
+    if (!pos || !nor) return geo;
+    const LIMIT = Math.cos(0.7); // ~40 degrees off the face before it's cut
+    const kp = [];
+    const kn = [];
+    const ku = [];
+    for (let i = 0; i < pos.count; i += 3) {
+      _fn.set(0, 0, 0);
+      for (let k = 0; k < 3; k++) {
+        _vn.fromBufferAttribute(nor, i + k);
+        _fn.add(_vn);
+      }
+      if (_fn.lengthSq() === 0) continue;
+      _fn.normalize();
+      if (_fn.dot(dir) < LIMIT) continue; // curled onto another face
+      for (let k = 0; k < 3; k++) {
+        _vn.fromBufferAttribute(pos, i + k);
+        kp.push(_vn.x, _vn.y, _vn.z);
+        _vn.fromBufferAttribute(nor, i + k);
+        kn.push(_vn.x, _vn.y, _vn.z);
+        if (uv) ku.push(uv.getX(i + k), uv.getY(i + k));
+      }
+    }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(kp, 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(kn, 3));
+    if (uv) out.setAttribute('uv', new THREE.Float32BufferAttribute(ku, 2));
+    geo.dispose();
+    return out;
+  }
+
+  // every decal placed sits one layer above the last, so stacking them never
+  // z-fights or stitches through what is underneath
+  let decalSeq = 0;
+
+  const _projDir = new THREE.Vector3();
+
   function makeDecalRecord(dc, targetMesh, owner, pos, quat) {
     _euler.setFromQuaternion(quat);
-    const geo = new DecalGeometry(targetMesh, pos, _euler, decalSize(dc));
+    let geo = new DecalGeometry(targetMesh, pos, _euler, decalSize(dc));
     if (!geo.getAttribute('position') || geo.getAttribute('position').count === 0) {
       geo.dispose();
       return null;
     }
-    const mesh = new THREE.Mesh(geo, decalMaterial(dc, false));
+    // the decal faces along its own +Z; anything that has bent away from
+    // that has wrapped onto a neighbouring face and gets cut
+    _projDir.set(0, 0, 1).applyQuaternion(quat).normalize();
+    geo = clipDecalToFace(geo, _projDir);
+    if (geo.getAttribute('position').count === 0) {
+      geo.dispose();
+      return null;
+    }
+
+    const layer = ++decalSeq;
+    const mat = decalMaterial(dc, false);
+    // each successive decal is pulled a hair further toward the camera and
+    // drawn later, so a stack of them reads cleanly from bottom to top
+    const bias = 4 + (layer % 96) * 0.5;
+    mat.polygonOffsetFactor = -bias;
+    mat.polygonOffsetUnits = -bias;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 3 + layer;
     group.add(mesh);
     const rec = {
       shape: dc.shape,
@@ -466,6 +561,11 @@ export function createEditor({ scene, physics }) {
     objGroup.rotation.y = yaw;
     group.add(objGroup);
     objGroup.updateMatrixWorld(true);
+
+    // every solid shares one world grid, so neighbouring pieces line up
+    if (type !== 'spawn') {
+      for (const mesh of objGroup.children) worldAlignUVs(mesh);
+    }
 
     const bodies = [];
     if (type === 'wall' || type === 'platform') {

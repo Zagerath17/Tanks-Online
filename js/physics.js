@@ -10,14 +10,16 @@ export const GROUP_REMOTE = 4;
 
 // Chassis box roughly hull + treads. The shape sits high relative to the
 // body origin so the center of mass rides low — stable, but flippable.
+// Chassis dimensions now come from the equipped hull (see HULLS in tank.js),
+// which derives them from its own model so collision can't drift from the
+// geometry. These stay as the Vanguard fallback for any older call site.
 export const CHASSIS = {
-  hx: 2.4,
-  hy: 0.62,
-  hz: 1.51,
-  shapeOffY: 0.1,
+  hx: 2.41,
+  hy: 0.5825,
+  hz: 1.49,
+  shapeOffY: 0.0932,
 };
-// model origin (ground contact under the hull) in body-local space
-export const MODEL_OFF_Y = CHASSIS.shapeOffY - CHASSIS.hy; // -0.52
+export const MODEL_OFF_Y = CHASSIS.shapeOffY - CHASSIS.hy;
 
 export function createPhysics() {
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
@@ -117,9 +119,15 @@ export function createPhysics() {
   }
 
   // ---- tank bodies ---------------------------------------------------------
-  const chassisShape = new CANNON.Box(new CANNON.Vec3(CHASSIS.hx, CHASSIS.hy, CHASSIS.hz));
+  function boxFor(dims) {
+    const d = dims || CHASSIS;
+    return {
+      shape: new CANNON.Box(new CANNON.Vec3(d.hx, d.hy, d.hz)),
+      offY: d.shapeOffY,
+    };
+  }
 
-  function createChassis() {
+  function createChassis(dims) {
     const body = new CANNON.Body({
       mass: 6,
       material: chassisMat,
@@ -129,21 +137,31 @@ export function createPhysics() {
       angularDamping: 0.35,
       allowSleep: false,
     });
-    body.addShape(chassisShape, new CANNON.Vec3(0, CHASSIS.shapeOffY, 0));
+    const b = boxFor(dims);
+    body.addShape(b.shape, new CANNON.Vec3(0, b.offY, 0));
     world.addBody(body);
     return body;
   }
 
-  function createRemoteBody() {
+  function createRemoteBody(dims) {
     const body = new CANNON.Body({
       mass: 0,
       type: CANNON.Body.KINEMATIC,
       collisionFilterGroup: GROUP_REMOTE,
       collisionFilterMask: GROUP_LOCAL,
     });
-    body.addShape(chassisShape, new CANNON.Vec3(0, CHASSIS.shapeOffY, 0));
+    const b = boxFor(dims);
+    body.addShape(b.shape, new CANNON.Vec3(0, b.offY, 0));
     world.addBody(body);
     return body;
+  }
+
+  // Replace a body's collision box in place — used when a hull is swapped.
+  function reshapeBody(body, dims) {
+    while (body.shapes.length) body.removeShape(body.shapes[0]);
+    const b = boxFor(dims);
+    body.addShape(b.shape, new CANNON.Vec3(0, b.offY, 0));
+    body.updateMassProperties();
   }
 
   function removeBody(body) {
@@ -216,7 +234,7 @@ export function createPhysics() {
   }
 
   return {
-    world, createChassis, createRemoteBody, removeBody, addBody,
+    world, createChassis, createRemoteBody, reshapeBody, removeBody, addBody,
     addStaticBox, setArenaActive, groundedAt, step,
   };
 }

@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { createTankModel, SKINS } from './tank.js';
-import { MODEL_OFF_Y } from './physics.js';
+import { createTankModel, SKINS, hullSpec, DEFAULT_HULL } from './tank.js';
 
 // Floating red HP bar above a tank (canvas sprite)
 function makeHpBar(root) {
@@ -57,7 +56,8 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       isLocal: false,
       model,
       bar: makeHpBar(model.root),
-      body: physics.createRemoteBody(),
+      body: physics.createRemoteBody(hullSpec(DEFAULT_HULL).chassis),
+      hullId: DEFAULT_HULL,
       alive: true,
       hp: 1000,
       pos: new THREE.Vector3(),
@@ -79,6 +79,8 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       chillOff: 99,
       burn: 0,
       burnOff: 99,
+      chillNet: 0,
+      burnNet: 0,
       emberAcc: 0,
     };
     ru.body.position.set(0, -50, 0); // parked until first state
@@ -110,10 +112,19 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       ru.turretId = s.tr;
       ru.model.setTurret(s.tr);
     }
+    // hull travels too: new silhouette, new collider, new health scale
+    if (typeof s.hl === 'string' && s.hl !== ru.hullId) {
+      ru.hullId = s.hl;
+      ru.model.setHull(s.hl);
+      physics.reshapeBody(ru.body, ru.model.hull.chassis);
+    }
     ru.streaming = !!s.st;
+    // the owner's own reading of how frozen / alight they are
+    if (typeof s.ch === 'number') ru.chillNet = s.ch;
+    if (typeof s.bn === 'number') ru.burnNet = s.bn;
     if (typeof s.hp === 'number') {
       ru.hp = s.hp;
-      ru.bar.draw(s.hp / 1000);
+      ru.bar.draw(s.hp / ru.model.maxHp);
     }
     if (!ru.model.root.visible) {
       snapTo(ru, s);
@@ -126,6 +137,10 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
   }
 
   function dieVisual(ru) {
+    ru.chill = 0;
+    ru.burn = 0;
+    ru.chillNet = 0;
+    ru.burnNet = 0;
     const pos = ru.pos.clone();
     pos.y += 1.2;
     fx.explosion(pos);
@@ -143,6 +158,7 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
     ru.model.pitchGroup.rotation.z = 0;
     ru.bar.sprite.visible = true;
     ru.bar.draw(1);
+    ru.model.resetMuzzleCycle();
     snapTo(ru, s); // teleport to the fresh spawn — no glide across the map
   }
 
@@ -155,11 +171,12 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
   }
 
   // A shot event arrived from this player — kick their barrel and smoke it
-  function shotFrom(pid) {
+  function shotFrom(pid, kind = 'shell') {
     const ru = players.get(pid);
     if (ru) {
-      ru.fireSmoke = 2;
-      ru.recoil = 0.22;
+      // plasma bolts leave no propellant smoke and barely kick
+      ru.fireSmoke = kind === 'plasma' ? 0 : 2;
+      ru.recoil = kind === 'plasma' ? 0.1 : 0.22;
     }
     return ru || null;
   }
@@ -187,7 +204,7 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       }
 
       // keep the kinematic collider under the visual
-      _off.set(0, -MODEL_OFF_Y, 0).applyQuaternion(ru.quat);
+      _off.set(0, -ru.model.hull.chassis.modelOffY, 0).applyQuaternion(ru.quat);
       ru.body.position.set(ru.pos.x + _off.x, ru.pos.y + _off.y, ru.pos.z + _off.z);
       ru.body.quaternion.set(ru.quat.x, ru.quat.y, ru.quat.z, ru.quat.w);
 

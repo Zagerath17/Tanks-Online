@@ -366,12 +366,14 @@ def make_flame():
     t = 0.0
     while t < dur:
         i0 = int(t * SR)
-        ln = random.randint(8, 46)               # much shorter than before
-        amp = random.uniform(0.15, 1.0) ** 2     # wide dynamic spread
+        ln = random.randint(20, 90)
+        amp = random.uniform(0.2, 1.0) ** 2      # wide dynamic spread
         for j in range(ln):
-            crackle[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.22))
-        t += random.uniform(0.003, 0.018)        # roughly 95 grains a second
-    crackle = unit(steady(highpass(lowpass(tile(crackle), 7000), 1800)))
+            crackle[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.26))
+        t += random.uniform(0.018, 0.055)        # ~28 grains a second, not 95
+    # kept well below the old 1.8-7 kHz band: dense bright grains up there are
+    # precisely the sound of a frying pan, not a flamethrower
+    crackle = unit(steady(highpass(lowpass(tile(crackle), 2600), 480)))
 
     # --- spits: occasional loud pops of fuel catching -----------------------
     spit = [0.0] * n
@@ -382,26 +384,67 @@ def make_flame():
         amp = random.uniform(0.6, 1.0)
         for j in range(ln):
             spit[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.18))
-        t += random.uniform(0.18, 0.5)
-    spit = unit(steady(highpass(lowpass(tile(spit), 2600), 300)))
+        t += random.uniform(0.32, 0.8)
+    spit = unit(steady(highpass(lowpass(tile(spit), 1900), 240)))
 
     # The bed gusts hard; the transients ride on top at a fixed level so they
     # always punch through. Deliberately NOT saturated — soft-clipping the mix
     # measured as squashing the crest factor from 9.4 to 1.6 and wiping out
     # every detectable onset, which is the one thing fire cannot do without.
+    # The bed is now nearly steady. The old build swung its level by a factor
+    # of three under the gust contour, which is what read as "wavy" — a
+    # flamethrower under constant trigger is a continuous roar that flickers,
+    # not something that surges in and out.
     out = []
     for i in range(n):
-        g = 0.42 + 1.00 * gust(i)
-        l = 0.70 + 0.50 * lick(i)
+        g = 0.90 + 0.16 * gust(i)
+        l = 0.92 + 0.12 * lick(i)
         out.append(
-            (jet[i] + throat[i]) * g
-            + burn[i] * 0.30 * l
-            + crackle[i] * 0.75
-            + spit[i] * 0.38
+            (jet[i] * 1.15 + throat[i] * 1.15) * g
+            + burn[i] * 0.48 * l
+            + crackle[i] * 0.30
+            + spit[i] * 0.20
         )
 
-    out = steady(lowpass(tile(out), 8000))
+    # trim sub-bass that only eats headroom, and keep the top dark
+    out = steady(highpass(lowpass(tile(out), 4000), 48))
     return loop_align(normalize(out, 0.9))
+
+
+# --- plasma discharge -------------------------------------------------------
+def make_plasma():
+    """A capacitor dumping into a coil: a bright electric snap, a short
+    downward-swept whine as the bolt leaves the accelerator, and a hollow
+    resonant tail. Deliberately shorter and thinner than the cannon so a
+    two-a-second cadence doesn't turn into mud."""
+    n = int(SR * 0.42)
+
+    # snap: the discharge itself
+    snap = [s * e for s, e in zip(noise(n), env_exp(n, 0.008))]
+    snap = highpass(snap, 2200)
+
+    # coil whine: a fast downward sweep, the bolt accelerating out
+    whine = []
+    phase = 0.0
+    for i in range(n):
+        t = i / SR
+        f = 1750 * math.exp(-t / 0.055) + 340
+        phase += 2 * math.pi * f / SR
+        whine.append(math.sin(phase) * math.exp(-i / (0.05 * SR)))
+
+    # resonant body: a couple of metallic modes ringing in the emitter
+    body = [0.0] * n
+    for f, tau, amp in [(430, 0.075, 1.0), (712, 0.055, 0.6), (1180, 0.04, 0.34)]:
+        ph = random.uniform(0, math.pi * 2)
+        for i in range(n):
+            body[i] += amp * math.sin(2 * math.pi * f * (i / SR) + ph) * math.exp(-i / (tau * SR))
+
+    # ionised wash trailing off
+    wash = [s * e for s, e in zip(noise(n), env_exp(n, 0.09))]
+    wash = highpass(lowpass(wash, 3000), 500)
+
+    out = mix(gain(snap, 0.85), gain(whine, 0.75), gain(body, 0.5), gain(wash, 0.35))
+    return normalize(softclip(out, 1.35), 0.85)
 
 
 if __name__ == '__main__':
@@ -413,3 +456,4 @@ if __name__ == '__main__':
     write_wav(os.path.join(dest, 'engine.wav'), make_engine())
     write_wav(os.path.join(dest, 'cryo.wav'), make_cryo())
     write_wav(os.path.join(dest, 'flame.wav'), make_flame())
+    write_wav(os.path.join(dest, 'plasma.wav'), make_plasma())

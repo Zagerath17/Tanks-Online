@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createArena, SPAWN_SLOTS, heightAt, ARENA } from './map.js';
-import { createTankModel, SPEC, TURRET_SPECS } from './tank.js';
+import { createTankModel, SPEC, TURRET_SPECS, HULLS as HULL_STATS } from './tank.js';
 import { createPlayerController } from './player.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
@@ -12,10 +12,21 @@ import { createPhysics } from './physics.js';
 import { createEditor } from './editor.js';
 import { createColorWheel } from './colorwheel.js';
 import { createGarage } from './garage.js';
-import { TURRETS, HULLS, SKINS, selection, loadSelection, saveSelection, currentSkin, currentTurret } from './loadout.js';
+import { TURRETS, HULLS, SKINS, selection, loadSelection, saveSelection, currentSkin, currentTurret, currentHull } from './loadout.js';
 import * as net from './net.js';
 
-const FIRE_INTERVAL = 2.5;
+const FIRE_INTERVAL = 2.5; // fallback when a turret doesn't say otherwise
+
+// the projectile weapon a tank is carrying (null if it's a stream)
+function gunSpecOf(turretId) {
+  const s = TURRET_SPECS[turretId];
+  return s && s.mode === 'projectile' ? s : null;
+}
+
+function fireIntervalOf(turretId) {
+  const s = gunSpecOf(turretId);
+  return s ? s.fireInterval : FIRE_INTERVAL;
+}
 const YAW_SENS = 0.0032;
 const PITCH_SENS = 0.002;
 const CAM_PITCH_LIM = 1.35;
@@ -82,7 +93,7 @@ fx.prewarm();
 bullets.prewarm();
 
 // Local player
-const playerModel = createTankModel(currentSkin(), currentTurret());
+const playerModel = createTankModel(currentSkin(), currentTurret(), currentHull());
 playerModel.root.visible = false; // hidden until a match starts
 scene.add(playerModel.root);
 const player = createPlayerController(playerModel, physics);
@@ -92,8 +103,8 @@ const local = {
   isLocal: true,
   model: playerModel,
   alive: false,
-  hp: 1000,
-  maxHp: 1000,
+  hp: playerModel.maxHp,
+  maxHp: playerModel.maxHp,
   cooldown: 0,
   fireSmoke: 0,
   smokeAcc: 0,
@@ -226,10 +237,14 @@ function enterLobby() {
       if (pid === net.getMyId() || phase !== 'playing') return;
       const pos = new THREE.Vector3(s.x, s.y, s.z);
       const dir = new THREE.Vector3(s.dx, s.dy, s.dz).normalize();
-      const ru = remote.shotFrom(pid);
-      fx.muzzleFlash(pos.clone(), dir.clone());
-      audio.playAt('shot', pos, { volume: 0.75, rate: 0.94 + Math.random() * 0.12 });
-      bullets.fire(ru || {}, pos.clone().addScaledVector(dir, 0.15), dir);
+      const kind = s.k === 'plasma' ? 'plasma' : 'shell';
+      const ru = remote.shotFrom(pid, kind);
+      fx.muzzleFlash(pos.clone(), dir.clone(), kind === 'plasma' ? 'plasma' : 'fire');
+      audio.playAt(kind === 'plasma' ? 'plasma' : 'shot', pos, {
+        volume: kind === 'plasma' ? 0.5 : 0.75,
+        rate: 0.94 + Math.random() * 0.12,
+      });
+      bullets.fire(ru || {}, pos.clone().addScaledVector(dir, 0.15), dir, kind);
     },
   });
   refreshLobbyUi();
@@ -281,9 +296,12 @@ function renderGarageItems() {
   elGarageItems.innerHTML = roster
     .map((item, i) => {
       const locked = !!item.locked;
+      const spec = garageTab === 'hulls' ? HULL_STATS[item.id] : null;
       const chip = garageTab === 'skins'
         ? `<span class="gchip" style="background:${item.hull[0]};border-color:${item.hull[1]}"></span>`
-        : `<span class="gnum">${String(i + 1).padStart(2, '0')}</span>`;
+        : spec && !locked
+          ? `<span class="gstat">${spec.maxHp}<em>hp</em></span>`
+          : `<span class="gnum">${String(i + 1).padStart(2, '0')}</span>`;
       return `<button class="gitem${i === sel ? ' on' : ''}${locked ? ' locked' : ''}" data-i="${i}">
         ${chip}<span class="gname">${item.name}</span>
         ${locked ? '<span class="glock">locked</span>' : ''}
@@ -307,8 +325,15 @@ elGarageItems.addEventListener('click', (e) => {
   const i = Number(btn.dataset.i);
   const roster = rosterFor(garageTab);
   if (!roster[i] || roster[i].locked) return;
-  if (garageTab === 'hulls') selection.hull = i;
-  else if (garageTab === 'skins') {
+  if (garageTab === 'hulls') {
+    selection.hull = i;
+    garage.applyHull(roster[i].id);
+    playerModel.setHull(roster[i].id);
+    player.syncHull();
+    local.maxHp = playerModel.maxHp;
+    local.hp = Math.min(local.hp, local.maxHp);
+    updateHpHud();
+  } else if (garageTab === 'skins') {
     selection.skin = i;
     garage.applySkin(SKINS[i]);
     playerModel.setSkin(SKINS[i]);
@@ -709,6 +734,7 @@ function spawnLocal(slot) {
   refreshWeaponHud();
   playerModel.root.visible = true;
   local.alive = true;
+  local.maxHp = playerModel.maxHp;
   local.hp = local.maxHp;
   local.cooldown = 0;
   local.fireSmoke = 0;
@@ -750,8 +776,11 @@ function pushState() {
     tp: r3(player.state.pitch),
     hp: Math.max(0, Math.round(local.hp)),
     al: local.alive,
+    ch: Math.round(local.chill * 100) / 100,
+    bn: Math.round(local.burn * 100) / 100,
     sk: selection.skin,
     tr: playerModel.turretId,
+    hl: playerModel.hullId,
     st: cryo.streaming,
     t: Date.now(),
   });
@@ -859,11 +888,18 @@ function rampStatus(value, hit, offTimer, spec, dt) {
 function tickStatus(unit, dt, hitCryo, hitFlame) {
   [unit.chill, unit.chillOff] = rampStatus(unit.chill, hitCryo, unit.chillOff, ARCTIC, dt);
   [unit.burn, unit.burnOff] = rampStatus(unit.burn, hitFlame, unit.burnOff, INFERNO, dt);
-  unit.model.setStatus(unit.chill, unit.burn);
+
+  // Each tank is the authority on its own status, and broadcasts it — that's
+  // how you see a tank someone ELSE is freezing or burning. What we work out
+  // locally is only a prediction for the beam we're holding ourselves, so it
+  // shows up instantly instead of waiting for the next snapshot.
+  const chill = unit.chillNet !== undefined ? Math.max(unit.chill, unit.chillNet) : unit.chill;
+  const burn = unit.burnNet !== undefined ? Math.max(unit.burn, unit.burnNet) : unit.burn;
+  unit.model.setStatus(chill, burn);
 
   // a tank well alight throws embers
-  if (unit.burn > 0.25) {
-    unit.emberAcc = (unit.emberAcc || 0) + dt * unit.burn;
+  if (burn > 0.25) {
+    unit.emberAcc = (unit.emberAcc || 0) + dt * burn;
     while (unit.emberAcc > 0.09) {
       unit.emberAcc -= 0.09;
       fx.ember(unit.model.root.position);
@@ -968,26 +1004,43 @@ const _fpos = new THREE.Vector3();
 const _fdir = new THREE.Vector3();
 const _fq = new THREE.Quaternion();
 
-function muzzleWorld(unit, outPos, outDir) {
-  unit.model.muzzle.getWorldPosition(outPos);
-  unit.model.muzzle.getWorldQuaternion(_fq);
+function muzzleWorld(unit, outPos, outDir, node) {
+  const m = node || unit.model.muzzle;
+  m.getWorldPosition(outPos);
+  m.getWorldQuaternion(_fq);
   outDir.set(1, 0, 0).applyQuaternion(_fq);
 }
 
 function tryPlayerFire() {
   if (!local.alive || local.cooldown > 0) return;
-  local.cooldown = FIRE_INTERVAL;
-  local.fireSmoke = 2;
-  local.recoil = 0.22;
-  muzzleWorld(local, _fpos, _fdir);
-  bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone());
-  fx.muzzleFlash(_fpos.clone(), _fdir.clone());
-  audio.playAt('shot', _fpos, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
-  player.applyRecoil(_fdir);
+  const spec = gunSpecOf(playerModel.turretId);
+  if (!spec) return;
+
+  const plasma = spec.projectile === 'plasma';
+  local.cooldown = spec.fireInterval;
+  local.fireSmoke = spec.smokeTime !== undefined ? spec.smokeTime : 2;
+  local.recoil = spec.recoil !== undefined ? spec.recoil : 0.22;
+
+  // dual-barrel turrets alternate; the barrel that fired is what everyone sees
+  const node = spec.dual ? playerModel.nextMuzzle() : playerModel.muzzle;
+  const barrel = spec.dual && playerModel.muzzles
+    ? playerModel.muzzles.indexOf(node)
+    : -1;
+
+  muzzleWorld(local, _fpos, _fdir, node);
+  bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone(), spec.projectile);
+  fx.muzzleFlash(_fpos.clone(), _fdir.clone(), plasma ? 'plasma' : 'fire');
+  audio.playAt(plasma ? 'plasma' : 'shot', _fpos, {
+    volume: plasma ? 0.62 : 0.9,
+    rate: 0.94 + Math.random() * 0.12,
+  });
+  player.applyRecoil(_fdir, plasma ? 0.35 : 1);
   if (phase === 'playing') {
     net.sendShot({
       x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
       dx: r3(_fdir.x), dy: r3(_fdir.y), dz: r3(_fdir.z),
+      k: spec.projectile,
+      b: barrel,
     });
   }
 }
@@ -1038,6 +1091,7 @@ function updateLocalUnit(dt) {
 
     if (local.fireSmoke > 0) {
       local.fireSmoke -= dt;
+      // (plasma turrets set smokeTime 0, so this never runs for them)
       local.smokeAcc += dt;
       while (local.smokeAcc > 0.07) {
         local.smokeAcc -= 0.07;
@@ -1078,6 +1132,17 @@ const CAM_UP = 5.6;
 const CAM_R = Math.hypot(CAM_BACK, CAM_UP);
 const CAM_BASE_ELEV = Math.atan2(CAM_UP, CAM_BACK);
 
+// Hulls now range from 3.5 m to 6.3 m long, so one fixed distance frames the
+// heavy ones far tighter than the light ones. The rig backs off in
+// proportion to hull length — damped, so it's a nudge rather than a zoom.
+// It stays rigidly fixed while you drive; only picking a different hull
+// changes it.
+const CAM_REF_LEN = 4.90; // the Vanguard, i.e. the distance tuned by hand
+function camRadius() {
+  const len = playerModel.hull.hit.bodyX * 2;
+  return CAM_R * (0.65 + 0.35 * (len / CAM_REF_LEN));
+}
+
 function updateCamera() {
   // no easing: the rig is rigidly bolted to the aim
   camYaw = viewYaw;
@@ -1091,10 +1156,11 @@ function updateCamera() {
   const ce = Math.cos(elev);
   const se = Math.sin(elev);
 
+  const radius = camRadius();
   camera.position.set(
-    tp.x - cy * CAM_R * ce,
-    tp.y + CAM_R * se,
-    tp.z - sy * CAM_R * ce
+    tp.x - cy * radius * ce,
+    tp.y + radius * se,
+    tp.z - sy * radius * ce
   );
   // the only thing that ever moves it: refusing to sink into the ground
   const minY = groundYAt(camera.position.x, camera.position.z) + 0.8;
@@ -1203,13 +1269,15 @@ renderer.setAnimationLoop(() => {
     bullets.update(
       dt,
       phase === 'playing' ? [local, ...remote.targets()] : [local],
-      (unit, pos) => {
-        fx.impact(pos.clone());
-        if (unit === local) localDamage(BULLET.damage, pos);
+      (unit, pos, damage, kind) => {
+        if (kind === 'plasma') fx.plasmaImpact(pos.clone());
+        else fx.impact(pos.clone());
+        if (unit === local) localDamage(damage, pos);
         else audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
       },
-      (pos) => {
-        fx.impact(pos.clone());
+      (pos, kind) => {
+        if (kind === 'plasma') fx.plasmaImpact(pos.clone());
+        else fx.impact(pos.clone());
       },
       phase === 'editor' ? ENV_EDITOR : ENV_ARENA
     );
@@ -1223,7 +1291,7 @@ renderer.setAnimationLoop(() => {
 
     // the engine note follows the tracks (it roars while they slip against a
     // wall), the speedo below follows how fast the hull is actually moving
-    const speedFrac = Math.abs(player.state.tread) / SPEC.maxForward;
+    const speedFrac = Math.abs(player.state.tread) / playerModel.hull.move.maxForward;
     engine.update(
       0.72 + speedFrac * 0.65,
       local.alive && !flying ? 0.16 + speedFrac * 0.14 : 0
@@ -1238,7 +1306,7 @@ renderer.setAnimationLoop(() => {
     }
 
     elSpeed.textContent = String(Math.round(Math.abs(player.state.v) * 8));
-    elReload.style.transform = `scaleX(${1 - Math.max(0, local.cooldown) / FIRE_INTERVAL})`;
+    elReload.style.transform = `scaleX(${1 - Math.max(0, local.cooldown) / fireIntervalOf(playerModel.turretId)})`;
     if (!local.alive) {
       elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(local.deadT))}`;
     }

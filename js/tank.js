@@ -5,6 +5,8 @@ import { createStreamBeam } from './cryo.js';
 // ---------------------------------------------------------------------------
 // Movement tuning (used by the player controller)
 // ---------------------------------------------------------------------------
+// Handling shared by every hull. Per-hull speed, size, and hull points live
+// in HULL_SPECS below; SPEC stays the baseline the specs scale from.
 export const SPEC = {
   accel: 13,
   brakeAccel: 22,
@@ -20,6 +22,194 @@ export const SPEC = {
   stabilize: 3,   // bleeds pitch/roll rate while tracks are down, 1/s
   scrub: 3.5,     // ground drag on a hull nobody is driving (husk, flipped)
 };
+
+// ---------------------------------------------------------------------------
+// Hulls. Everything dimensional is declared here once; the tread layout, the
+// hit boxes and the physics chassis are all DERIVED from these numbers by
+// deriveHull() below, so a hull's collision can never drift from its model.
+// ---------------------------------------------------------------------------
+const HULL_DEFS = {
+  vanguard: {
+    name: 'Vanguard',
+    maxHp: 1000,
+    speedMul: 1.0,
+    // hull side profile (x = fore/aft, y = up), extruded across the width
+    profile: [
+      [-2.25, 0.40], [2.20, 0.40], [2.45, 0.62],
+      [1.05, 1.16], [-1.60, 1.16], [-2.35, 1.02], [-2.45, 0.78],
+    ],
+    depth: 1.70,
+    deckY: 1.16,
+    turretX: 0.05,
+    tread: {
+      runHalf: 1.7, arcR: 0.375, centerY: 0.455, linkCount: 34,
+      linkLen: 0.25, linkW: 0.56, linkHalfT: 0.035, grouserH: 0.05, z: 1.18,
+      roadWheels: [-1.1, -0.55, 0, 0.55, 1.1], roadR: 0.25, roadW: 0.46,
+      rollers: [-0.7, 0.7], rollerR: 0.1, rollerW: 0.3,
+      endR: 0.30, endW: 0.46, sprocketW: 0.40, teeth: 10,
+    },
+  },
+  ironclad: {
+    name: 'Ironclad',
+    maxHp: 1500,
+    speedMul: 0.765, // 15% slower again than the Paladin's 0.9
+    // the heaviest chassis in the game: a long, deep, slab-sided hull on
+    // seven road wheels, carrying the widest track the ramps will take
+    profile: [
+      [-2.90, 0.50], [2.86, 0.50], [3.15, 0.76],
+      [1.42, 1.48], [-2.10, 1.48], [-3.00, 1.30], [-3.15, 1.00],
+    ],
+    depth: 2.18,
+    deckY: 1.48,
+    turretX: 0.05,
+    tread: {
+      runHalf: 2.28, arcR: 0.47, centerY: 0.56, linkCount: 45,
+      linkLen: 0.25, linkW: 0.74, linkHalfT: 0.035, grouserH: 0.05, z: 1.50,
+      roadWheels: [-1.83, -1.22, -0.61, 0, 0.61, 1.22, 1.83], roadR: 0.30, roadW: 0.60,
+      rollers: [-1.0, 0, 1.0], rollerR: 0.12, rollerW: 0.40,
+      endR: 0.38, endW: 0.60, sprocketW: 0.54, teeth: 12,
+    },
+  },
+  paladin: {
+    name: 'Paladin',
+    maxHp: 1250,
+    speedMul: 0.9, // 10% slower than the Vanguard
+    // a heavy chassis: longer, wider, taller, riding on six road wheels with
+    // a third return roller to carry the extra track
+    profile: [
+      [-2.46, 0.44], [2.42, 0.44], [2.68, 0.68],
+      [1.20, 1.28], [-1.78, 1.28], [-2.56, 1.12], [-2.68, 0.86],
+    ],
+    depth: 1.88,
+    deckY: 1.28,
+    turretX: 0.05,
+    tread: {
+      runHalf: 1.92, arcR: 0.41, centerY: 0.50, linkCount: 38,
+      linkLen: 0.25, linkW: 0.64, linkHalfT: 0.035, grouserH: 0.05, z: 1.30,
+      roadWheels: [-1.45, -0.87, -0.29, 0.29, 0.87, 1.45], roadR: 0.27, roadW: 0.52,
+      rollers: [-0.85, 0, 0.85], rollerR: 0.11, rollerW: 0.34,
+      endR: 0.33, endW: 0.52, sprocketW: 0.46, teeth: 11,
+    },
+  },
+  falcon: {
+    name: 'Falcon',
+    maxHp: 650,
+    speedMul: 1.344, // 12% quicker again than the Pioneer's 1.2
+    // the smallest chassis: short, low, and tightly sprung. Width is floored
+    // by the turret ring every hull has to carry, so it buys its compactness
+    // in length and height instead.
+    profile: [
+      [-1.58, 0.34], [1.52, 0.34], [1.75, 0.52],
+      [0.68, 0.90], [-1.10, 0.90], [-1.66, 0.80], [-1.75, 0.62],
+    ],
+    depth: 1.42,
+    deckY: 0.90,
+    turretX: 0.05,
+    tread: {
+      runHalf: 1.18, arcR: 0.30, centerY: 0.36, linkCount: 25,
+      linkLen: 0.25, linkW: 0.48, linkHalfT: 0.035, grouserH: 0.05, z: 0.99,
+      roadWheels: [-0.78, -0.26, 0.26, 0.78], roadR: 0.19, roadW: 0.38,
+      rollers: [-0.45, 0.45], rollerR: 0.08, rollerW: 0.26,
+      endR: 0.24, endW: 0.38, sprocketW: 0.32, teeth: 8,
+    },
+  },
+  pioneer: {
+    name: 'Pioneer',
+    maxHp: 800,
+    speedMul: 1.2, // 20% quicker than the Vanguard
+    // shorter, narrower, lower — a compact scout hull
+    profile: [
+      [-1.92, 0.38], [1.86, 0.38], [2.10, 0.58],
+      [0.86, 1.02], [-1.34, 1.02], [-1.98, 0.90], [-2.10, 0.70],
+    ],
+    depth: 1.52,
+    deckY: 1.02,
+    turretX: 0.05,
+    tread: {
+      runHalf: 1.45, arcR: 0.34, centerY: 0.41, linkCount: 30,
+      linkLen: 0.25, linkW: 0.52, linkHalfT: 0.035, grouserH: 0.05, z: 1.06,
+      roadWheels: [-0.95, -0.32, 0.32, 0.95], roadR: 0.22, roadW: 0.42,
+      rollers: [-0.55, 0.55], rollerR: 0.09, rollerW: 0.28,
+      endR: 0.27, endW: 0.42, sprocketW: 0.36, teeth: 9,
+    },
+  },
+};
+
+// Fill in every derived quantity for a hull: the tread loop, the hit boxes,
+// and the physics chassis that has to enclose all of it.
+function deriveHull(id, def) {
+  const t = { ...def.tread };
+  t.bottomY = t.centerY - t.arcR;
+  t.topY = t.centerY + t.arcR;
+  t.runLen = t.runHalf * 2;
+  t.arcLen = Math.PI * t.arcR;
+  t.length = 2 * t.runLen + 2 * t.arcLen;
+
+  // extents straight off the profile, so the boxes match the model
+  const xs = def.profile.map((p) => p[0]);
+  const ys = def.profile.map((p) => p[1]);
+  const noseX = Math.max(...xs);
+  const tailX = Math.min(...xs);
+  const floorY = Math.min(...ys);
+  const roofY = Math.max(...ys);
+
+  // the widest thing on the tank is the outer face of a track grouser
+  const halfWidth = t.z + t.linkW / 2 + t.grouserH;
+  // the longest is whichever of hull nose / idler wheel reaches furthest
+  const halfLength = Math.max(noseX, -tailX, t.runHalf + t.endR);
+  const treadBottom = t.bottomY - t.linkHalfT - t.grouserH;
+
+  const hit = {
+    bodyX: halfLength + 0.05,
+    bodyZ: halfWidth + 0.02,
+    bodyY0: Math.max(0, treadBottom) + 0.02,
+    bodyY1: roofY + 0.03,
+    // turret box, in turret-local space (same for every hull)
+    turretX0: -0.9, turretX1: 1.1, turretZ: 0.62,
+    turretY0: 0.0, turretY1: 0.8,
+  };
+
+  // Physics box: encloses the tank from track bottom to deck, pulled a hair
+  // inside the visual extents so the hull doesn't catch on scenery its model
+  // clears. The centre of mass sits at COM_FRAC of the box height rather than
+  // halfway up, which is what keeps a tank stable but still flippable — the
+  // original hand-tuned chassis had exactly this proportion.
+  const COM_FRAC = 0.42;
+  const hy = (roofY - treadBottom) / 2;
+  const chassis = {
+    hx: halfLength - 0.04,
+    hy,
+    hz: halfWidth - 0.02,
+    shapeOffY: hy * (1 - 2 * COM_FRAC),
+  };
+  // where the model's origin (its ground-contact plane) sits in body space
+  chassis.modelOffY = chassis.shapeOffY - hy - treadBottom;
+  chassis.groundReach = hy - chassis.shapeOffY + 0.38;
+
+  const move = {
+    ...SPEC,
+    accel: SPEC.accel * def.speedMul,
+    brakeAccel: SPEC.brakeAccel * def.speedMul,
+    maxForward: SPEC.maxForward * def.speedMul,
+    maxReverse: SPEC.maxReverse * def.speedMul,
+    halfTrack: t.z,
+  };
+
+  return {
+    id, name: def.name, maxHp: def.maxHp, speedMul: def.speedMul,
+    profile: def.profile, depth: def.depth, deckY: def.deckY, turretX: def.turretX,
+    tread: t, hit, chassis, move,
+  };
+}
+
+export const HULLS = {};
+for (const [id, def] of Object.entries(HULL_DEFS)) HULLS[id] = deriveHull(id, def);
+
+export const DEFAULT_HULL = 'vanguard';
+
+export function hullSpec(id) {
+  return HULLS[id] || HULLS[DEFAULT_HULL];
+}
 
 // Skins are palettes plus a grid pattern — swappable on a built model.
 export const SKINS = [
@@ -70,14 +260,23 @@ export const PALETTE = { green: SKINS[0] };
 // Per-turret behaviour. 'projectile' fires shells on a cooldown; 'stream'
 // pours a continuous jet that burns fuel and has to recharge.
 export const TURRET_SPECS = {
-  cannon: { mode: 'projectile', fireInterval: 2.5, damage: 200 },
+  cannon: { mode: 'projectile', fireInterval: 2.5, damage: 200, projectile: 'shell' },
+  plasma: {
+    mode: 'projectile',
+    projectile: 'plasma',
+    fireInterval: 0.25, // a bolt every quarter second, alternating barrels
+    damage: 25,
+    dual: true,        // barrels take it in turns
+    recoil: 0.1,       // a plasma bolt barely nudges the tank
+    smokeTime: 0,      // no propellant, so no barrel smoke
+  },
   arctic: {
     mode: 'stream',
     element: 'cryo',
     range: 7.5,        // about a tank and a half
     coneR: 2.2,        // spray half-width at maximum range
-    tickDamage: 50,    // 50 every half second
-    tickInterval: 0.5,
+    tickDamage: 10,    // 100 dps, applied in tenth-second bites
+    tickInterval: 0.1,
     fuelDrain: 10,     // 10 s of continuous stream from full
     fuelRecharge: 5.6, // refills in ~18 s, starting the instant you let go
     restartAt: 8,      // must build this much back before it'll fire again
@@ -91,8 +290,8 @@ export const TURRET_SPECS = {
     element: 'flame',
     range: 7.5,
     coneR: 2.2,
-    tickDamage: 75,    // 75 every half second
-    tickInterval: 0.5,
+    tickDamage: 6,     // 60 dps, applied in tenth-second bites
+    tickInterval: 0.1,
     fuelDrain: 10,
     fuelRecharge: 5.6,
     restartAt: 8,
@@ -108,43 +307,17 @@ export const TURRET_SPECS = {
 // Rounded-rectangle loop: two straight runs joined by semicircles. Every
 // wheel radius is derived from the loop so rims, links, and teeth line up.
 // ---------------------------------------------------------------------------
-export const TREAD = {
-  runHalf: 1.7,
-  arcR: 0.375,
-  centerY: 0.455,
-  linkCount: 34,
-  linkLen: 0.25,
-  linkW: 0.56,
-  linkHalfT: 0.035,
-  grouserH: 0.05,
-  z: 1.18,
-};
-TREAD.bottomY = TREAD.centerY - TREAD.arcR;
-TREAD.topY = TREAD.centerY + TREAD.arcR;
-TREAD.runLen = TREAD.runHalf * 2;
-TREAD.arcLen = Math.PI * TREAD.arcR;
-TREAD.length = 2 * TREAD.runLen + 2 * TREAD.arcLen;
-
-// Overall body bounds derived from the geometry below — used for accurate
-// hit detection (hull/tread box in root space, turret box in turret space)
-export const HIT = {
-  bodyX: 2.5,
-  bodyZ: TREAD.z + TREAD.linkW / 2 + TREAD.grouserH + 0.02,
-  bodyY0: 0.02,
-  bodyY1: 1.19,
-  turretX0: -0.9,
-  turretX1: 1.1,
-  turretZ: 0.62,
-  turretY0: 0.0,
-  turretY1: 0.8,
-};
+// Vanguard's tread layout, kept exported for anything that wants the
+// baseline numbers. Live geometry always reads the equipped hull's own copy.
+export const TREAD = HULLS.vanguard.tread;
+export const HIT = HULLS.vanguard.hit;
 
 // Position + tangent angle at distance t along the loop. Param increases in
 // the direction the tread circulates when driving forward: bottom run moves
 // toward -X (gripping the ground), top run toward +X.
 const _pp = { x: 0, y: 0, a: 0 };
-function pathPoint(t) {
-  const { runHalf, runLen, arcR, arcLen, centerY, bottomY, topY, length } = TREAD;
+function pathPoint(T, t) {
+  const { runHalf, runLen, arcR, arcLen, centerY, bottomY, topY, length } = T;
   t = ((t % length) + length) % length;
 
   if (t < runLen) {
@@ -232,6 +405,11 @@ function buildMaterials(p) {
       color: '#ffb166', emissive: '#e04a10', emissiveIntensity: 0.9,
       roughness: 0.4, metalness: 0.25,
     }),
+    // ...and the plasma turret's charged hardware
+    plasma: new THREE.MeshStandardMaterial({
+      color: '#8fd0ff', emissive: '#2a7bff', emissiveIntensity: 1.15,
+      roughness: 0.3, metalness: 0.15,
+    }),
   };
 }
 
@@ -248,27 +426,21 @@ function rememberBaseColors(M) {
 // ---------------------------------------------------------------------------
 // Hull — just the base armored body
 // ---------------------------------------------------------------------------
-function buildHull(M) {
+// Extrude the hull's own side profile. The depth is chosen per hull so the
+// sides stay clear of the tread chains' inner faces.
+function buildHull(M, hull) {
   const s = new THREE.Shape();
-  s.moveTo(-2.25, 0.4);
-  s.lineTo(2.2, 0.4);
-  s.lineTo(2.45, 0.62); // nose tip
-  s.lineTo(1.05, 1.16); // top of glacis
-  s.lineTo(-1.6, 1.16); // deck
-  s.lineTo(-2.35, 1.02); // rear deck slope
-  s.lineTo(-2.45, 0.78); // rear plate
+  hull.profile.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y)));
   s.closePath();
 
-  // depth 1.70 (+0.03 bevel) keeps the hull sides clear of the tread
-  // chains, whose inner faces sit at |z| = 0.90
   const hullGeo = new THREE.ExtrudeGeometry(s, {
-    depth: 1.70,
+    depth: hull.depth,
     bevelEnabled: true,
     bevelThickness: 0.03,
     bevelSize: 0.03,
     bevelSegments: 1,
   });
-  hullGeo.translate(0, 0, -0.85);
+  hullGeo.translate(0, 0, -hull.depth / 2);
   return new THREE.Mesh(hullGeo, M.hull);
 }
 
@@ -538,19 +710,165 @@ function buildInfernoTurret(M) {
   return { turret: t, pitchGroup, gun, muzzle };
 }
 
+// ---------------------------------------------------------------------------
+// Dual Plasma: twin emitters set wide apart, fed from a charged accumulator
+// sphere seated between them. A capacitor bank rides the roof, conduits run
+// forward into acceleration coils, and each barrel ends in a focusing ring.
+// ---------------------------------------------------------------------------
+function buildPlasmaTurret(M) {
+  const t = new THREE.Group();
+  const SEP = 0.42; // horizontal separation of the two barrels
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  // faceted housing, wider than the cannon's to carry two barrels
+  const profile = new THREE.Shape();
+  profile.moveTo(-0.76, 0.0);
+  profile.lineTo(0.64, 0.0);
+  profile.lineTo(0.80, 0.19);
+  profile.lineTo(0.56, 0.52);
+  profile.lineTo(-0.42, 0.64);
+  profile.lineTo(-0.80, 0.42);
+  profile.closePath();
+  const bodyGeo = new THREE.ExtrudeGeometry(profile, {
+    depth: 1.34, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1,
+  });
+  bodyGeo.translate(0, 0, -0.67);
+  const body = new THREE.Mesh(bodyGeo, M.turret);
+  body.position.y = 0.08;
+  t.add(body);
+
+  // capacitor bank: four upright cylinders with glowing caps
+  const canGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.26, 12);
+  const capGeo = new THREE.CylinderGeometry(0.105, 0.105, 0.045, 12);
+  for (const x of [-0.5, -0.24]) {
+    for (const side of [-1, 1]) {
+      const can = new THREE.Mesh(canGeo, M.metal);
+      can.position.set(x, 0.76, side * 0.26);
+      t.add(can);
+      const cap = new THREE.Mesh(capGeo, M.plasma);
+      cap.position.set(x, 0.91, side * 0.26);
+      t.add(cap);
+    }
+  }
+
+  // busbar tying the bank together
+  const bus = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.05, 0.06), M.plasma);
+  bus.position.set(-0.37, 0.93, 0);
+  t.add(bus);
+
+  // heat sink fins along the flanks
+  const finGeo = new THREE.BoxGeometry(0.6, 0.18, 0.035);
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const fin = new THREE.Mesh(finGeo, M.metal);
+      fin.position.set(-0.1, 0.24 + i * 0.12, side * (0.68 + 0.001 * i));
+      t.add(fin);
+    }
+  }
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.78, 0.36, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.46, 1.06), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  // accumulator: the charged sphere the bolts are drawn from, seated in a
+  // cradle between the barrels
+  const accum = new THREE.Mesh(new THREE.IcosahedronGeometry(0.19, 1), M.plasma);
+  accum.position.set(0.16, 0.03, 0);
+  gun.add(accum);
+  const cradle = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.035, 8, 16), M.metal);
+  cradle.position.set(0.16, 0.03, 0);
+  cradle.rotation.y = Math.PI / 2;
+  gun.add(cradle);
+
+  const muzzles = [];
+
+  for (const side of [-1, 1]) {
+    const z = side * SEP;
+
+    // barrel
+    const barrelGeo = new THREE.CylinderGeometry(0.088, 0.082, 1.26, 12);
+    barrelGeo.rotateZ(Math.PI / 2);
+    const barrel = new THREE.Mesh(barrelGeo, M.barrel);
+    barrel.position.set(0.68, 0.02, z);
+    gun.add(barrel);
+
+    // acceleration coils stepping down the barrel, glowing brighter forward
+    for (let i = 0; i < 4; i++) {
+      const coil = new THREE.Mesh(
+        new THREE.TorusGeometry(0.125 - i * 0.008, 0.028, 8, 14),
+        i > 1 ? M.plasma : M.metal
+      );
+      coil.position.set(0.36 + i * 0.26, 0.02, z);
+      coil.rotation.y = Math.PI / 2;
+      gun.add(coil);
+    }
+
+    // conduit from the accumulator into the breech
+    const conduitGeo = new THREE.CylinderGeometry(0.045, 0.045, Math.abs(z) * 2, 8);
+    conduitGeo.rotateX(Math.PI / 2);
+    const conduit = new THREE.Mesh(conduitGeo, M.plasma);
+    conduit.position.set(0.3, 0.02, z / 2);
+    gun.add(conduit);
+
+    // focusing ring at the mouth
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.032, 8, 18), M.metal);
+    ring.position.set(1.3, 0.02, z);
+    ring.rotation.y = Math.PI / 2;
+    gun.add(ring);
+
+    // the charged emitter core inside that ring
+    const emitterGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.07, 12);
+    emitterGeo.rotateZ(Math.PI / 2);
+    const emitter = new THREE.Mesh(emitterGeo, M.plasma);
+    emitter.position.set(1.3, 0.02, z);
+    gun.add(emitter);
+
+    // prongs guarding the mouth
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + 0.5;
+      const prong = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.035, 0.035), M.metal);
+      prong.position.set(1.4, 0.02 + Math.cos(a) * 0.12, z + Math.sin(a) * 0.12);
+      prong.rotation.x = a;
+      gun.add(prong);
+    }
+
+    const muzzle = new THREE.Object3D();
+    muzzle.position.set(1.48, 0.02, z);
+    gun.add(muzzle);
+    muzzles.push(muzzle);
+  }
+
+  // muzzle stays the centre reference (smoke, beams); muzzles[] is what fires
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(1.48, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle, muzzles };
+}
+
 function buildTurret(M, kind) {
   if (kind === 'arctic') return buildArcticTurret(M);
   if (kind === 'inferno') return buildInfernoTurret(M);
+  if (kind === 'plasma') return buildPlasmaTurret(M);
   return buildCannonTurret(M);
 }
 
 // ---------------------------------------------------------------------------
 // Treads: running gear + instanced link chain
 // ---------------------------------------------------------------------------
-function buildLinkGeometry() {
-  const L = TREAD.linkLen / 2;
-  const T = TREAD.linkHalfT;
-  const G = TREAD.grouserH;
+function buildLinkGeometry(TR) {
+  const L = TR.linkLen / 2;
+  const T = TR.linkHalfT;
+  const G = TR.grouserH;
 
   const s = new THREE.Shape();
   s.moveTo(-L, -T);
@@ -563,14 +881,15 @@ function buildLinkGeometry() {
   s.lineTo(-L, T);
   s.closePath();
 
-  const geo = new THREE.ExtrudeGeometry(s, { depth: TREAD.linkW, bevelEnabled: false });
-  geo.translate(0, 0, -TREAD.linkW / 2);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: TR.linkW, bevelEnabled: false });
+  geo.translate(0, 0, -TR.linkW / 2);
   return geo;
 }
 
-function buildTread(M, side) {
+function buildTread(M, side, hull) {
+  const TR = hull.tread;
   const g = new THREE.Group();
-  g.position.z = side * TREAD.z;
+  g.position.z = side * TR.z;
 
   const spin = [];
   const tyreMats = [M.tyre, M.hub, M.hub];
@@ -586,51 +905,54 @@ function buildTread(M, side) {
     return mesh;
   }
 
-  for (const x of [-1.1, -0.55, 0, 0.55, 1.1]) {
-    addWheel(0.25, 0.46, x, TREAD.bottomY + TREAD.linkHalfT + 0.25, tyreMats);
+  const roadY = TR.bottomY + TR.linkHalfT + TR.roadR;
+  for (const x of TR.roadWheels) {
+    addWheel(TR.roadR, TR.roadW, x, roadY, tyreMats);
   }
 
-  addWheel(0.3, 0.46, TREAD.runHalf, TREAD.centerY, tyreMats); // idler
-  const sprocket = addWheel(0.3, 0.4, -TREAD.runHalf, TREAD.centerY, tyreMats);
+  addWheel(TR.endR, TR.endW, TR.runHalf, TR.centerY, tyreMats); // idler
+  const sprocket = addWheel(TR.endR, TR.sprocketW, -TR.runHalf, TR.centerY, tyreMats);
 
-  const toothGeo = new THREE.BoxGeometry(0.1, 0.075, 0.42);
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2;
+  const toothR = TR.endR * 1.15;
+  const toothGeo = new THREE.BoxGeometry(0.1, 0.075, TR.sprocketW * 1.05);
+  for (let i = 0; i < TR.teeth; i++) {
+    const a = (i / TR.teeth) * Math.PI * 2;
     const tooth = new THREE.Mesh(toothGeo, M.metal);
-    tooth.position.set(Math.cos(a) * 0.345, Math.sin(a) * 0.345, 0);
+    tooth.position.set(Math.cos(a) * toothR, Math.sin(a) * toothR, 0);
     tooth.rotation.z = a;
     sprocket.add(tooth);
   }
 
-  for (const x of [-0.7, 0.7]) {
-    addWheel(0.1, 0.3, x, TREAD.topY - TREAD.linkHalfT - 0.1, rollerMats, 14);
+  for (const x of TR.rollers) {
+    addWheel(TR.rollerR, TR.rollerW, x, TR.topY - TR.linkHalfT - TR.rollerR, rollerMats, 14);
   }
 
   const armGeo = new THREE.BoxGeometry(0.4, 0.09, 0.09);
-  for (const x of [-1.1, -0.55, 0, 0.55, 1.1]) {
+  for (const x of TR.roadWheels) {
     const arm = new THREE.Mesh(armGeo, M.metal);
-    arm.position.set(x - 0.16, 0.45, -side * 0.26);
+    arm.position.set(x - 0.16, TR.centerY, -side * (TR.linkW * 0.46));
     arm.rotation.z = -0.5;
     g.add(arm);
   }
 
-  const links = new THREE.InstancedMesh(buildLinkGeometry(), M.track, TREAD.linkCount);
+  const links = new THREE.InstancedMesh(buildLinkGeometry(TR), M.track, TR.linkCount);
   links.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   links.castShadow = true;
   links.frustumCulled = false;
   g.add(links);
 
-  return { group: g, spin, links, offset: side * 1.7 };
+  return { group: g, spin, links, tread: TR, offset: side * TR.runHalf };
 }
 
 const _dummy = new THREE.Object3D();
 
 function updateTread(tread, dt, speed) {
+  const TR = tread.tread;
   tread.offset += speed * dt;
 
-  const pitch = TREAD.length / TREAD.linkCount;
-  for (let i = 0; i < TREAD.linkCount; i++) {
-    const p = pathPoint(i * pitch + tread.offset);
+  const pitch = TR.length / TR.linkCount;
+  for (let i = 0; i < TR.linkCount; i++) {
+    const p = pathPoint(TR, i * pitch + tread.offset);
     _dummy.position.set(p.x, p.y, 0);
     _dummy.rotation.set(0, 0, p.a);
     _dummy.updateMatrix();
@@ -646,26 +968,43 @@ function updateTread(tread, dt, speed) {
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
-export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
+export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId = DEFAULT_HULL) {
   let M = rememberBaseColors(buildMaterials(palette));
   const root = new THREE.Group();
 
-  root.add(buildHull(M));
+  let hull = hullSpec(hullId);
+  let hullMesh = null;
+  let treadL = null;
+  let treadR = null;
 
-  const treadL = buildTread(M, -1);
-  const treadR = buildTread(M, 1);
-  root.add(treadL.group, treadR.group);
-  // Lay the link chains out immediately — a tank that never drives (the
-  // dummy) would otherwise render its wheels with no tracks
-  updateTread(treadL, 0, 0);
-  updateTread(treadR, 0, 0);
+  function buildChassis() {
+    hullMesh = buildHull(M, hull);
+    treadL = buildTread(M, -1, hull);
+    treadR = buildTread(M, 1, hull);
+    root.add(hullMesh, treadL.group, treadR.group);
+    // Lay the link chains out immediately — a tank that never drives would
+    // otherwise render its wheels with no tracks
+    updateTread(treadL, 0, 0);
+    updateTread(treadR, 0, 0);
+  }
+
+  function disposeChassis() {
+    for (const part of [hullMesh, treadL.group, treadR.group]) {
+      root.remove(part);
+      part.traverse((o) => {
+        if (o.isMesh && !o.userData.fx) o.geometry.dispose();
+      });
+    }
+  }
+
+  buildChassis();
 
   let beam = null;
   let streaming = false;
 
   function attachTurret(kind) {
     const built = buildTurret(M, kind);
-    built.turret.position.set(0.05, 1.16, 0);
+    built.turret.position.set(hull.turretX, hull.deckY, 0);
     root.add(built.turret);
     const spec = TURRET_SPECS[kind];
     if (spec && spec.mode === 'stream') {
@@ -679,6 +1018,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
 
   let parts = attachTurret(turretId);
   const { turret, pitchGroup, gun, muzzle } = parts;
+  let nextMuzzle = 0;
 
   // Tag every mesh with the material role it was built from, so skins and the
   // freeze overlay can repaint without rebuilding any geometry.
@@ -687,7 +1027,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
     const roleOf = new Map([
       [M.hull, 'hull'], [M.turret, 'turret'], [M.barrel, 'barrel'],
       [M.track, 'track'], [M.metal, 'metal'], [M.tyre, 'tyre'],
-      [M.hub, 'hub'], [M.cryo, 'cryo'],
+      [M.hub, 'hub'], [M.cryo, 'cryo'], [M.ember, 'ember'], [M.plasma, 'plasma'],
     ]);
     meshes.length = 0;
     root.traverse((o) => {
@@ -752,11 +1092,28 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
     pitchGroup,
     gun,
     muzzle,
+    muzzles: parts.muzzles || null,
     turretId,
+    hull,
+    hullId: hull.id,
+    // Multi-barrel turrets take it in turns; single-barrel ones always
+    // return the one muzzle they have.
+    nextMuzzle() {
+      if (!this.muzzles || !this.muzzles.length) return this.muzzle;
+      const m = this.muzzles[nextMuzzle % this.muzzles.length];
+      nextMuzzle++;
+      return m;
+    },
+    resetMuzzleCycle() {
+      nextMuzzle = 0;
+    },
     updateTreads(dt, sL, sR) {
       updateTread(treadL, dt, sL);
       updateTread(treadR, dt, sR);
     },
+    get maxHp() { return hull.maxHp; },
+    get move() { return hull.move; },
+    get chassis() { return hull.chassis; },
     setCharred(flag) {
       charred = flag;
       if (flag) {
@@ -795,7 +1152,9 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
       this.pitchGroup = parts.pitchGroup;
       this.gun = parts.gun;
       this.muzzle = parts.muzzle;
+      this.muzzles = parts.muzzles || null;
       this.turretId = kind;
+      nextMuzzle = 0;
       streaming = false;
       collectMeshes();
       if (charred) {
@@ -827,21 +1186,39 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
     // Accurate two-box hit test: hull+treads in root space (follows ground
     // pitch/roll), turret in turret space (follows traverse).
     hitTest(worldPoint) {
+      const H = hull.hit;
       _hb.copy(worldPoint);
       root.worldToLocal(_hb);
       if (
-        Math.abs(_hb.x) < HIT.bodyX &&
-        Math.abs(_hb.z) < HIT.bodyZ &&
-        _hb.y > HIT.bodyY0 && _hb.y < HIT.bodyY1
+        Math.abs(_hb.x) < H.bodyX &&
+        Math.abs(_hb.z) < H.bodyZ &&
+        _hb.y > H.bodyY0 && _hb.y < H.bodyY1
       ) return true;
 
       _hb.copy(worldPoint);
-      turret.worldToLocal(_hb);
+      this.turret.worldToLocal(_hb);
       return (
-        _hb.x > HIT.turretX0 && _hb.x < HIT.turretX1 &&
-        Math.abs(_hb.z) < HIT.turretZ &&
-        _hb.y > HIT.turretY0 && _hb.y < HIT.turretY1
+        _hb.x > H.turretX0 && _hb.x < H.turretX1 &&
+        Math.abs(_hb.z) < H.turretZ &&
+        _hb.y > H.turretY0 && _hb.y < H.turretY1
       );
+    },
+    // Swap the chassis, keeping the turret. Everything dimensional — treads,
+    // hit boxes, physics box, top speed, hull points — comes with it.
+    setHull(id) {
+      const next = hullSpec(id);
+      if (next === hull) return;
+      disposeChassis();
+      hull = next;
+      buildChassis();
+      this.hull = hull;
+      this.hullId = hull.id;
+      this.turret.position.set(hull.turretX, hull.deckY, 0);
+      collectMeshes();
+      if (charred) {
+        for (const [mesh] of meshes) mesh.material = charredMat;
+      }
+      applyStatusTint();
     },
   };
 }
