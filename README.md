@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.12
+# Tank Remake — prototype 0.13
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -16,7 +16,7 @@ The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon
 
 A cryo projector: finned heat-exchanger barrel, twin coolant bottles, a flared nozzle. Instead of shells it pours a blizzard about a tank and a half in front of you — three layered noise-shaded cone shells with ice motes tumbling through them, so the plume has real depth and never repeats.
 
-Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains in about four seconds of continuous stream and slowly refills once you let go. The stream does 50 damage per second, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
+Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains over about ten seconds of continuous stream and starts refilling the instant you release, taking around eighteen seconds to come back. The stream does 50 damage per second, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
 
 ## Editor
 
