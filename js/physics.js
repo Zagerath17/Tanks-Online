@@ -26,19 +26,12 @@ export function createPhysics() {
 
   const groundMat = new CANNON.Material('ground');
   const chassisMat = new CANNON.Material('chassis');
-  // The chassis is a plain box, so solver friction treats it like a crate:
-  // it drives contact-point slip to zero every step and completely eats the
-  // drive velocity the controller writes each frame. Grip is done entirely in
-  // code (player.js owns forward drive, lateral bite, and the parking brake),
-  // so the contact is frictionless — cannon then skips friction equations for
-  // it altogether and nothing can fight the drive.
   world.addContactMaterial(
     new CANNON.ContactMaterial(groundMat, chassisMat, {
-      friction: 0.0,
+      friction: 0.55,
       restitution: 0.0,
     })
   );
-  world.defaultContactMaterial.friction = 0.05;
 
   function addStaticBox(hx, hy, hz, pos, quat) {
     const body = new CANNON.Body({
@@ -68,14 +61,16 @@ export function createPhysics() {
   {
     const theta = Math.atan2(PLATFORM.h, PLATFORM.rampLen); // slope angle
     const hyp = Math.hypot(PLATFORM.h, PLATFORM.rampLen);
-    const halfLen = hyp / 2 + 0.35;
+    const ext = 0.7; // extend past the BOTTOM only — the top must not rise
+    const halfLen = (hyp + ext) / 2; // above the crest (invisible lip bug)
     const halfT = 0.4;
-    const midX = PLATFORM.half + PLATFORM.rampLen / 2; // along local outward axis
-    const midY = PLATFORM.h / 2;
+    // slab top face runs from the crest exactly, down past the ground line
+    const dX = Math.cos(theta); // downhill direction along the incline
+    const dY = -Math.sin(theta);
     const nx = Math.sin(theta);
     const ny = Math.cos(theta);
-    const cLocalX = midX - nx * halfT;
-    const cY = midY - ny * halfT;
+    const cLocalX = PLATFORM.half + dX * halfLen - nx * halfT;
+    const cY = PLATFORM.h + dY * halfLen - ny * halfT;
 
     const zAxis = new CANNON.Vec3(0, 0, 1);
     const yAxis = new CANNON.Vec3(0, 1, 0);

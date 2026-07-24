@@ -27,6 +27,7 @@ export function createMenu(handlers) {
   });
   el('btn-settings').addEventListener('click', () => {}); // ignored for now
   el('btn-editor').addEventListener('click', () => handlers.onEditor());
+  el('btn-garage').addEventListener('click', () => handlers.onGarage());
 
   // --- play (placeholders — modes do nothing yet) ---
   for (const id of ['btn-tdm', 'btn-ffa', 'btn-ctf']) {

@@ -51,7 +51,7 @@ export function createArena(scene) {
   scene.add(group);
   // ---- floor -------------------------------------------------------------
   const floorTex = makeGridTexture({
-    cells: 8,
+    cells: 4, // 4-unit tile -> 1-unit minor cells, aligned to world integers
     base: '#8b939d',
     line: '#7a828c',
     lineWidth: 2,
@@ -72,7 +72,7 @@ export function createArena(scene) {
 
   // ---- central platform + ramps -----------------------------------------
   const platTex = makeGridTexture({
-    cells: 8,
+    cells: 4, // matches the floor's 1-unit grid
     base: '#7d8894',
     line: '#6d7884',
     lineWidth: 2,

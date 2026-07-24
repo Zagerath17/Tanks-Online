@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.9
+# Tank Remake — prototype 0.12
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -6,11 +6,23 @@ A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win
 
 Play holds the future modes (TDM / FFA / CTF — placeholders for now), Settings is a stub, and **Custom** is the working mode: online multiplayer on the arena map for up to 12 players. Create a lobby to get a 4-digit code, or join with a code someone gives you. Only the host can start the match.
 
+## Garage
+
+Your tank on a lit turntable. Drag anywhere to spin the camera around it, and click (or hit space) to actually fire — full muzzle flash, smoke, sound, a live shell downrange, and the hull rearing back on its suspension. The recoil is spring-driven, so the tank rocks hard and settles back to exactly where it stood; it never drifts off the stand.
+
+The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon and **Arctic Snap** work today, the rest are reserved. **Hulls** lists six, the base one working. **Skins** are all live: eight repaints, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
+
+## Arctic Snap
+
+A cryo projector: finned heat-exchanger barrel, twin coolant bottles, a flared nozzle. Instead of shells it pours a blizzard about a tank and a half in front of you — three layered noise-shaded cone shells with ice motes tumbling through them, so the plume has real depth and never repeats.
+
+Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains in about four seconds of continuous stream and slowly refills once you let go. The stream does 50 damage per second, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
+
 ## Editor
 
-The Editor button drops your tank onto a big flat build ground — this is the map-making pipeline for the game. Drive and shoot exactly like a match, or press **F** for the free build cam: WASD flies (Space rises), and the crosshair becomes your placement cursor. **1 / 2 / 3 / 4** pick wall, platform, slope, or **spawn point**; a green ghost previews the piece on whatever surface you're pointing at (they stack, and spawns can sit on top of platforms). **5** is the decal tool — flat rectangular, circular, or triangular markers you paint onto any surface. **Scroll** adjusts length/size, **Shift+Scroll** the second dimension, **Ctrl+Scroll** height — or slope angle (5°–45°) when the slope tool is out. **R** rotates in 15° steps and **Ctrl+R** rotates back the other way (a spawn's arrow is the direction tanks will face; for decals it spins them in place), **LMB** places, **X** deletes the piece — or decal — under the crosshair. **Esc** opens the pause menu (resume, or exit back to the main menu) — it works mid-match too.
+The Editor button drops your tank onto a big flat build ground — this is the map-making pipeline for the game. Drive and shoot exactly like a match, or press **F** for the free build cam: WASD flies (Space/Shift for up and down), and the crosshair becomes your placement cursor. **1 / 2 / 3 / 4** pick wall, platform, slope, or **spawn point**; a green ghost previews the piece on whatever surface you're pointing at (they stack, and spawns can sit on top of platforms). **5** is the decal tool — flat rectangular, circular, or triangular markers you paint onto any surface. **Scroll** adjusts length/size, **Shift+Scroll** the second dimension, **Ctrl+Scroll** height — or slope angle (5°–45°) when the slope tool is out. **R** rotates in 15° steps (a spawn's arrow is the direction tanks will face; for decals it spins them in place), **LMB** places, **X** deletes the piece — or decal — under the crosshair.
 
-Pick a decal's shape and colour from the toolbar: the three shape buttons choose rect / circle / triangle, and the colour swatch opens a full-spectrum HSV wheel (hue by angle, saturation by radius, with a brightness slider beside it). Decals project onto whatever face you point at — walls, platform tops, the sloped face of a ramp — conforming to that surface. They snap to the same grid the solid pieces use but ten times finer, and they are trimmed at the edge of the face they are painted on, so an oversized decal stops at the border of the piece instead of hanging off into the air. They stick to their piece, so deleting the piece takes its decals with it. Everything solid is fully real — the tank climbs it, shells hit it — and once you've placed spawn points, dying or falling off the world respawns you on one of them, so you can playtest spawn placement immediately.
+Pick a decal's shape and colour from the toolbar: the three shape buttons choose rect / circle / triangle, and the colour swatch opens a full-spectrum HSV wheel (hue by angle, saturation by radius, with a brightness slider beside it). Decals are projected and clipped against the piece itself, so they wrap the surface exactly — flush with no gap, never hanging off an edge or a slope — and they stick to their piece, so deleting the piece takes its decals with it. Placement snaps to the half-unit grid, and every surface (ground, walls, platforms, slopes) shares the same aligned one-unit grid texture. Everything solid is fully real — the tank climbs it, shells hit it — and once you've placed spawn points, dying or falling off the world respawns you on one of them, so you can playtest spawn placement immediately.
 
 The toolbar along the top saves maps: name the map, **save** it in the browser, **load** any saved map from the list, or **export** it as a `.json` file — that file is the game's map format, and **import** reads one back in. Browser saves survive reloads; exported files are the ones to keep and share.
 

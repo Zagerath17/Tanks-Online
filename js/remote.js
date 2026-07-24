@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createTankModel } from './tank.js';
+import { createTankModel, SKINS } from './tank.js';
 import { MODEL_OFF_Y } from './physics.js';
 
 // Floating red HP bar above a tank (canvas sprite)
@@ -72,6 +72,11 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       smokeAcc: 0,
       huskAcc: 0,
       recoil: 0,
+      skin: -1,
+      turretId: 'cannon',
+      streaming: false,
+      chill: 0,
+      offBeam: 99,
     };
     ru.body.position.set(0, -50, 0); // parked until first state
     players.set(pid, ru);
@@ -92,6 +97,17 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
     if (!s || typeof s.x !== 'number' || typeof s.qw !== 'number') return; // lobby stub
     const wasAlive = ru.alive;
     ru.tgt = s;
+
+    // appearance + weapon state travel with the player's snapshot
+    if (Number.isInteger(s.sk) && s.sk !== ru.skin && SKINS[s.sk]) {
+      ru.skin = s.sk;
+      ru.model.setSkin(SKINS[s.sk]);
+    }
+    if (typeof s.tr === 'string' && s.tr !== ru.turretId) {
+      ru.turretId = s.tr;
+      ru.model.setTurret(s.tr);
+    }
+    ru.streaming = !!s.st;
     if (typeof s.hp === 'number') {
       ru.hp = s.hp;
       ru.bar.draw(s.hp / 1000);
@@ -182,6 +198,13 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       const sp = dt > 0 ? fwd / dt : 0;
       ru.speed += (sp - ru.speed) * Math.min(1, 10 * dt);
       if (ru.alive) m.updateTreads(dt, ru.speed, ru.speed);
+
+      // cryo stream mirrors the owner's trigger
+      const pouring = ru.alive && ru.streaming && m.hasStream();
+      m.setStream(pouring);
+      m.updateStream(dt);
+      if (pouring && !ru.cryoSound) ru.cryoSound = audio.loopOn(m.root, 'cryo');
+      if (ru.cryoSound) ru.cryoSound.update(1, pouring ? 0.45 : 0);
 
       // barrel recoil + after-shot smoke
       ru.recoil = Math.max(0, ru.recoil - dt * (0.4 + ru.recoil * 9));

@@ -8,7 +8,7 @@ export function createAudio(camera, scene) {
 
   const buffers = {};
   const loader = new THREE.AudioLoader();
-  for (const name of ['shot', 'explosion', 'hit', 'engine']) {
+  for (const name of ['shot', 'explosion', 'hit', 'engine', 'cryo']) {
     loader.load(`./assets/sfx/${name}.wav`, (b) => { buffers[name] = b; });
   }
 
@@ -36,6 +36,34 @@ export function createAudio(camera, scene) {
     holder.add(audio);
     audio.play();
     audio.source.onended = () => scene.remove(holder);
+  }
+
+  // Generic positional loop (engine rumble, cryo stream, ...)
+  function loopOn(object3d, name) {
+    let audio = null;
+    return {
+      update(rate, volume) {
+        const buffer = buffers[name];
+        if (!buffer || !unlocked) return;
+        if (!audio) {
+          audio = new THREE.PositionalAudio(listener);
+          audio.setBuffer(buffer);
+          audio.setLoop(true);
+          audio.setRefDistance(8);
+          object3d.add(audio);
+          audio.play();
+        }
+        audio.setPlaybackRate(rate);
+        audio.setVolume(volume);
+      },
+      stop() {
+        if (audio) {
+          audio.stop();
+          object3d.remove(audio);
+          audio = null;
+        }
+      },
+    };
   }
 
   // Looping engine attached to the player's hull; rate/volume follow speed
@@ -66,5 +94,5 @@ export function createAudio(camera, scene) {
     };
   }
 
-  return { playAt, engineLoop };
+  return { playAt, engineLoop, loopOn };
 }

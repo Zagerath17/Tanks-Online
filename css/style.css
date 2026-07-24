@@ -499,24 +499,200 @@ body.editor .hpwrap { display: none; }
 #wheel-canvas { cursor: crosshair; touch-action: none; }
 #wheel-value { cursor: ns-resize; touch-action: none; }
 
-/* ---- pause menu (Esc) -------------------------------------------------- */
 
-#pausemenu {
+/* ---- garage (v0.11) --------------------------------------------------- */
+
+#garagehud { display: none; }
+body.garage #garagehud { display: block; }
+body.garage canvas { cursor: grab; }
+body.garage canvas:active { cursor: grabbing; }
+
+#garage-exit {
   position: fixed;
-  inset: 0;
-  z-index: 8; /* under #menu (10), over the hud */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* no full-screen blocker: the editor toolbar stays clickable, and
-     clicking the world still re-locks the pointer */
+  top: 14px;
+  left: 16px;
+  z-index: 4;
+  padding: 8px 16px;
+  background: rgba(20, 23, 27, 0.85);
+  color: var(--sand-100);
+  border: 1px solid rgba(200, 217, 174, 0.4);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#garage-exit:hover { background: rgba(58, 68, 54, 0.9); }
+
+#garage-hint {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.55);
   pointer-events: none;
 }
 
-#pausemenu.hidden { display: none; }
-
-#pausemenu .pausebox {
-  pointer-events: auto;
-  width: 250px;
-  padding: 22px 24px 14px;
+#garage-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid rgba(200, 217, 174, 0.35);
+  font-size: 9px;
 }
+
+#garage-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  padding: 10px 14px 14px;
+  background: linear-gradient(180deg, rgba(16, 19, 22, 0) 0%, rgba(16, 19, 22, 0.92) 38%);
+}
+
+.gtabs {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-bottom: 9px;
+}
+
+.gtab {
+  padding: 7px 20px;
+  background: rgba(20, 23, 27, 0.8);
+  color: rgba(232, 228, 216, 0.65);
+  border: 1px solid rgba(200, 217, 174, 0.25);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.gtab:hover { color: var(--sand-100); }
+
+.gtab.on {
+  background: rgba(93, 112, 80, 0.9);
+  color: var(--sand-100);
+  border-color: rgba(200, 217, 174, 0.6);
+}
+
+#garage-items {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(200, 217, 174, 0.35) transparent;
+}
+
+#garage-items::-webkit-scrollbar { height: 6px; }
+#garage-items::-webkit-scrollbar-thumb { background: rgba(200, 217, 174, 0.35); }
+
+.gitem {
+  flex: 0 0 auto;
+  width: 104px;
+  padding: 10px 8px 9px;
+  background: rgba(28, 32, 37, 0.92);
+  border: 1px solid rgba(200, 217, 174, 0.22);
+  color: var(--sand-100);
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+}
+
+.gitem:hover { border-color: rgba(200, 217, 174, 0.5); }
+
+.gitem.on {
+  border-color: var(--olive-400);
+  background: rgba(70, 88, 58, 0.92);
+  box-shadow: 0 0 0 1px rgba(140, 175, 106, 0.5) inset;
+}
+
+.gitem.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gnum {
+  display: block;
+  font-size: 17px;
+  letter-spacing: 0.1em;
+  color: rgba(232, 228, 216, 0.5);
+}
+
+.gchip {
+  display: block;
+  width: 34px;
+  height: 22px;
+  margin: 0 auto 2px;
+  border: 1px solid;
+}
+
+.gname {
+  display: block;
+  margin-top: 5px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.glock {
+  display: block;
+  margin-top: 3px;
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.5);
+}
+
+#garage-reload {
+  width: 168px;
+  height: 3px;
+  margin: 2px auto 0;
+  background: rgba(20, 23, 27, 0.8);
+  border: 1px solid rgba(200, 217, 174, 0.25);
+}
+
+#garage-reload-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--olive-400);
+  transform-origin: left;
+}
+
+
+/* ---- Arctic Snap fuel bar (v0.12) ------------------------------------- */
+
+#cryowrap {
+  position: fixed;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: none;
+  width: 160px;
+  height: 4px;
+  background: rgba(12, 20, 28, 0.72);
+  border: 1px solid rgba(150, 205, 255, 0.4);
+  pointer-events: none;
+}
+
+#cryofill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left;
+  background: linear-gradient(90deg, #4aa3e0, #bfe6ff);
+  box-shadow: 0 0 6px rgba(140, 205, 255, 0.55);
+}
+
+/* stream weapons swap the crosshair reload bar for the fuel bar */
+body.streamweapon #reloadwrap { display: none; }
+body.streamweapon.ingame #cryowrap { display: block; }

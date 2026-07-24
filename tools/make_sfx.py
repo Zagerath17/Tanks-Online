@@ -156,6 +156,34 @@ def make_engine():
     out = mix(gain(out, 1.0), gain(nz, 0.5))
     return normalize(out, 0.6)
 
+# --- cryo stream (seamless 1.0 s loop) --------------------------------------
+def make_cryo():
+    n = SR  # exactly one second so integer-Hz partials loop cleanly
+    # pressurised hiss: bandpassed noise
+    hiss = highpass(lowpass(noise(n), 5200), 900)
+    # icy shimmer: high sparkle band
+    shimmer = highpass(noise(n), 6500)
+    # low howl of moving air (integer Hz -> loops)
+    howl = [
+        0.5 * math.sin(2 * math.pi * 62 * (i / SR))
+        + 0.32 * math.sin(2 * math.pi * 93 * (i / SR) + 1.1)
+        + 0.2 * math.sin(2 * math.pi * 148 * (i / SR) + 0.4)
+        for i in range(n)
+    ]
+    # slow swell so the stream breathes (integer Hz)
+    out = []
+    for i in range(n):
+        t = i / SR
+        swell = 0.82 + 0.18 * math.sin(2 * math.pi * 3 * t)
+        out.append((hiss[i] * 0.85 + shimmer[i] * 0.3 + howl[i] * 0.22) * swell)
+    # crossfade the seam so the loop is inaudible
+    fade = int(0.08 * SR)
+    for i in range(fade):
+        w = i / fade
+        out[i] = out[i] * w + out[n - fade + i] * (1 - w)
+    return normalize(out, 0.72)
+
+
 if __name__ == '__main__':
     dest = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'sfx')
     os.makedirs(dest, exist_ok=True)
@@ -163,3 +191,4 @@ if __name__ == '__main__':
     write_wav(os.path.join(dest, 'explosion.wav'), make_explosion())
     write_wav(os.path.join(dest, 'hit.wav'), make_hit())
     write_wav(os.path.join(dest, 'engine.wav'), make_engine())
+    write_wav(os.path.join(dest, 'cryo.wav'), make_cryo())

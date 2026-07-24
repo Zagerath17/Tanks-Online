@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { makeGridTexture } from './grid-texture.js';
 
-// Editor sandbox: a flat ground and four placeable pieces — walls, platforms,
-// slopes, and tank spawn points. Solid pieces get static physics and an exact
-// point-in-solid test; spawns are markers the game (re)spawns tanks on.
-// serialize()/loadData() speak the map file format.
+// Editor sandbox: flat ground, placeable walls / platforms / slopes / spawns,
+// and surface-conforming decals. All solid pieces carry corner-origin UVs in
+// world units so every surface shares the same aligned 1-unit grid.
 const GROUND_HALF = 120;
 export const MAP_FORMAT = 'tank-remake-map';
 
@@ -30,14 +30,87 @@ function slopeHeight(d) {
   return Math.tan(d.angle) * d.L;
 }
 
+// ---------------------------------------------------------------------------
+// Grid-aligned geometry: every face gets UVs in world units measured from its
+// own corner, and the material tiles a single 1x1-unit grid cell — so cells
+// are the same size everywhere and lines land on piece edges.
+// ---------------------------------------------------------------------------
+function makeFaceGeometry(build) {
+  const pos = [];
+  const nor = [];
+  const uv = [];
+  const emit = (p, n, u) => {
+    pos.push(p[0], p[1], p[2]);
+    nor.push(n[0], n[1], n[2]);
+    uv.push(u[0], u[1]);
+  };
+  const quad = (a, b, c, d, n, ua, ub, uc, ud) => {
+    emit(a, n, ua); emit(b, n, ub); emit(c, n, uc);
+    emit(a, n, ua); emit(c, n, uc); emit(d, n, ud);
+  };
+  const tri = (a, b, c, n, ua, ub, uc) => {
+    emit(a, n, ua); emit(b, n, ub); emit(c, n, uc);
+  };
+  build(quad, tri);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return geo;
+}
+
+function buildBoxGridGeometry(L, H, W) {
+  const x = L / 2;
+  const z = W / 2;
+  return makeFaceGeometry((quad) => {
+    quad([x, 0, z], [x, 0, -z], [x, H, -z], [x, H, z], [1, 0, 0],
+      [0, 0], [W, 0], [W, H], [0, H]);
+    quad([-x, 0, -z], [-x, 0, z], [-x, H, z], [-x, H, -z], [-1, 0, 0],
+      [0, 0], [W, 0], [W, H], [0, H]);
+    quad([-x, 0, z], [x, 0, z], [x, H, z], [-x, H, z], [0, 0, 1],
+      [0, 0], [L, 0], [L, H], [0, H]);
+    quad([x, 0, -z], [-x, 0, -z], [-x, H, -z], [x, H, -z], [0, 0, -1],
+      [0, 0], [L, 0], [L, H], [0, H]);
+    quad([-x, H, z], [x, H, z], [x, H, -z], [-x, H, -z], [0, 1, 0],
+      [0, 0], [L, 0], [L, W], [0, W]);
+    quad([-x, 0, -z], [x, 0, -z], [x, 0, z], [-x, 0, z], [0, -1, 0],
+      [0, 0], [L, 0], [L, W], [0, W]);
+  });
+}
+
+function buildWedgeGridGeometry(L, W, angle) {
+  const H = Math.tan(angle) * L;
+  const x = L / 2;
+  const z = W / 2;
+  const hyp = Math.hypot(L, H);
+  const inx = H / hyp;
+  const iny = L / hyp;
+  return makeFaceGeometry((quad, tri) => {
+    // bottom
+    quad([-x, 0, -z], [x, 0, -z], [x, 0, z], [-x, 0, z], [0, -1, 0],
+      [0, 0], [L, 0], [L, W], [0, W]);
+    // tall back face
+    quad([-x, 0, -z], [-x, 0, z], [-x, H, z], [-x, H, -z], [-1, 0, 0],
+      [0, 0], [W, 0], [W, H], [0, H]);
+    // incline: u runs down the slope from the top edge, in surface units
+    quad([-x, H, -z], [-x, H, z], [x, 0, z], [x, 0, -z], [inx, iny, 0],
+      [0, 0], [0, W], [hyp, W], [hyp, 0]);
+    // triangular sides
+    tri([-x, 0, -z], [-x, H, -z], [x, 0, -z], [0, 0, -1],
+      [0, 0], [0, H], [L, 0]);
+    tri([-x, 0, z], [x, 0, z], [-x, H, z], [0, 0, 1],
+      [0, 0], [L, 0], [0, H]);
+  });
+}
+
 export function createEditor({ scene, physics }) {
   const group = new THREE.Group();
   group.visible = false;
   scene.add(group);
 
-  // ---- flat build ground ---------------------------------------------------
+  // ---- flat build ground (1-unit minor cells, 4-unit majors) ---------------
   const groundTex = makeGridTexture({
-    cells: 8,
+    cells: 4,
     base: '#98a0a8',
     line: '#87909a',
     lineWidth: 2,
@@ -54,6 +127,25 @@ export function createEditor({ scene, physics }) {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   group.add(ground);
+  ground.updateMatrixWorld(true);
+
+  // ---- shared 1-unit-cell materials ---------------------------------------
+  const solidMats = {};
+  function solidMaterial(type) {
+    if (!solidMats[type]) {
+      solidMats[type] = new THREE.MeshStandardMaterial({
+        map: makeGridTexture({
+          cells: 1,
+          base: COLORS[type][0],
+          line: COLORS[type][1],
+          lineWidth: 3,
+          repeat: [1, 1],
+        }),
+        roughness: 0.92,
+      });
+    }
+    return solidMats[type];
+  }
 
   // ---- tool state ----------------------------------------------------------
   let tool = 'wall';
@@ -66,17 +158,62 @@ export function createEditor({ scene, physics }) {
   };
   let ghostYaw = 0;
 
-  // decal brush: shape + dimensions + colour, set from the toolbar
-  const decal = { shape: 'rect', w: 2.5, h: 2.5, r: 1.4, s: 2, spin: 0, color: '#e8563a' };
-  const DLIM = { w: [0.4, 24], h: [0.4, 24], r: [0.3, 14], s: [0.5, 16] };
-  const DSTEP = { w: 0.4, h: 0.4, r: 0.25, s: 0.4 };
+  // decal brush — steps sit on the same half/quarter-unit grid as placement
+  const decal = { shape: 'rect', w: 2, h: 2, r: 1, s: 2, spin: 0, color: '#e8563a' };
+  const DLIM = { w: [0.5, 24], h: [0.5, 24], r: [0.25, 14], s: [0.5, 16] };
+  const DSTEP = { w: 0.5, h: 0.5, r: 0.25, s: 0.5 };
 
-  const objects = []; // solids + spawns: { type, dims, yaw, pos, group, bodies, inv }
-  const decals = [];  // { shape, dims, spin, color, mesh, owner, pos, quat }
-  let pointedAt = null;     // solid/spawn under the crosshair
-  let pointedDecal = null;  // decal under the crosshair (closer than any solid)
+  const objects = []; // solids + spawns
+  const decals = [];
+  let pointedAt = null;
+  let pointedDecal = null;
 
-  // ---- part builders (origin at the base center) ---------------------------
+  // ---- decal shape masks + sizes -------------------------------------------
+  function shapeAlpha(kind) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = '#fff';
+    if (kind === 'circle') {
+      ctx.beginPath();
+      ctx.arc(128, 128, 126, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(128, 2);
+      ctx.lineTo(2, 254);
+      ctx.lineTo(254, 254);
+      ctx.closePath();
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    return tex;
+  }
+  const alphaTex = { circle: shapeAlpha('circle'), triangle: shapeAlpha('triangle') };
+
+  function decalSize(dc) {
+    if (dc.shape === 'circle') return new THREE.Vector3(dc.r * 2, dc.r * 2, 1.4);
+    if (dc.shape === 'triangle') return new THREE.Vector3(dc.s * 1.732, dc.s * 1.5, 1.4);
+    return new THREE.Vector3(dc.w, dc.h, 1.4);
+  }
+
+  function decalMaterial(dc, ghostly) {
+    return new THREE.MeshBasicMaterial({
+      color: dc.color,
+      alphaMap: dc.shape === 'rect' ? null : alphaTex[dc.shape],
+      alphaTest: dc.shape === 'rect' ? 0 : 0.5,
+      transparent: ghostly,
+      opacity: ghostly ? 0.55 : 1,
+      depthWrite: !ghostly,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+    });
+  }
+
+  // ---- geometry per type ---------------------------------------------------
   function spawnArrowGeometry() {
     const s = new THREE.Shape();
     s.moveTo(2.0, 0);
@@ -89,43 +226,17 @@ export function createEditor({ scene, physics }) {
     return geo;
   }
 
-  function buildDecalGeometry(dc) {
-    if (dc.shape === 'circle') return new THREE.CircleGeometry(dc.r, 48);
-    if (dc.shape === 'triangle') {
-      const s = new THREE.Shape();
-      const a = dc.s;
-      s.moveTo(0, a);
-      s.lineTo(-a * 0.866, -a * 0.5);
-      s.lineTo(a * 0.866, -a * 0.5);
-      s.closePath();
-      return new THREE.ShapeGeometry(s);
-    }
-    return new THREE.PlaneGeometry(dc.w, dc.h);
-  }
-
   function buildGeometries(type, d) {
     if (type === 'spawn') {
       const disc = new THREE.CylinderGeometry(2.1, 2.1, 0.08, 32);
       disc.translate(0, 0.04, 0);
       return [disc, spawnArrowGeometry()];
     }
-    if (type === 'slope') {
-      const H = slopeHeight(d);
-      const s = new THREE.Shape();
-      s.moveTo(-d.L / 2, 0);
-      s.lineTo(d.L / 2, 0);
-      s.lineTo(-d.L / 2, H); // vertical face at -L/2, incline down to +L/2
-      s.closePath();
-      const geo = new THREE.ExtrudeGeometry(s, { depth: d.W, bevelEnabled: false });
-      geo.translate(0, 0, -d.W / 2);
-      return [geo];
-    }
-    const geo = new THREE.BoxGeometry(d.L, d.H, d.W);
-    geo.translate(0, d.H / 2, 0);
-    return [geo];
+    if (type === 'slope') return [buildWedgeGridGeometry(d.L, d.W, d.angle)];
+    return [buildBoxGridGeometry(d.L, d.H, d.W)];
   }
 
-  function buildMaterials(type, d) {
+  function buildMaterials(type) {
     if (type === 'spawn') {
       return [
         new THREE.MeshStandardMaterial({
@@ -134,19 +245,11 @@ export function createEditor({ scene, physics }) {
         new THREE.MeshStandardMaterial({ color: '#c8d9ae', roughness: 0.7 }),
       ];
     }
-    const H = type === 'slope' ? slopeHeight(d) : d.H;
-    const tex = makeGridTexture({
-      cells: 6,
-      base: COLORS[type][0],
-      line: COLORS[type][1],
-      lineWidth: 3,
-      repeat: [Math.max(1, d.L / 3), Math.max(1, Math.max(H, d.W) / 3)],
-    });
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
-    return buildGeometries(type, d).map(() => mat);
+    const mat = solidMaterial(type);
+    return type === 'slope' ? [mat] : [mat];
   }
 
-  // ---- ghost ---------------------------------------------------------------
+  // ---- ghosts --------------------------------------------------------------
   const ghostMat = new THREE.MeshStandardMaterial({
     color: '#9cc36e',
     transparent: true,
@@ -157,52 +260,55 @@ export function createEditor({ scene, physics }) {
   ghost.visible = false;
   group.add(ghost);
 
-  const decalGhostMat = new THREE.MeshBasicMaterial({
-    color: '#e8563a', transparent: true, opacity: 0.6,
-    side: THREE.DoubleSide, depthWrite: false,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-  });
+  const decalGhost = new THREE.Mesh(new THREE.BufferGeometry(), decalMaterial(decal, true));
+  decalGhost.visible = false;
+  group.add(decalGhost);
+  let decalGhostKey = '';
+  let lastDecalHit = null;
 
   function rebuildGhost() {
     for (const c of [...ghost.children]) {
       ghost.remove(c);
       c.geometry.dispose();
     }
-    if (tool === 'decal') {
-      decalGhostMat.color.set(decal.color);
-      ghost.add(new THREE.Mesh(buildDecalGeometry(decal), decalGhostMat));
-      return;
-    }
+    if (tool === 'decal') return; // decal ghost is projected per-frame
     for (const geo of buildGeometries(tool, dims[tool])) {
       ghost.add(new THREE.Mesh(geo, ghostMat));
     }
   }
   rebuildGhost();
 
+  function refreshDecalGhostMaterial() {
+    decalGhost.material.dispose();
+    decalGhost.material = decalMaterial(decal, true);
+    decalGhostKey = '';
+  }
+
   function setTool(t) {
     if (!dims[t] || t === tool) return;
     tool = t;
+    ghost.visible = false;
+    decalGhost.visible = false;
+    decalGhostKey = '';
     rebuildGhost();
   }
 
-  function rotateGhost(dir = 1) {
-    const step = (dir < 0 ? -1 : 1) * (Math.PI / 12);
-    if (tool === 'decal') decal.spin += step;
-    else ghostYaw += step;
+  function rotateGhost() {
+    if (tool === 'decal') decal.spin += Math.PI / 12;
+    else ghostYaw += Math.PI / 12;
   }
 
   function setDecalShape(shape) {
     if (!['rect', 'circle', 'triangle'].includes(shape) || shape === decal.shape) return;
     decal.shape = shape;
-    if (tool === 'decal') rebuildGhost();
+    refreshDecalGhostMaterial();
   }
 
   function setDecalColor(hex) {
     decal.color = hex;
-    if (tool === 'decal') { decalGhostMat.color.set(hex); }
+    decalGhost.material.color.set(hex);
   }
 
-  // axis: 'l' | 'w' | 'h' — length / width / height, remapped per tool
   function adjust(axis, dir) {
     if (tool === 'spawn') return;
     if (tool === 'decal') {
@@ -210,7 +316,6 @@ export function createEditor({ scene, physics }) {
       else if (decal.shape === 'triangle') decal.s = clamp(decal.s + dir * DSTEP.s, DLIM.s[0], DLIM.s[1]);
       else if (axis === 'w') decal.h = clamp(decal.h + dir * DSTEP.h, DLIM.h[0], DLIM.h[1]);
       else decal.w = clamp(decal.w + dir * DSTEP.w, DLIM.w[0], DLIM.w[1]);
-      rebuildGhost();
       return;
     }
     const d = dims[tool];
@@ -224,6 +329,12 @@ export function createEditor({ scene, physics }) {
   // ---- placement raycast ---------------------------------------------------
   const raycaster = new THREE.Raycaster();
   const _center = new THREE.Vector2(0, 0);
+  const _n = new THREE.Vector3();
+  const _zAxis = new THREE.Vector3(0, 0, 1);
+  const _projQuat = new THREE.Quaternion();
+  const _spinQuat = new THREE.Quaternion();
+  const _q = new THREE.Quaternion();
+  const _euler = new THREE.Euler();
 
   function ownerOf(node) {
     while (node) {
@@ -233,59 +344,11 @@ export function createEditor({ scene, physics }) {
     return null;
   }
 
-  const _n = new THREE.Vector3();
-  const _zAxis = new THREE.Vector3(0, 0, 1);
-  const _projQuat = new THREE.Quaternion();
-  const _spinQuat = new THREE.Quaternion();
-
-  // decals ride the same grid as solid pieces, ten times finer
-  const DGRID = { xz: 1 / 10, y: 0.5 / 10 };
-  const _snap = new THREE.Vector3();
-
-  // Any flat face of a piece is that face's plane cut by the piece's own box,
-  // so bounding a decal with the box's *other* planes trims it exactly at the
-  // edge of the face. Planes parallel to the face are dropped — the decal
-  // floats a hair proud of the surface and would clip against itself.
-  const PLANE_SPECS = [
-    [1, 0, 0], [-1, 0, 0],
-    [0, 1, 0], [0, -1, 0],
-    [0, 0, 1], [0, 0, -1],
-  ];
-
-  function clipPlanesFor(owner, normal) {
-    if (!owner || owner.type === 'spawn') return null;
-    const d = owner.dims;
-    const half = {
-      x: d.L / 2,
-      y: owner.type === 'slope' ? slopeHeight(d) : d.H,
-      z: d.W / 2,
-    };
-    owner.group.updateMatrixWorld();
-    const out = [];
-    for (const [nx, ny, nz] of PLANE_SPECS) {
-      // keep the half-space n·p + c >= 0; c is the box extent on that side
-      const c = nx !== 0 ? half.x : nz !== 0 ? half.z : ny > 0 ? 0 : half.y;
-      const plane = new THREE.Plane(new THREE.Vector3(nx, ny, nz), c)
-        .applyMatrix4(owner.group.matrixWorld);
-      if (Math.abs(plane.normal.dot(normal)) < 0.985) out.push(plane);
-    }
-    return out.length ? out : null;
-  }
-
-  // swapping the plane count recompiles the shader, so flag it when it changes
-  function applyClip(mat, planes) {
-    const before = mat.clippingPlanes ? mat.clippingPlanes.length : 0;
-    const after = planes ? planes.length : 0;
-    mat.clippingPlanes = planes;
-    if (before !== after) mat.needsUpdate = true;
-  }
-
   function updateGhost(camera) {
     raycaster.setFromCamera(_center, camera);
     const surfaces = [ground, ...objects.filter((o) => o.type !== 'spawn').map((o) => o.group)];
     const hits = raycaster.intersectObjects(surfaces, true);
 
-    // track the decal under the crosshair (for deletion), nearest wins
     pointedDecal = null;
     if (decals.length) {
       const dHits = raycaster.intersectObjects(decals.map((d) => d.mesh), false);
@@ -297,33 +360,51 @@ export function createEditor({ scene, physics }) {
     pointedAt = null;
     if (!hits.length || hits[0].distance > 130) {
       ghost.visible = false;
+      decalGhost.visible = false;
       return;
     }
     const hit = hits[0];
     if (hit.object !== ground) pointedAt = ownerOf(hit.object);
 
     if (tool === 'decal') {
-      // lay the decal flat on the surface it's pointed at, facing its normal
+      ghost.visible = false;
       _n.copy(hit.face.normal).transformDirection(hit.object.matrixWorld).normalize();
       _projQuat.setFromUnitVectors(_zAxis, _n);
       _spinQuat.setFromAxisAngle(_zAxis, decal.spin);
-      ghost.quaternion.copy(_projQuat).multiply(_spinQuat);
+      _q.copy(_projQuat).multiply(_spinQuat);
+      // half-unit grid snap keeps decals on the same grid as everything else
+      const px = Math.round(hit.point.x * 2) / 2;
+      const py = Math.round(hit.point.y * 2) / 2;
+      const pz = Math.round(hit.point.z * 2) / 2;
 
-      // snap on the fine grid, then slide back onto the face's own plane so
-      // the rounding never buries the decal in the surface or lifts it off
-      _snap.set(
-        Math.round(hit.point.x / DGRID.xz) * DGRID.xz,
-        Math.round(hit.point.y / DGRID.y) * DGRID.y,
-        Math.round(hit.point.z / DGRID.xz) * DGRID.xz
-      );
-      _snap.addScaledVector(_n, hit.point.dot(_n) - _snap.dot(_n));
-      ghost.position.copy(_snap).addScaledVector(_n, 0.02);
-
-      applyClip(decalGhostMat, clipPlanesFor(pointedAt, _n));
-      ghost.visible = true;
+      const key = [
+        hit.object.id, decal.shape, decal.w, decal.h, decal.r, decal.s,
+        Math.round(decal.spin * 200), px, py, pz,
+        Math.round(_n.x * 100), Math.round(_n.y * 100), Math.round(_n.z * 100),
+      ].join('|');
+      if (key !== decalGhostKey) {
+        decalGhostKey = key;
+        _euler.setFromQuaternion(_q);
+        const geo = new DecalGeometry(
+          hit.object,
+          new THREE.Vector3(px, py, pz),
+          _euler,
+          decalSize(decal)
+        );
+        decalGhost.geometry.dispose();
+        decalGhost.geometry = geo;
+        lastDecalHit = {
+          mesh: hit.object,
+          owner: pointedAt,
+          pos: new THREE.Vector3(px, py, pz),
+          quat: _q.clone(),
+        };
+      }
+      decalGhost.visible = decalGhost.geometry.getAttribute('position')?.count > 0;
       return;
     }
 
+    decalGhost.visible = false;
     ghost.quaternion.identity();
     ghost.rotation.y = ghostYaw;
     ghost.position.set(
@@ -336,14 +417,41 @@ export function createEditor({ scene, physics }) {
 
   function hideGhost() {
     ghost.visible = false;
+    decalGhost.visible = false;
+    decalGhostKey = '';
     pointedAt = null;
+    pointedDecal = null;
   }
 
   // ---- place ---------------------------------------------------------------
+  function makeDecalRecord(dc, targetMesh, owner, pos, quat) {
+    _euler.setFromQuaternion(quat);
+    const geo = new DecalGeometry(targetMesh, pos, _euler, decalSize(dc));
+    if (!geo.getAttribute('position') || geo.getAttribute('position').count === 0) {
+      geo.dispose();
+      return null;
+    }
+    const mesh = new THREE.Mesh(geo, decalMaterial(dc, false));
+    group.add(mesh);
+    const rec = {
+      shape: dc.shape,
+      dims: { w: dc.w, h: dc.h, r: dc.r, s: dc.s },
+      spin: dc.spin,
+      color: dc.color,
+      mesh,
+      owner,
+      pos: pos.clone(),
+      quat: quat.clone(),
+    };
+    mesh.userData.decal = rec;
+    decals.push(rec);
+    return rec;
+  }
+
   function placeAt(type, d, pos, yaw) {
     const objGroup = new THREE.Group();
     const geos = buildGeometries(type, d);
-    const mats = buildMaterials(type, d);
+    const mats = buildMaterials(type);
     for (let i = 0; i < geos.length; i++) {
       const mesh = new THREE.Mesh(geos[i], mats[i]);
       if (type !== 'spawn') {
@@ -371,10 +479,18 @@ export function createEditor({ scene, physics }) {
       const H = slopeHeight(d);
       const theta = d.angle;
       const hyp = Math.hypot(d.L, H);
-      const halfLen = hyp / 2 + 0.2;
+      // Asymmetric slab: the TOP corner lands exactly on the crest (an
+      // overshoot there is an invisible lip); only the bottom end extends,
+      // harmlessly into whatever is below.
+      const ext = 0.5;
+      const halfLen = (hyp + ext) / 2;
       const halfT = 0.35;
-      const cx = -Math.sin(theta) * halfT;
-      const cy = H / 2 - Math.cos(theta) * halfT;
+      const dX = Math.cos(theta);
+      const dY = -Math.sin(theta);
+      const nx2 = Math.sin(theta);
+      const ny2 = Math.cos(theta);
+      const cx = -d.L / 2 + dX * halfLen - nx2 * halfT;
+      const cy = H + dY * halfLen - ny2 * halfT;
       const qYaw = new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw);
       const qTilt = new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 1), -theta);
       bodies.push(physics.addStaticBox(
@@ -382,10 +498,14 @@ export function createEditor({ scene, physics }) {
         new CANNON.Vec3(pos.x + Math.cos(yaw) * cx, pos.y + cy, pos.z - Math.sin(yaw) * cx),
         qYaw.mult(qTilt)
       ));
-      const bx = -d.L / 2 + 0.3;
+      // fill under the tall face — its top held just below the incline so it
+      // can never poke through the sloped surface
+      const fx2 = 0.2;
+      const fTop = Math.max(0.4, H * (1 - (2 * fx2) / d.L) - 0.02);
+      const bx = -d.L / 2 + fx2;
       bodies.push(physics.addStaticBox(
-        0.3, H / 2, d.W / 2,
-        new CANNON.Vec3(pos.x + Math.cos(yaw) * bx, pos.y + H / 2, pos.z - Math.sin(yaw) * bx),
+        fx2, fTop / 2, d.W / 2,
+        new CANNON.Vec3(pos.x + Math.cos(yaw) * bx, pos.y + fTop / 2, pos.z - Math.sin(yaw) * bx),
         qYaw
       ));
     }
@@ -404,34 +524,17 @@ export function createEditor({ scene, physics }) {
     return obj;
   }
 
-  function placeDecal(dc, pos, quat, owner) {
-    // the decal's own +Z is the face normal it was stamped against
-    const normal = _zAxis.clone().applyQuaternion(quat).normalize();
-    const mat = new THREE.MeshBasicMaterial({
-      color: dc.color, side: THREE.DoubleSide,
-      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-      clippingPlanes: clipPlanesFor(owner, normal),
-    });
-    const mesh = new THREE.Mesh(buildDecalGeometry(dc), mat);
-    mesh.position.copy(pos);
-    mesh.quaternion.copy(quat);
-    mesh.renderOrder = 2;
-    group.add(mesh);
-    const rec = { shape: dc.shape, dims: { w: dc.w, h: dc.h, r: dc.r, s: dc.s }, spin: dc.spin, color: dc.color, mesh, owner, pos: pos.clone(), quat: quat.clone() };
-    mesh.userData.decal = rec;
-    decals.push(rec);
-    return rec;
-  }
-
   function place() {
-    if (!ghost.visible) return;
     if (tool === 'decal') {
-      placeDecal(decal, ghost.position.clone(), ghost.quaternion.clone(), pointedAt);
+      if (!decalGhost.visible || !lastDecalHit) return;
+      makeDecalRecord(decal, lastDecalHit.mesh, lastDecalHit.owner, lastDecalHit.pos, lastDecalHit.quat);
       return;
     }
+    if (!ghost.visible) return;
     placeAt(tool, { ...dims[tool] }, ghost.position.clone(), ghost.rotation.y);
   }
 
+  // ---- delete --------------------------------------------------------------
   function removeDecal(rec) {
     const i = decals.indexOf(rec);
     if (i === -1) return;
@@ -449,7 +552,6 @@ export function createEditor({ scene, physics }) {
     group.remove(obj.group);
     for (const c of obj.group.children) c.geometry.dispose();
     objects.splice(i, 1);
-    // decals stuck to this piece go with it
     for (const rec of decals.filter((d) => d.owner === obj)) removeDecal(rec);
     if (pointedAt === obj) pointedAt = null;
   }
@@ -523,14 +625,13 @@ export function createEditor({ scene, physics }) {
     };
   }
 
-  // Rebuild the board from map data. Throws on anything that isn't a map.
   function loadData(data) {
     if (!data || data.format !== MAP_FORMAT || !Array.isArray(data.objects)) {
       throw new Error('not a map');
     }
     clearAll();
     let count = 0;
-    const placed = []; // parallel to data.objects, for decal parent lookup
+    const placed = [];
     for (const e of data.objects) {
       if (!e || !dims[e.type] || e.type === 'decal' || ![e.x, e.y, e.z].every(Number.isFinite)) {
         placed.push(null);
@@ -562,19 +663,21 @@ export function createEditor({ scene, physics }) {
         shape: e.shape,
         color: typeof e.color === 'string' ? e.color : '#e8563a',
         spin: Number(e.spin) || 0,
-        w: clamp(Number(e.w) || 2.5, DLIM.w[0], DLIM.w[1]),
-        h: clamp(Number(e.h) || 2.5, DLIM.h[0], DLIM.h[1]),
-        r: clamp(Number(e.r) || 1.4, DLIM.r[0], DLIM.r[1]),
+        w: clamp(Number(e.w) || 2, DLIM.w[0], DLIM.w[1]),
+        h: clamp(Number(e.h) || 2, DLIM.h[0], DLIM.h[1]),
+        r: clamp(Number(e.r) || 1, DLIM.r[0], DLIM.r[1]),
         s: clamp(Number(e.s) || 2, DLIM.s[0], DLIM.s[1]),
       };
       const owner = Number.isInteger(e.parent) && e.parent >= 0 ? placed[e.parent] || null : null;
-      placeDecal(
+      const targetMesh = owner ? owner.group.children[0] : ground;
+      const made = makeDecalRecord(
         dc,
+        targetMesh,
+        owner,
         new THREE.Vector3(e.x, e.y, e.z),
-        new THREE.Quaternion(e.qx, e.qy, e.qz, e.qw).normalize(),
-        owner
+        new THREE.Quaternion(e.qx, e.qy, e.qz, e.qw).normalize()
       );
-      count++;
+      if (made) count++;
     }
     return count;
   }

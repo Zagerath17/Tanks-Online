@@ -13,9 +13,10 @@
   <div id="menu">
     <div class="screen" id="scr-main">
       <h1 class="menu-title">TANK REMAKE</h1>
-      <p class="menu-sub">prototype 0.9.3 &middot; not pay-to-win</p>
+      <p class="menu-sub">prototype 0.12 &middot; not pay-to-win</p>
       <button class="mbtn" id="btn-play">Play</button>
       <button class="mbtn" id="btn-custom">Custom</button>
+      <button class="mbtn" id="btn-garage">Garage</button>
       <button class="mbtn" id="btn-editor">Editor</button>
       <button class="mbtn" id="btn-settings">Settings</button>
     </div>
@@ -54,6 +55,22 @@
     </div>
   </div>
 
+  <!-- ============ garage ============ -->
+  <div id="garagehud">
+    <button id="garage-exit">leave</button>
+    <div id="garage-hint">drag to rotate &middot; click or <kbd>space</kbd> to fire</div>
+
+    <div id="garage-bar">
+      <div class="gtabs">
+        <button class="gtab on" data-tab="turrets">Turrets</button>
+        <button class="gtab" data-tab="hulls">Hulls</button>
+        <button class="gtab" data-tab="skins">Skins</button>
+      </div>
+      <div id="garage-items"></div>
+      <div id="garage-reload"><div id="garage-reload-fill"></div></div>
+    </div>
+  </div>
+
   <!-- ============ in-game HUD ============ -->
   <div id="gamehud">
     <div class="hud brand">
@@ -65,8 +82,7 @@
       <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span> drive / reverse</div>
       <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
       <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
-      <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire</div>
-      <div class="row"><span class="keys"><kbd>Esc</kbd></span> pause / exit</div>
+      <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire / hold to freeze</div>
     </div>
 
     <div class="hud controls" id="editorhud">
@@ -74,8 +90,7 @@
       <div class="row"><span class="keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd></span> wall / platform / slope / spawn / decal</div>
       <div class="row"><span class="keys"><kbd>LMB</kbd></span> place &middot; <kbd>X</kbd> delete</div>
       <div class="row"><span class="keys"><kbd>Scroll</kbd></span> length &middot; <kbd>Shift</kbd> width &middot; <kbd>Ctrl</kbd> height / angle</div>
-      <div class="row"><span class="keys"><kbd>R</kbd></span> rotate &middot; <kbd>Ctrl</kbd>+<kbd>R</kbd> reverse &middot; <kbd>Space</kbd> fly up</div>
-      <div class="row"><span class="keys"><kbd>Esc</kbd></span> pause / exit</div>
+      <div class="row"><span class="keys"><kbd>R</kbd></span> rotate &middot; <kbd>Space</kbd>/<kbd>Shift</kbd> fly up / down</div>
     </div>
 
     <div id="editorbar">
@@ -110,6 +125,8 @@
     <div id="crosshair"></div>
     <div id="reloadwrap"><div id="reload"></div></div>
 
+    <div id="cryowrap"><div id="cryofill"></div></div>
+
     <div class="hpwrap">
       <div id="hpbar"><div id="hpfill"></div></div>
       <label>hull &middot; <span id="hpnum">1000</span></label>
@@ -117,20 +134,13 @@
 
     <div id="lockhint">click to take aim</div>
     <div id="deathmsg" style="display:none"></div>
-
-    <div id="pausemenu" class="hidden">
-      <div class="screen pausebox">
-        <h2>paused</h2>
-        <button class="mbtn" id="pause-resume">resume</button>
-        <button class="mbtn back" id="pause-exit">exit to menu</button>
-      </div>
-    </div>
   </div>
 
   <script type="importmap">
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/",
         "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
       }
     }

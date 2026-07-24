@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createArena, SPAWN_SLOTS, heightAt, ARENA } from './map.js';
-import { createTankModel, SPEC } from './tank.js';
+import { createTankModel, SPEC, TURRET_SPECS } from './tank.js';
 import { createPlayerController } from './player.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
@@ -11,6 +11,8 @@ import { createRemoteManager } from './remote.js';
 import { createPhysics } from './physics.js';
 import { createEditor } from './editor.js';
 import { createColorWheel } from './colorwheel.js';
+import { createGarage } from './garage.js';
+import { TURRETS, HULLS, SKINS, selection, loadSelection, saveSelection, currentSkin, currentTurret } from './loadout.js';
 import * as net from './net.js';
 
 const FIRE_INTERVAL = 2.5;
@@ -30,7 +32,6 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.localClippingEnabled = true; // decals are trimmed to the face they sit on
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -72,6 +73,8 @@ const audio = createAudio(camera, scene);
 const bullets = createBullets(scene, fx);
 const remote = createRemoteManager({ scene, fx, audio, physics });
 const editor = createEditor({ scene, physics });
+loadSelection();
+const garage = createGarage({ scene, fx, audio, bullets });
 
 // compile every shader / effect during the menu so the first shot in a
 // match never hitches
@@ -79,7 +82,7 @@ fx.prewarm();
 bullets.prewarm();
 
 // Local player
-const playerModel = createTankModel();
+const playerModel = createTankModel(currentSkin(), currentTurret());
 playerModel.root.visible = false; // hidden until a match starts
 scene.add(playerModel.root);
 const player = createPlayerController(playerModel, physics);
@@ -97,9 +100,16 @@ const local = {
   huskAcc: 0,
   deadT: 0,
   recoil: 0,
+  chill: 0,
+  offBeam: 99,
 };
 
 const engine = audio.engineLoop(playerModel.root);
+const cryoSound = audio.loopOn(playerModel.root, 'cryo');
+
+// Arctic Snap trigger + fuel
+let firingHeld = false;
+const cryo = { fuel: 100, streaming: false, pause: 0 };
 
 // ---------------------------------------------------------------------------
 // Phase + lobby bookkeeping
@@ -120,6 +130,7 @@ const ENV_EDITOR = {
   half: editor.boundsHalf,
   solidAt: (p) => editor.solidAt(p),
 };
+const ENV_GARAGE = { groundAt: () => 0, half: 150, solidAt: null };
 
 // ---------------------------------------------------------------------------
 // HUD
@@ -131,6 +142,7 @@ const elHpNum = document.getElementById('hpnum');
 const elReload = document.getElementById('reload');
 const elHint = document.getElementById('lockhint');
 const elDeath = document.getElementById('deathmsg');
+const elCryoFill = document.getElementById('cryofill');
 const elExit = document.getElementById('editor-exit');
 let fpsTime = 0;
 let fpsFrames = 0;
@@ -175,6 +187,7 @@ const menu = createMenu({
   onStart: () => net.startGame(),
   onLeave: () => leaveToMenu(),
   onEditor: () => enterEditor(),
+  onGarage: () => enterGarage(),
 });
 
 function refreshLobbyUi() {
@@ -217,7 +230,15 @@ function enterLobby() {
   menu.show('scr-lobby');
 }
 
+function stopStreaming() {
+  firingHeld = false;
+  cryo.streaming = false;
+  playerModel.setStream(false);
+  cryoSound.update(1, 0);
+}
+
 function leaveToMenu() {
+  stopStreaming();
   net.leaveLobby();
   remote.clear();
   bullets.clear();
@@ -232,10 +253,165 @@ function leaveToMenu() {
 }
 
 // ---------------------------------------------------------------------------
+// Garage
+// ---------------------------------------------------------------------------
+const SKY = { bg: '#b9c3cd', fogNear: 70, fogFar: 230 };
+const elGarageItems = document.getElementById('garage-items');
+const elGarageReload = document.getElementById('garage-reload-fill');
+let garageTab = 'turrets';
+
+function rosterFor(tab) {
+  return tab === 'hulls' ? HULLS : tab === 'skins' ? SKINS : TURRETS;
+}
+
+function selectedIndex(tab) {
+  return tab === 'hulls' ? selection.hull : tab === 'skins' ? selection.skin : selection.turret;
+}
+
+function renderGarageItems() {
+  const roster = rosterFor(garageTab);
+  const sel = selectedIndex(garageTab);
+  elGarageItems.innerHTML = roster
+    .map((item, i) => {
+      const locked = !!item.locked;
+      const chip = garageTab === 'skins'
+        ? `<span class="gchip" style="background:${item.hull[0]};border-color:${item.hull[1]}"></span>`
+        : `<span class="gnum">${String(i + 1).padStart(2, '0')}</span>`;
+      return `<button class="gitem${i === sel ? ' on' : ''}${locked ? ' locked' : ''}" data-i="${i}">
+        ${chip}<span class="gname">${item.name}</span>
+        ${locked ? '<span class="glock">locked</span>' : ''}
+      </button>`;
+    })
+    .join('');
+}
+
+function setGarageTab(tab) {
+  garageTab = tab;
+  for (const btn of document.querySelectorAll('.gtab')) {
+    btn.classList.toggle('on', btn.dataset.tab === tab);
+  }
+  renderGarageItems();
+  elGarageItems.scrollLeft = 0;
+}
+
+elGarageItems.addEventListener('click', (e) => {
+  const btn = e.target.closest('.gitem');
+  if (!btn) return;
+  const i = Number(btn.dataset.i);
+  const roster = rosterFor(garageTab);
+  if (!roster[i] || roster[i].locked) return;
+  if (garageTab === 'hulls') selection.hull = i;
+  else if (garageTab === 'skins') {
+    selection.skin = i;
+    garage.applySkin(SKINS[i]);
+    playerModel.setSkin(SKINS[i]);
+  } else {
+    selection.turret = i;
+    garage.applyTurret(roster[i].id);
+    playerModel.setTurret(roster[i].id);
+    refreshWeaponHud();
+  }
+  saveSelection();
+  renderGarageItems();
+});
+
+// horizontal wheel scrolling over the strip, like a shelf
+elGarageItems.addEventListener('wheel', (e) => {
+  if (!e.deltaY) return;
+  e.preventDefault();
+  elGarageItems.scrollLeft += e.deltaY;
+}, { passive: false });
+
+for (const btn of document.querySelectorAll('.gtab')) {
+  btn.addEventListener('click', () => setGarageTab(btn.dataset.tab));
+}
+
+document.getElementById('garage-exit').addEventListener('click', () => {
+  if (phase === 'garage') leaveGarage();
+});
+
+function enterGarage() {
+  phase = 'garage';
+  document.body.classList.add('garage');
+  menu.hideAll();
+  arenaGroup.visible = false;
+  physics.setArenaActive(false);
+  playerModel.root.visible = false;
+  scene.background.set('#1b1f24');
+  scene.fog.color.set('#1b1f24');
+  scene.fog.near = 40;
+  scene.fog.far = 150;
+  garage.enter();
+  setGarageTab(garageTab);
+}
+
+function leaveGarage() {
+  garage.exit();
+  bullets.clear();
+  arenaGroup.visible = true;
+  physics.setArenaActive(true);
+  document.body.classList.remove('garage');
+  scene.background.set(SKY.bg);
+  scene.fog.color.set(SKY.bg);
+  scene.fog.near = SKY.fogNear;
+  scene.fog.far = SKY.fogFar;
+  phase = 'menu';
+  menu.show('scr-main');
+}
+
+// drag to spin the turntable; a click without dragging pulls the trigger
+let gDrag = null;
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (phase !== 'garage' || e.button !== 0) return;
+  gDrag = { lastX: e.clientX, moved: 0, vx: 0, streaming: false };
+  if (garage.isStreamWeapon()) {
+    garage.setStream(true);
+    gDrag.streaming = true;
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!gDrag) return;
+  const dx = e.clientX - gDrag.lastX;
+  gDrag.lastX = e.clientX;
+  gDrag.moved += Math.abs(dx);
+  gDrag.vx = dx;
+  // once it's clearly a drag, stop pouring and just spin the stand
+  if (gDrag.streaming && gDrag.moved >= 5) {
+    garage.setStream(false);
+    gDrag.streaming = false;
+  }
+  garage.orbit(dx);
+});
+
+window.addEventListener('mouseup', () => {
+  if (!gDrag) return;
+  garage.setStream(false);
+  if (gDrag.moved < 5) garage.fire();
+  else garage.flingOrbit(gDrag.vx);
+  gDrag = null;
+});
+
+window.addEventListener('keydown', (e) => {
+  if (phase !== 'garage' || e.code !== 'Space') return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+  e.preventDefault();
+  if (garage.isStreamWeapon()) garage.setStream(true);
+  else garage.fire();
+});
+
+window.addEventListener('keyup', (e) => {
+  if (phase === 'garage' && e.code === 'Space') garage.setStream(false);
+});
+
+// ---------------------------------------------------------------------------
 // Editor mode
 // ---------------------------------------------------------------------------
 function enterEditor() {
   phase = 'editor';
+  playerModel.root.visible = true;
   editorMode = 'drive';
   document.body.classList.add('editor');
   menu.hideAll();
@@ -246,6 +422,7 @@ function enterEditor() {
 }
 
 function leaveEditor() {
+  stopStreaming();
   editor.exit();
   arenaGroup.visible = true;
   physics.setArenaActive(true);
@@ -463,10 +640,8 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'Digit3') editor.setTool('slope');
   else if (e.code === 'Digit4') editor.setTool('spawn');
   else if (e.code === 'Digit5') editor.setTool('decal');
-  else if (e.code === 'KeyR') editor.rotateGhost(e.ctrlKey ? -1 : 1);
+  else if (e.code === 'KeyR') editor.rotateGhost();
   else if (e.code === 'KeyX') editor.deleteAtCursor();
-  else return;
-  e.preventDefault(); // ctrl+R is a page reload otherwise
 });
 
 window.addEventListener('wheel', (e) => {
@@ -513,6 +688,15 @@ function editorSpawnPoint() {
 
 function spawnLocal(slot) {
   player.reset(slot);
+  local.chill = 0;
+  local.offBeam = 99;
+  playerModel.setChill(0);
+  player.setSlow(1);
+  cryo.fuel = 100;
+  cryo.streaming = false;
+  cryo.pause = 0;
+  playerModel.setStream(false);
+  refreshWeaponHud();
   playerModel.root.visible = true;
   local.alive = true;
   local.hp = local.maxHp;
@@ -556,6 +740,9 @@ function pushState() {
     tp: r3(player.state.pitch),
     hp: Math.max(0, Math.round(local.hp)),
     al: local.alive,
+    sk: selection.skin,
+    tr: playerModel.turretId,
+    st: cryo.streaming,
     t: Date.now(),
   });
 }
@@ -581,64 +768,16 @@ canvas.addEventListener('mousedown', (e) => {
     editor.place();
     return;
   }
-  tryPlayerFire();
+  firingHeld = true;
+  if (!playerModel.hasStream()) tryPlayerFire();
 });
+
+window.addEventListener('mouseup', () => { firingHeld = false; });
+window.addEventListener('blur', () => { firingHeld = false; });
 
 document.addEventListener('pointerlockchange', () => {
-  const locked = document.pointerLockElement === canvas;
-  if (locked) {
-    elHint.style.display = 'none';
-    hidePause();
-  } else if (phase === 'playing' || phase === 'editor') {
-    // Esc (or anything else) broke pointer lock mid-game: offer a way out.
-    // The browser reserves Esc while locked, so this is the only hook.
-    showPause();
-  } else {
-    elHint.style.display = '';
-    hidePause();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Pause menu: appears whenever pointer lock drops in a match or the editor
-// ---------------------------------------------------------------------------
-const elPause = document.getElementById('pausemenu');
-let pauseShownAt = 0;
-
-function showPause() {
-  elPause.classList.remove('hidden');
-  elHint.style.display = 'none';
-  pauseShownAt = performance.now();
-}
-
-function hidePause() {
-  elPause.classList.add('hidden');
-}
-
-document.getElementById('pause-resume').addEventListener('click', () => {
-  // pointerlockchange hides the menu once the lock actually lands
-  const p = canvas.requestPointerLock();
-  if (p && p.catch) p.catch(() => { /* browser cooldown — click again */ });
-});
-
-document.getElementById('pause-exit').addEventListener('click', () => {
-  hidePause();
-  if (phase === 'editor') leaveEditor();
-  else if (phase === 'playing') leaveToMenu();
-});
-
-// Esc while already unlocked (e.g. after using the editor toolbar) toggles it
-window.addEventListener('keydown', (e) => {
-  if (e.code !== 'Escape') return;
-  if (phase !== 'playing' && phase !== 'editor') return;
-  if (document.pointerLockElement === canvas) return; // browser handles that Esc
-  const t = e.target;
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
-  // swallow the same Esc press that just broke pointer lock (some browsers
-  // deliver it after the pointerlockchange that opened the menu)
-  if (performance.now() - pauseShownAt < 250) return;
-  if (elPause.classList.contains('hidden')) showPause();
-  else hidePause();
+  elHint.style.display = document.pointerLockElement === canvas ? 'none' : '';
+  if (document.pointerLockElement !== canvas) firingHeld = false;
 });
 
 document.addEventListener('mousemove', (e) => {
@@ -656,6 +795,96 @@ document.addEventListener('mousemove', (e) => {
 });
 
 // ---------------------------------------------------------------------------
+// Weapon mode: the cannon reloads between shots, Arctic Snap burns fuel
+// ---------------------------------------------------------------------------
+function refreshWeaponHud() {
+  document.body.classList.toggle('streamweapon', playerModel.hasStream());
+}
+refreshWeaponHud();
+
+const ARCTIC = TURRET_SPECS.arctic;
+const _bp = new THREE.Vector3();
+const _bd = new THREE.Vector3();
+const _bq = new THREE.Quaternion();
+const _bv = new THREE.Vector3();
+const _tgt = new THREE.Vector3();
+
+// Is `targetPos` inside the cone pouring from this model's nozzle?
+function streamHits(model, targetPos) {
+  model.muzzle.getWorldPosition(_bp);
+  model.muzzle.getWorldQuaternion(_bq);
+  _bd.set(1, 0, 0).applyQuaternion(_bq);
+  _bv.copy(targetPos).sub(_bp);
+  const along = _bv.dot(_bd);
+  if (along < -0.6 || along > ARCTIC.range) return false;
+  const perp = Math.sqrt(Math.max(0, _bv.lengthSq() - along * along));
+  const t = Math.max(0, along) / ARCTIC.range;
+  return perp <= 0.95 + (ARCTIC.coneR - 0.95) * t; // the spray widens with range
+}
+
+// Freeze builds while the stream lands and thaws once it stops
+function tickChill(unit, hit, dt) {
+  if (hit) {
+    unit.offBeam = 0;
+    unit.chill = Math.min(1, unit.chill + ARCTIC.chillRise * dt);
+  } else {
+    unit.offBeam += dt;
+    if (unit.offBeam > ARCTIC.thawDelay) {
+      unit.chill = Math.max(0, unit.chill - ARCTIC.chillFall * dt);
+    }
+  }
+  unit.model.setChill(unit.chill);
+}
+
+function updateStreamWeapon(dt) {
+  const wants = firingHeld && local.alive && playerModel.hasStream();
+  if (cryo.streaming) {
+    if (!wants || cryo.fuel <= 0) cryo.streaming = false;
+  } else if (wants && cryo.fuel >= ARCTIC.restartAt) {
+    cryo.streaming = true;
+  }
+
+  if (cryo.streaming) {
+    cryo.fuel = Math.max(0, cryo.fuel - ARCTIC.fuelDrain * dt);
+    cryo.pause = ARCTIC.rechargeDelay;
+  } else {
+    cryo.pause = Math.max(0, cryo.pause - dt);
+    if (cryo.pause === 0) cryo.fuel = Math.min(100, cryo.fuel + ARCTIC.fuelRecharge * dt);
+  }
+
+  playerModel.setStream(cryo.streaming);
+  playerModel.updateStream(dt);
+  cryoSound.update(1, cryo.streaming ? 0.5 : 0);
+  elCryoFill.style.transform = `scaleX(${cryo.fuel / 100})`;
+}
+
+// Resolve every live cryo stream against every tank
+function resolveStreams(dt) {
+  const remotes = phase === 'playing' ? remote.targets() : [];
+  let localHit = false;
+
+  for (const ru of remotes) {
+    const visible = ru.alive && ru.model.root.visible;
+    if (visible && ru.streaming && ru.model.hasStream() && local.alive) {
+      _tgt.copy(playerModel.root.position);
+      _tgt.y += 1.0;
+      if (streamHits(ru.model, _tgt)) localHit = true;
+    }
+    let hitByMe = false;
+    if (cryo.streaming && visible) {
+      _tgt.copy(ru.pos);
+      _tgt.y += 1.0;
+      hitByMe = streamHits(playerModel, _tgt);
+    }
+    tickChill(ru, hitByMe, dt);
+  }
+
+  if (localHit) localDrain(ARCTIC.dps * dt);
+  tickChill(local, localHit, dt);
+  player.setSlow(1 - ARCTIC.maxSlow * local.chill);
+}
+
+// ---------------------------------------------------------------------------
 // Firing
 // ---------------------------------------------------------------------------
 const _fpos = new THREE.Vector3();
@@ -668,6 +897,8 @@ function muzzleWorld(unit, outPos, outDir) {
   outDir.set(1, 0, 0).applyQuaternion(_fq);
 }
 
+let camKick = 0;
+
 function tryPlayerFire() {
   if (!local.alive || local.cooldown > 0) return;
   local.cooldown = FIRE_INTERVAL;
@@ -677,7 +908,8 @@ function tryPlayerFire() {
   bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone());
   fx.muzzleFlash(_fpos.clone(), _fdir.clone());
   audio.playAt('shot', _fpos, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
-  player.applyRecoil(_fdir, _fpos);
+  player.applyRecoil(_fdir);
+  camKick = 0.55;
   if (phase === 'playing') {
     net.sendShot({
       x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
@@ -696,6 +928,14 @@ function localDamage(amount, at) {
   updateHpHud();
   if (local.hp <= 0) localDie();
   else if (phase === 'playing') pushState();
+}
+
+// Sustained damage (cryo stream): no impact clank, no forced net push
+function localDrain(amount) {
+  if (!local.alive) return;
+  local.hp -= amount;
+  updateHpHud();
+  if (local.hp <= 0) localDie();
 }
 
 function localDie() {
@@ -758,12 +998,15 @@ const camPos = new THREE.Vector3(0, 26, 60);
 const _desired = new THREE.Vector3();
 const _lookAt = new THREE.Vector3(0, 2, 0);
 
-function updateCamera() {
-  // no easing, no fire kick: the camera is the crosshair, so it goes exactly
-  // where the mouse says, this frame. Recoil is felt through the hull moving
-  // under it, not by shoving the viewpoint around.
-  camYaw = viewYaw;
-  camPitch = viewPitch;
+function lerpAngle(a, b, t) {
+  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + d * t;
+}
+
+function updateCamera(dt) {
+  camKick = Math.max(0, camKick - camKick * 7 * dt - 0.05 * dt);
+  camYaw = lerpAngle(camYaw, viewYaw, 1 - Math.exp(-16 * dt));
+  camPitch += (viewPitch - camPitch) * (1 - Math.exp(-16 * dt));
 
   const cy = Math.cos(camYaw);
   const sy = -Math.sin(camYaw);
@@ -778,13 +1021,13 @@ function updateCamera() {
     tp.z + cp * sy * D
   );
 
-  const dist = 10.5;
+  const dist = 10.5 + camKick * 2.4;
   let camY = tp.y + 5.6 - sp * 9;
   _desired.set(tp.x - cy * dist, 0, tp.z - sy * dist);
   camY = Math.max(camY, groundYAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
   _desired.y = camY;
 
-  camPos.copy(_desired);
+  camPos.lerp(_desired, 1 - Math.exp(-9 * dt));
   camera.position.copy(camPos);
   camera.lookAt(_lookAt);
 }
@@ -876,6 +1119,8 @@ renderer.setAnimationLoop(() => {
     }
 
     updateLocalUnit(dt);
+    updateStreamWeapon(dt);
+    resolveStreams(dt);
 
     bullets.update(
       dt,
@@ -892,7 +1137,7 @@ renderer.setAnimationLoop(() => {
     );
 
     fx.update(dt);
-    if (!flying) updateCamera();
+    if (!flying) updateCamera(dt);
 
     const sunAnchor = flying ? camera.position : playerModel.root.position;
     sun.position.copy(sunAnchor).add(SUN_OFFSET);
@@ -917,6 +1162,14 @@ renderer.setAnimationLoop(() => {
     if (!local.alive) {
       elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(local.deadT))}`;
     }
+  } else if (phase === 'garage') {
+    garage.update(dt, camera);
+    bullets.update(dt, [], () => {}, (pos) => fx.impact(pos.clone()), ENV_GARAGE);
+    fx.update(dt);
+    engine.update(0.72, 0);
+    sun.position.set(18, 30, 14);
+    sun.target.position.set(0, 0, 0);
+    elGarageReload.style.transform = `scaleX(${garage.isStreamWeapon() ? garage.fuelFrac() : garage.reloadFrac()})`;
   } else {
     updateIdleCamera(dt);
     fx.update(dt);

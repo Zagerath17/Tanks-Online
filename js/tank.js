@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { makeGridTexture, makeHubTexture } from './grid-texture.js';
+import { createCryoBeam } from './cryo.js';
 
 // ---------------------------------------------------------------------------
 // Movement tuning (used by the player controller)
@@ -15,11 +16,69 @@ export const SPEC = {
   halfTrack: 1.18,
 };
 
-export const PALETTE = {
-  green: {
-    hull: ['#4d6039', '#41522f'],
-    turret: ['#57683c', '#4a5a32'],
-    barrel: ['#3f4d2e', '#35422a'],
+// Skins are palettes plus a grid pattern — swappable on a built model.
+export const SKINS = [
+  {
+    id: 'olive', name: 'Olive Drab',
+    hull: ['#4d6039', '#41522f'], turret: ['#57683c', '#4a5a32'], barrel: ['#3f4d2e', '#35422a'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'desert', name: 'Desert Tan',
+    hull: ['#9a8459', '#87734b'], turret: ['#a68e60', '#917b51'], barrel: ['#7f6c46', '#6d5c3b'],
+    pattern: { cells: 4, lineWidth: 2 },
+  },
+  {
+    id: 'urban', name: 'Urban Grey',
+    hull: ['#6b7178', '#5b6066'], turret: ['#767d85', '#646a71'], barrel: ['#565b61', '#494d52'],
+    pattern: { cells: 10, lineWidth: 2 },
+  },
+  {
+    id: 'arctic', name: 'Arctic',
+    hull: ['#c3cdd4', '#a8b3bc'], turret: ['#ced8de', '#b2bdc6'], barrel: ['#9aa5ad', '#848e96'],
+    pattern: { cells: 6, lineWidth: 4 },
+  },
+  {
+    id: 'forest', name: 'Deep Forest',
+    hull: ['#2f4232', '#26352a'], turret: ['#374b3a', '#2c3d2f'], barrel: ['#243328', '#1d2a21'],
+    pattern: { cells: 3, lineWidth: 5 },
+  },
+  {
+    id: 'crimson', name: 'Crimson',
+    hull: ['#6e3a33', '#5c2f29'], turret: ['#7c453a', '#683a30'], barrel: ['#5c332c', '#4d2b24'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'midnight', name: 'Midnight',
+    hull: ['#2a3140', '#222836'], turret: ['#313949', '#28303d'], barrel: ['#1f2531', '#191e28'],
+    pattern: { cells: 8, lineWidth: 3 },
+  },
+  {
+    id: 'rust', name: 'Rust',
+    hull: ['#7d5133', '#6a442b'], turret: ['#8a5a39', '#754b30'], barrel: ['#63402a', '#523522'],
+    pattern: { cells: 5, lineWidth: 5, major: 4 },
+  },
+];
+
+export const PALETTE = { green: SKINS[0] };
+
+// Per-turret behaviour. 'projectile' fires shells on a cooldown; 'stream'
+// pours a continuous jet that burns fuel and has to recharge.
+export const TURRET_SPECS = {
+  cannon: { mode: 'projectile', fireInterval: 2.5, damage: 200 },
+  arctic: {
+    mode: 'stream',
+    range: 7.5,      // about a tank and a half
+    coneR: 2.2,      // spray half-width at maximum range
+    dps: 50,
+    fuelDrain: 25,   // 4 s of continuous stream from full
+    fuelRecharge: 14,
+    rechargeDelay: 0.6,
+    restartAt: 8,    // must build this much back before it'll fire again
+    chillRise: 1 / 3, // 3 s of stream to reach the full 50% slow
+    chillFall: 1 / 3, // thaws at the same rate...
+    thawDelay: 2,     // ...after a couple of seconds off the beam
+    maxSlow: 0.5,
   },
 };
 
@@ -103,14 +162,21 @@ function pathPoint(t) {
 // Materials
 // ---------------------------------------------------------------------------
 function buildMaterials(p) {
+  const pat = p.pattern || {};
+  const cells = pat.cells || 6;
+  const lw = pat.lineWidth || 3;
+  const major = pat.major;
   const hullTex = makeGridTexture({
-    cells: 6, base: p.hull[0], line: p.hull[1], lineWidth: 3, repeat: [0.5, 0.5],
+    cells, base: p.hull[0], line: p.hull[1], lineWidth: lw, major,
+    majorLine: p.hull[1], majorWidth: lw + 2, repeat: [0.5, 0.5],
   });
   const turretTex = makeGridTexture({
-    cells: 6, base: p.turret[0], line: p.turret[1], lineWidth: 3, repeat: [0.7, 0.7],
+    cells, base: p.turret[0], line: p.turret[1], lineWidth: lw, major,
+    majorLine: p.turret[1], majorWidth: lw + 2, repeat: [0.7, 0.7],
   });
   const barrelTex = makeGridTexture({
-    cells: 4, base: p.barrel[0], line: p.barrel[1], lineWidth: 3, repeat: [2, 1],
+    cells: Math.max(2, Math.round(cells * 0.7)),
+    base: p.barrel[0], line: p.barrel[1], lineWidth: lw, repeat: [2, 1],
   });
   // Tracks read as rubber: near-black, subtle grid, glossy clearcoat sheen
   const trackTex = makeGridTexture({
@@ -135,7 +201,22 @@ function buildMaterials(p) {
     }),
     hub: new THREE.MeshStandardMaterial({ map: hubTex, roughness: 0.65, metalness: 0.35 }),
     metal: new THREE.MeshStandardMaterial({ color: '#2c3138', roughness: 0.55, metalness: 0.6 }),
+    // cryo hardware keeps its own colour across every skin
+    cryo: new THREE.MeshStandardMaterial({
+      color: '#bfe6ff', emissive: '#4aa3e0', emissiveIntensity: 0.85,
+      roughness: 0.35, metalness: 0.2,
+    }),
   };
+}
+
+// Remember each material's untinted colours so the freeze overlay can lerp
+// toward ice and back without drift.
+function rememberBaseColors(M) {
+  for (const mat of Object.values(M)) {
+    mat.userData.baseColor = mat.color.clone();
+    if (mat.emissive) mat.userData.baseEmissive = mat.emissive.clone();
+  }
+  return M;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +249,7 @@ function buildHull(M) {
 // ---------------------------------------------------------------------------
 // Turret — base shape plus a pitching gun assembly
 // ---------------------------------------------------------------------------
-function buildTurret(M) {
+function buildCannonTurret(M) {
   const t = new THREE.Group();
 
   const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
@@ -218,6 +299,101 @@ function buildTurret(M) {
   gun.add(muzzle);
 
   return { turret: t, pitchGroup, gun, muzzle };
+}
+
+// ---------------------------------------------------------------------------
+// Arctic Snap: a cryo projector. Squat housing, twin coolant bottles, a
+// finned heat-exchanger barrel and a flared nozzle the blizzard pours from.
+// ---------------------------------------------------------------------------
+function buildArcticTurret(M) {
+  const t = new THREE.Group();
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.44, 1.18), M.turret);
+  lower.position.set(0.02, 0.34, 0);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.26, 0.86), M.turret);
+  upper.position.set(-0.1, 0.66, 0);
+  t.add(lower, upper);
+
+  // coolant bottles lying fore-aft on the roof
+  const bottleGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.8, 16);
+  bottleGeo.rotateZ(Math.PI / 2);
+  const capGeo = new THREE.SphereGeometry(0.16, 14, 10);
+  for (const side of [-1, 1]) {
+    const bottle = new THREE.Mesh(bottleGeo, M.cryo);
+    bottle.position.set(-0.12, 0.68, side * 0.3);
+    t.add(bottle);
+    for (const end of [-1, 1]) {
+      const cap = new THREE.Mesh(capGeo, M.cryo);
+      cap.position.set(-0.12 + end * 0.4, 0.68, side * 0.3);
+      t.add(cap);
+    }
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.4, 0.4), M.metal);
+    strap.position.set(-0.12, 0.66, side * 0.3);
+    t.add(strap);
+  }
+
+  // side intakes
+  const intakeGeo = new THREE.BoxGeometry(0.5, 0.34, 0.2);
+  for (const side of [-1, 1]) {
+    const intake = new THREE.Mesh(intakeGeo, M.turret);
+    intake.position.set(0.42, 0.32, side * 0.62);
+    intake.rotation.y = -side * 0.35;
+    t.add(intake);
+  }
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.85, 0.4, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 0.62), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  // heat-exchanger core
+  const coreGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.95, 16);
+  coreGeo.rotateZ(Math.PI / 2);
+  const core = new THREE.Mesh(coreGeo, M.barrel);
+  core.position.set(0.52, 0.02, 0);
+  gun.add(core);
+
+  // cooling fins
+  const finGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.05, 18);
+  finGeo.rotateZ(Math.PI / 2);
+  for (const x of [0.24, 0.44, 0.64, 0.84]) {
+    const fin = new THREE.Mesh(finGeo, M.metal);
+    fin.position.set(x, 0.02, 0);
+    gun.add(fin);
+  }
+
+  // flared nozzle + glowing throat
+  const nozzleGeo = new THREE.CylinderGeometry(0.34, 0.15, 0.5, 20, 1, true);
+  nozzleGeo.rotateZ(-Math.PI / 2);
+  const nozzle = new THREE.Mesh(nozzleGeo, M.barrel);
+  nozzle.material.side = THREE.DoubleSide;
+  nozzle.position.set(1.24, 0.02, 0);
+  gun.add(nozzle);
+
+  const throatGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.06, 18);
+  throatGeo.rotateZ(Math.PI / 2);
+  const throat = new THREE.Mesh(throatGeo, M.cryo);
+  throat.position.set(1.0, 0.02, 0);
+  gun.add(throat);
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(1.5, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle };
+}
+
+function buildTurret(M, kind) {
+  return kind === 'arctic' ? buildArcticTurret(M) : buildCannonTurret(M);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,8 +498,8 @@ function updateTread(tread, dt, speed) {
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
-export function createTankModel(palette = PALETTE.green) {
-  const M = buildMaterials(palette);
+export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
+  let M = rememberBaseColors(buildMaterials(palette));
   const root = new THREE.Group();
 
   root.add(buildHull(M));
@@ -336,18 +512,74 @@ export function createTankModel(palette = PALETTE.green) {
   updateTread(treadL, 0, 0);
   updateTread(treadR, 0, 0);
 
-  const { turret, pitchGroup, gun, muzzle } = buildTurret(M);
-  turret.position.set(0.05, 1.16, 0);
-  root.add(turret);
+  let beam = null;
+  let streaming = false;
 
+  function attachTurret(kind) {
+    const built = buildTurret(M, kind);
+    built.turret.position.set(0.05, 1.16, 0);
+    root.add(built.turret);
+    if (kind === 'arctic') {
+      beam = createCryoBeam();
+      // effect meshes must never be repainted by skins or the husk swap
+      beam.group.traverse((o) => { o.userData.fx = true; });
+      built.muzzle.add(beam.group);
+    }
+    return built;
+  }
+
+  let parts = attachTurret(turretId);
+  const { turret, pitchGroup, gun, muzzle } = parts;
+
+  // Tag every mesh with the material role it was built from, so skins and the
+  // freeze overlay can repaint without rebuilding any geometry.
   const meshes = [];
-  root.traverse((o) => {
-    if (o.isMesh) {
+  function collectMeshes() {
+    const roleOf = new Map([
+      [M.hull, 'hull'], [M.turret, 'turret'], [M.barrel, 'barrel'],
+      [M.track, 'track'], [M.metal, 'metal'], [M.tyre, 'tyre'],
+      [M.hub, 'hub'], [M.cryo, 'cryo'],
+    ]);
+    meshes.length = 0;
+    root.traverse((o) => {
+      if (!o.isMesh || o.userData.fx) return;
       o.castShadow = true;
       o.receiveShadow = true;
-      meshes.push([o, o.material]);
+      meshes.push([o, Array.isArray(o.material) ? 'wheel' : roleOf.get(o.material) || 'metal']);
+    });
+  }
+  collectMeshes();
+
+  function materialFor(role) {
+    return role === 'wheel' ? [M.tyre, M.hub, M.hub] : M[role];
+  }
+
+  function disposeMaterials(set) {
+    for (const mat of Object.values(set)) {
+      if (mat.map) mat.map.dispose();
+      mat.dispose();
     }
-  });
+  }
+
+  let charred = false;
+  let chill = 0;
+
+  const ICE = new THREE.Color('#7fc4ff');
+  const ICE_GLOW = new THREE.Color('#2f79c8');
+
+  function applyChillTint() {
+    for (const mat of Object.values(M)) {
+      const base = mat.userData.baseColor;
+      if (!base) continue;
+      mat.color.copy(base).lerp(ICE, 0.62 * chill);
+      if (mat.emissive && mat.userData.baseEmissive) {
+        mat.emissive.copy(mat.userData.baseEmissive).lerp(ICE_GLOW, 0.75 * chill);
+        if (mat.userData.baseEmissive.getHex() === 0) {
+          mat.emissiveIntensity = 0.55 * chill;
+        }
+      }
+    }
+  }
 
   const charredMat = new THREE.MeshStandardMaterial({
     color: '#131416',
@@ -363,14 +595,70 @@ export function createTankModel(palette = PALETTE.green) {
     pitchGroup,
     gun,
     muzzle,
+    turretId,
     updateTreads(dt, sL, sR) {
       updateTread(treadL, dt, sL);
       updateTread(treadR, dt, sR);
     },
     setCharred(flag) {
-      for (const [mesh, original] of meshes) {
-        mesh.material = flag ? charredMat : original;
+      charred = flag;
+      if (flag) {
+        chill = 0;
+        applyChillTint();
+        streaming = false;
       }
+      for (const [mesh, role] of meshes) {
+        mesh.material = flag ? charredMat : materialFor(role);
+      }
+    },
+    // Repaint the whole tank from a skin definition, in place
+    setSkin(skin) {
+      const old = M;
+      M = rememberBaseColors(buildMaterials(skin));
+      if (!charred) {
+        for (const [mesh, role] of meshes) mesh.material = materialFor(role);
+      }
+      applyChillTint();
+      disposeMaterials(old);
+    },
+    // Swap the whole turret assembly, keeping the hull and treads
+    setTurret(kind) {
+      if (kind === this.turretId) return;
+      if (beam) {
+        beam.dispose();
+        beam = null;
+      }
+      root.remove(this.turret);
+      this.turret.traverse((o) => {
+        if (o.isMesh && !o.userData.fx) o.geometry.dispose();
+      });
+      parts = attachTurret(kind);
+      this.turret = parts.turret;
+      this.pitchGroup = parts.pitchGroup;
+      this.gun = parts.gun;
+      this.muzzle = parts.muzzle;
+      this.turretId = kind;
+      streaming = false;
+      collectMeshes();
+      if (charred) {
+        for (const [mesh, role] of meshes) mesh.material = charredMat;
+      }
+      applyChillTint();
+    },
+    // 0 = normal, 1 = fully frozen (drives the blue overlay)
+    setChill(amount) {
+      const next = Math.max(0, Math.min(1, amount));
+      if (Math.abs(next - chill) < 0.002) return;
+      chill = next;
+      applyChillTint();
+    },
+    getChill: () => chill,
+    hasStream: () => !!beam,
+    setStream(on) {
+      streaming = !!on && !!beam;
+    },
+    updateStream(dt) {
+      if (beam) beam.update(dt, streaming && !charred);
     },
     // Accurate two-box hit test: hull+treads in root space (follows ground
     // pitch/roll), turret in turret space (follows traverse).

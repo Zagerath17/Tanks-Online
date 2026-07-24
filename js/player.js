@@ -9,14 +9,11 @@ export const AIM_PITCH = { min: -0.12, max: 0.17 };
 
 const TURRET_RATE = 2.2; // rad/s traverse — the turret chases the aim
 const PITCH_RATE = 1.1;
-const LAT_GRIP = 14; // how fast sideways slide is scrubbed off, 1/s
-const HOLD_SPEED = 0.8; // below this, an idle tank parks instead of creeping
-const HUSK_DRAG = 3; // a flipped hull slides to a stop on the slick ground
-const RECOIL = 1.5; // impulse per unit of hull mass, straight back down the bore
 const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 
 export function createPlayerController(model, physics) {
   const body = physics.createChassis();
+  let slowMul = 1; // 1 = normal, 0.5 = fully frozen
 
   const state = {
     v: 0, // forward ground speed (HUD, engine, treads)
@@ -65,27 +62,23 @@ export function createPlayerController(model, physics) {
     syncModel();
   }
 
-  // Recoil is a real impulse fired straight back down the barrel line, applied
-  // at the muzzle. Because the barrel sits about a metre above the hull's
-  // centre of mass, that offset turns into torque on its own and the tank
-  // squats and rocks nose-up — no camera trickery involved. Any point on the
-  // barrel axis gives the same torque, so the muzzle is as good as the breech.
-  const _imp = new CANNON.Vec3();
-  const _rel = new CANNON.Vec3();
-  function applyRecoil(dir, muzzlePos) {
-    const j = body.mass * RECOIL;
-    _imp.set(-dir.x * j, -dir.y * j, -dir.z * j);
-    if (muzzlePos) {
-      _rel.set(
-        muzzlePos.x - body.position.x,
-        muzzlePos.y - body.position.y,
-        muzzlePos.z - body.position.z
-      );
-      body.applyImpulse(_imp, _rel);
-    } else {
-      body.applyImpulse(_imp);
-    }
-    body.wakeUp();
+  // Recoil: a modest backward shove plus a real rock of the hull. The old
+  // version was pure linear velocity, which the drive controller read as
+  // "briefly reversing" — this pitches the nose up around the axis
+  // perpendicular to the shot, so the whole tank visibly bucks.
+  function applyRecoil(dir) {
+    const dh = Math.hypot(dir.x, dir.z) || 1;
+    const dx = dir.x / dh;
+    const dz = dir.z / dh;
+    body.applyImpulse(new CANNON.Vec3(
+      -dx * body.mass * 0.45,
+      0,
+      -dz * body.mass * 0.45
+    ));
+    // nose-up axis = shotDir x worldUp = (-dz, 0, dx)
+    const rock = 1.05;
+    body.angularVelocity.x += -dz * rock;
+    body.angularVelocity.z += dx * rock;
   }
 
   // Pre-physics: read input, steer the body. The solver owns everything
@@ -106,48 +99,36 @@ export function createPlayerController(model, physics) {
     let vF = _vel.dot(_fwd);
 
     if (state.grounded && state.upright) {
-      // Work in the hull's own frame: forward / sideways / along its up axis.
-      // Rebuilding the velocity from these three keeps the drive authoritative
-      // while still reading back whatever the solver did (walls, ramps, hits).
-      let vLat = _vel.dot(_right);
-      const vUp = _vel.dot(_up);
-
-      // throttle -> target forward speed (same curve as ever)
+      // throttle -> target forward speed, scaled by any freeze slow
       if (input.throttle > 0) {
-        vF += (vF < 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
+        vF += (vF < 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
       } else if (input.throttle < 0) {
-        vF -= (vF > 0 ? SPEC.brakeAccel : SPEC.accel) * dt;
+        vF -= (vF > 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
       } else {
         const d = SPEC.drag * dt;
         vF = Math.abs(vF) <= d ? 0 : vF - Math.sign(vF) * d;
       }
-      vF = THREE.MathUtils.clamp(vF, -SPEC.maxReverse, SPEC.maxForward);
+      vF = THREE.MathUtils.clamp(vF, -SPEC.maxReverse * slowMul, SPEC.maxForward * slowMul);
+
+      const dvF = vF - _vel.dot(_fwd);
+      vel.x += _fwd.x * dvF;
+      vel.y += _fwd.y * dvF;
+      vel.z += _fwd.z * dvF;
 
       // treads don't slide sideways
-      vLat -= vLat * Math.min(1, LAT_GRIP * dt);
-
-      // parking brake: sitting still means sitting still, including on a slope
-      if (input.throttle === 0 && Math.abs(vF) < HOLD_SPEED) {
-        vF = 0;
-        vLat = 0;
-      }
-
-      vel.x = _fwd.x * vF + _right.x * vLat + _up.x * vUp;
-      vel.y = _fwd.y * vF + _right.y * vLat + _up.y * vUp;
-      vel.z = _fwd.z * vF + _right.z * vLat + _up.z * vUp;
+      const vLat = _vel.dot(_right);
+      const kill = vLat * Math.min(1, 12 * dt);
+      vel.x -= _right.x * kill;
+      vel.y -= _right.y * kill;
+      vel.z -= _right.z * kill;
 
       // pivot: steer angular velocity about the hull's own up axis
       const av = body.angularVelocity;
       const avUp = av.x * _up.x + av.y * _up.y + av.z * _up.z;
-      const dAv = (input.turn * SPEC.turnRate - avUp) * Math.min(1, SPEC.turnResponse * dt);
+      const dAv = (input.turn * SPEC.turnRate * slowMul - avUp) * Math.min(1, SPEC.turnResponse * dt);
       av.x += _up.x * dAv;
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
-    } else if (state.grounded) {
-      // flipped or otherwise not driving — bleed the slide off by hand
-      const k = Math.min(1, HUSK_DRAG * dt);
-      vel.x -= vel.x * k;
-      vel.z -= vel.z * k;
     }
     state.v = vF;
 
@@ -180,5 +161,8 @@ export function createPlayerController(model, physics) {
     syncModel();
   }
 
-  return { state, body, update, postStep, reset, applyRecoil };
+  return {
+    state, body, update, postStep, reset, applyRecoil,
+    setSlow(mul) { slowMul = mul; },
+  };
 }
