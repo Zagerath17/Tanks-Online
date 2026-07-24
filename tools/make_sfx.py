@@ -156,76 +156,149 @@ def make_engine():
     out = mix(gain(out, 1.0), gain(nz, 0.5))
     return normalize(out, 0.6)
 
-# --- cryo stream (seamless 2.0 s loop) --------------------------------------
+# --- cryo stream (seamless 4.0 s loop) --------------------------------------
 def make_cryo():
-    """A cold, blizzardy howl: deep wind bed, sweeping gusts, sparse ice
-    crystals. Deliberately light on the mid-high hiss that reads as aerosol.
+    """A blizzard howl. Three earlier attempts failed in specific ways:
+    a broadband hiss read as an aerosol can, a slow 0.5 Hz swell read as
+    surf, and tonal sine 'pings' were recognisable enough to sound repetitive
+    on a short loop.
 
-    Built one crossfade longer than the loop, then the tail is folded over the
-    head, so the wrap point is continuous rather than clicking every cycle.
+    This build howls in a narrow resonant band with fast flutter (no slow
+    swell), replaces the pings with dense granular sleet, and runs 4 s long.
+
+    Seamlessness is structural rather than patched: every noise source is
+    itself periodic over the loop, tiled twice, filtered across both copies,
+    and only the SECOND copy is kept. That leaves the filter state already
+    warmed and periodic, so the wrap point continues smoothly instead of
+    restarting from a silent filter (which was the hard break before).
     """
-    dur = 2.0
+    dur = 4.0
     n = int(SR * dur)
-    fade = int(0.18 * SR)
-    m = n + fade  # generate the extra tail we fold back over the start
 
-    # low storm bed — partials at multiples of 0.5 Hz, so they wrap over 2 s
+    def tile(period):
+        return period + period
+
+    def steady(x2n):
+        return x2n[n:]
+
+    def periodic_noise():
+        return tile([random.uniform(-1, 1) for _ in range(n)])
+
+    # --- the howl: a narrow band whose centre flutters quickly --------------
+    howl = lowpass(
+        periodic_noise(),
+        lambda i: 780
+        + 260 * math.sin(2 * math.pi * 1.25 * ((i % n) / SR))
+        + 120 * math.sin(2 * math.pi * 3.0 * ((i % n) / SR) + 0.8),
+    )
+    howl = steady(highpass(howl, 300))
+
+    # --- thin cold air riding on top ---------------------------------------
+    air = steady(highpass(lowpass(periodic_noise(), 2600), 1200))
+
+    # --- a little low body; too much of this is what sounded like the sea ---
     bed = [
-        0.9 * math.sin(2 * math.pi * 43 * (i / SR))
-        + 0.6 * math.sin(2 * math.pi * 64.5 * (i / SR) + 1.7)
-        + 0.35 * math.sin(2 * math.pi * 96 * (i / SR) + 0.6)
-        for i in range(m)
+        0.5 * math.sin(2 * math.pi * 47 * (i / SR))
+        + 0.3 * math.sin(2 * math.pi * 71 * (i / SR) + 1.2)
+        for i in range(n)
     ]
 
-    # wind: noise through a slowly sweeping bandpass, kept low and dark
-    wind = noise(m)
-    wind = lowpass(wind, lambda i: 620 + 380 * math.sin(2 * math.pi * 0.5 * (i / SR)))
-    wind = highpass(wind, 140)
-
-    # a second, higher layer breathing against the first
-    gust = noise(m)
-    gust = lowpass(gust, lambda i: 1500 + 900 * math.sin(2 * math.pi * 1.0 * (i / SR) + 2.1))
-    gust = highpass(gust, 700)
-
-    # sparse ice crystals: short bright decays, not a continuous hiss
-    crystals = [0.0] * m
-    t = 0.05
-    while t < m / SR:
+    # --- sleet: dense, very short noise grains, wrapped so they loop --------
+    sleet = [0.0] * n
+    t = 0.0
+    while t < dur:
         i0 = int(t * SR)
-        ln = random.randint(120, 420)
-        amp = random.uniform(0.12, 0.34)
-        f = random.uniform(2600, 5200)
-        for j in range(min(ln, m - i0)):
-            crystals[i0 + j] += (
-                amp * math.sin(2 * math.pi * f * (j / SR)) * math.exp(-j / (ln * 0.34))
-            )
-        t += random.uniform(0.06, 0.22)
+        ln = random.randint(18, 70)
+        amp = random.uniform(0.25, 0.8)
+        for j in range(ln):
+            sleet[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.4))
+        t += random.uniform(0.012, 0.05)  # roughly 30 grains a second
+    sleet = steady(highpass(lowpass(tile(sleet), 4200), 1500))
 
     out = []
-    for i in range(m):
+    for i in range(n):
         tt = i / SR
-        # gusting: two LFOs at 0.5 and 1.5 Hz, both periodic over the loop
-        gustAmt = (
-            0.62
-            + 0.26 * math.sin(2 * math.pi * 0.5 * tt)
-            + 0.12 * math.sin(2 * math.pi * 1.5 * tt + 0.9)
+        # fast flutter only — every rate divides the loop length exactly
+        flutter = (
+            0.87
+            + 0.08 * math.sin(2 * math.pi * 3.0 * tt)
+            + 0.05 * math.sin(2 * math.pi * 5.25 * tt + 1.7)
+        )
+        out.append(howl[i] * 1.9 * flutter + air[i] * 0.18 + bed[i] * 0.15 + sleet[i] * 0.26)
+
+    out = steady(lowpass(tile(out), 2300))
+    return normalize(out, 0.8)
+
+
+# --- flame stream (seamless 4.0 s loop) -------------------------------------
+def make_flame():
+    """A fuel-fed roar: low combustion rumble, a broad throaty body, and
+    irregular crackle. Built with the same periodic-source technique as the
+    cryo loop so the wrap point is continuous."""
+    dur = 4.0
+    n = int(SR * dur)
+
+    def tile(period):
+        return period + period
+
+    def steady(x2n):
+        return x2n[n:]
+
+    def periodic_noise():
+        return tile([random.uniform(-1, 1) for _ in range(n)])
+
+    # combustion rumble: low noise with a slow-moving cutoff
+    rumble = lowpass(
+        periodic_noise(),
+        lambda i: 240 + 90 * math.sin(2 * math.pi * 0.75 * ((i % n) / SR)),
+    )
+    rumble = steady(rumble)
+
+    # throaty body of the flame
+    body = lowpass(
+        periodic_noise(),
+        lambda i: 1150
+        + 420 * math.sin(2 * math.pi * 2.0 * ((i % n) / SR))
+        + 180 * math.sin(2 * math.pi * 4.25 * ((i % n) / SR) + 1.3),
+    )
+    body = steady(highpass(body, 260))
+
+    # crackle: sparse, sharp bursts of burning fuel
+    crackle = [0.0] * n
+    t = 0.0
+    while t < dur:
+        i0 = int(t * SR)
+        ln = random.randint(40, 190)
+        amp = random.uniform(0.3, 1.0)
+        for j in range(ln):
+            crackle[(i0 + j) % n] += random.uniform(-1, 1) * amp * math.exp(-j / (ln * 0.3))
+        t += random.uniform(0.03, 0.13)
+    crackle = steady(highpass(lowpass(tile(crackle), 3400), 700))
+
+    # roar partials, all multiples of 0.25 Hz so they wrap
+    roar = [
+        0.55 * math.sin(2 * math.pi * 58 * (i / SR))
+        + 0.35 * math.sin(2 * math.pi * 87 * (i / SR) + 0.9)
+        for i in range(n)
+    ]
+
+    out = []
+    for i in range(n):
+        tt = i / SR
+        surge = (
+            0.84
+            + 0.10 * math.sin(2 * math.pi * 2.5 * tt)
+            + 0.06 * math.sin(2 * math.pi * 6.25 * tt + 2.2)
         )
         out.append(
-            bed[i] * 0.30
-            + wind[i] * 1.25 * gustAmt
-            + gust[i] * 0.42 * (0.5 + 0.5 * gustAmt)
-            + crystals[i] * 0.5
+            rumble[i] * 1.5 * surge
+            + body[i] * 1.05 * surge
+            + crackle[i] * 0.45
+            + roar[i] * 0.22
         )
 
-    # darken first, so filter ringing can't reopen the seam afterwards
-    out = lowpass(out, 3200)
-
-    # fold the tail over the head: out[0] becomes what followed out[n-1]
-    for i in range(fade):
-        w = i / fade
-        out[i] = out[i] * w + out[n + i] * (1 - w)
-
-    return normalize(out[:n], 0.8)
+    out = steady(lowpass(tile(out), 3600))
+    return normalize(out, 0.85)
 
 
 if __name__ == '__main__':
@@ -236,3 +309,4 @@ if __name__ == '__main__':
     write_wav(os.path.join(dest, 'hit.wav'), make_hit())
     write_wav(os.path.join(dest, 'engine.wav'), make_engine())
     write_wav(os.path.join(dest, 'cryo.wav'), make_cryo())
+    write_wav(os.path.join(dest, 'flame.wav'), make_flame())

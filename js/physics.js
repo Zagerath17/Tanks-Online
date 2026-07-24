@@ -26,9 +26,14 @@ export function createPhysics() {
 
   const groundMat = new CANNON.Material('ground');
   const chassisMat = new CANNON.Material('chassis');
+  // Traction is handled by the controller (it sets forward speed and kills
+  // lateral slip directly), so contact friction must stay LOW. At the old
+  // 0.55 the friction solver erased 0.220 m/s per step while the throttle
+  // only added 0.217 — it cancelled the entire drive input and the tank
+  // could never build speed.
   world.addContactMaterial(
     new CANNON.ContactMaterial(groundMat, chassisMat, {
-      friction: 0.55,
+      friction: 0.06,
       restitution: 0.0,
     })
   );

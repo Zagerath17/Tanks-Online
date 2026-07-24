@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { makeGridTexture, makeHubTexture } from './grid-texture.js';
-import { createCryoBeam } from './cryo.js';
+import { createStreamBeam } from './cryo.js';
 
 // ---------------------------------------------------------------------------
 // Movement tuning (used by the player controller)
@@ -68,16 +68,33 @@ export const TURRET_SPECS = {
   cannon: { mode: 'projectile', fireInterval: 2.5, damage: 200 },
   arctic: {
     mode: 'stream',
-    range: 7.5,      // about a tank and a half
-    coneR: 2.2,      // spray half-width at maximum range
-    dps: 50,
-    fuelDrain: 10,   // 10 s of continuous stream from full
+    element: 'cryo',
+    range: 7.5,        // about a tank and a half
+    coneR: 2.2,        // spray half-width at maximum range
+    tickDamage: 50,    // 50 every half second
+    tickInterval: 0.5,
+    fuelDrain: 10,     // 10 s of continuous stream from full
     fuelRecharge: 5.6, // refills in ~18 s, starting the instant you let go
-    restartAt: 8,    // must build this much back before it'll fire again
-    chillRise: 1 / 3, // 3 s of stream to reach the full 50% slow
-    chillFall: 1 / 3, // thaws at the same rate...
-    thawDelay: 2,     // ...after a couple of seconds off the beam
-    maxSlow: 0.5,
+    restartAt: 8,      // must build this much back before it'll fire again
+    statusRise: 1 / 3, // 3 s of stream to reach the full effect
+    statusFall: 1 / 3, // fades at the same rate...
+    statusDelay: 2,    // ...after a couple of seconds off the beam
+    maxSlow: 0.5,      // frozen tanks move at half speed
+  },
+  inferno: {
+    mode: 'stream',
+    element: 'flame',
+    range: 7.5,
+    coneR: 2.2,
+    tickDamage: 75,    // 75 every half second
+    tickInterval: 0.5,
+    fuelDrain: 10,
+    fuelRecharge: 5.6,
+    restartAt: 8,
+    statusRise: 1 / 3,
+    statusFall: 1 / 3,
+    statusDelay: 2,
+    burnFrac: 0.2,     // at full burn, 20% of this weapon's own dps, per second
   },
 };
 
@@ -204,6 +221,11 @@ function buildMaterials(p) {
     cryo: new THREE.MeshStandardMaterial({
       color: '#bfe6ff', emissive: '#4aa3e0', emissiveIntensity: 0.85,
       roughness: 0.35, metalness: 0.2,
+    }),
+    // ...as does the inferno's hot gear
+    ember: new THREE.MeshStandardMaterial({
+      color: '#ffb166', emissive: '#e04a10', emissiveIntensity: 0.9,
+      roughness: 0.4, metalness: 0.25,
     }),
   };
 }
@@ -402,8 +424,119 @@ function buildArcticTurret(M) {
   return { turret: t, pitchGroup, gun, muzzle };
 }
 
+// ---------------------------------------------------------------------------
+// Torrential Inferno: the Arctic Snap's opposite number. Heavier housing,
+// an armoured fuel drum slung across the back, heat-shielded flanks, and a
+// stubby wide-bore barrel ringed by igniter prongs around a pilot flame.
+// ---------------------------------------------------------------------------
+function buildInfernoTurret(M) {
+  const t = new THREE.Group();
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  // housing: same faceted language, blunter and heavier than the cryo unit
+  const profile = new THREE.Shape();
+  profile.moveTo(-0.80, 0.0);
+  profile.lineTo(0.66, 0.0);
+  profile.lineTo(0.82, 0.22);
+  profile.lineTo(0.54, 0.56);
+  profile.lineTo(-0.40, 0.68);
+  profile.lineTo(-0.84, 0.40);
+  profile.closePath();
+  const bodyGeo = new THREE.ExtrudeGeometry(profile, {
+    depth: 1.2, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1,
+  });
+  bodyGeo.translate(0, 0, -0.6);
+  const body = new THREE.Mesh(bodyGeo, M.turret);
+  body.position.y = 0.08;
+  t.add(body);
+
+  // fuel drum lying across the back, banded and capped
+  const drumGeo = new THREE.CylinderGeometry(0.26, 0.26, 0.86, 18);
+  const drum = new THREE.Mesh(drumGeo, M.metal);
+  drum.position.set(-0.52, 0.62, 0);
+  t.add(drum);
+  const capGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.07, 18);
+  for (const side of [-1, 1]) {
+    const cap = new THREE.Mesh(capGeo, M.ember);
+    cap.position.set(-0.52, 0.62, side * 0.43);
+    cap.rotation.x = Math.PI / 2;
+    t.add(cap);
+  }
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.275, 0.275, 0.06, 18), M.turret);
+  band.position.set(-0.52, 0.62, 0);
+  t.add(band);
+
+  // heat shielding down the flanks
+  const shieldGeo = new THREE.BoxGeometry(0.9, 0.34, 0.07);
+  for (const side of [-1, 1]) {
+    const shield = new THREE.Mesh(shieldGeo, M.turret);
+    shield.position.set(0.12, 0.3, side * 0.63);
+    shield.rotation.z = -0.06;
+    t.add(shield);
+  }
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.76, 0.36, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 0.72), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  // wide-bore barrel
+  const boreGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.9, 12);
+  boreGeo.rotateZ(Math.PI / 2);
+  const bore = new THREE.Mesh(boreGeo, M.barrel);
+  bore.position.set(0.55, 0.02, 0);
+  gun.add(bore);
+
+  // heat rings stepping down the barrel
+  const ringGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.055, 12);
+  ringGeo.rotateZ(Math.PI / 2);
+  for (const x of [0.26, 0.58, 0.9]) {
+    const ring = new THREE.Mesh(ringGeo, M.metal);
+    ring.position.set(x, 0.02, 0);
+    gun.add(ring);
+  }
+
+  // feed line from the drum
+  const feedGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.7, 10);
+  feedGeo.rotateZ(Math.PI / 2);
+  const feed = new THREE.Mesh(feedGeo, M.ember);
+  feed.position.set(0.3, -0.18, 0.16);
+  gun.add(feed);
+
+  // igniter prongs ringing the mouth
+  const prongGeo = new THREE.BoxGeometry(0.28, 0.05, 0.05);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2;
+    const prong = new THREE.Mesh(prongGeo, M.metal);
+    prong.position.set(1.14, 0.02 + Math.cos(a) * 0.2, Math.sin(a) * 0.2);
+    prong.rotation.x = a;
+    gun.add(prong);
+  }
+
+  // pilot flame at the throat
+  const pilot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), M.ember);
+  pilot.position.set(1.06, 0.02, 0);
+  gun.add(pilot);
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(1.32, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle };
+}
+
 function buildTurret(M, kind) {
-  return kind === 'arctic' ? buildArcticTurret(M) : buildCannonTurret(M);
+  if (kind === 'arctic') return buildArcticTurret(M);
+  if (kind === 'inferno') return buildInfernoTurret(M);
+  return buildCannonTurret(M);
 }
 
 // ---------------------------------------------------------------------------
@@ -529,8 +662,9 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
     const built = buildTurret(M, kind);
     built.turret.position.set(0.05, 1.16, 0);
     root.add(built.turret);
-    if (kind === 'arctic') {
-      beam = createCryoBeam();
+    const spec = TURRET_SPECS[kind];
+    if (spec && spec.mode === 'stream') {
+      beam = createStreamBeam(spec.element);
       // effect meshes must never be repainted by skins or the husk swap
       beam.group.traverse((o) => { o.userData.fx = true; });
       built.muzzle.add(beam.group);
@@ -573,23 +707,31 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
 
   let charred = false;
   let chill = 0;
+  let burn = 0;
 
   const ICE = new THREE.Color('#7fc4ff');
   const ICE_GLOW = new THREE.Color('#2f79c8');
+  const FIRE = new THREE.Color('#ff5436');
+  const FIRE_GLOW = new THREE.Color('#c22006');
 
-  function applyChillTint() {
+  // Frost and fire can both be on a tank at once; the stronger one leads.
+  function applyStatusTint() {
     for (const mat of Object.values(M)) {
       const base = mat.userData.baseColor;
       if (!base) continue;
-      mat.color.copy(base).lerp(ICE, 0.62 * chill);
+      mat.color.copy(base).lerp(ICE, 0.62 * chill).lerp(FIRE, 0.62 * burn);
       if (mat.emissive && mat.userData.baseEmissive) {
-        mat.emissive.copy(mat.userData.baseEmissive).lerp(ICE_GLOW, 0.75 * chill);
+        mat.emissive
+          .copy(mat.userData.baseEmissive)
+          .lerp(ICE_GLOW, 0.75 * chill)
+          .lerp(FIRE_GLOW, 0.75 * burn);
         if (mat.userData.baseEmissive.getHex() === 0) {
-          mat.emissiveIntensity = 0.55 * chill;
+          mat.emissiveIntensity = 0.55 * Math.max(chill, burn);
         }
       }
     }
   }
+  const applyChillTint = applyStatusTint;
 
   const charredMat = new THREE.MeshStandardMaterial({
     color: '#131416',
@@ -614,7 +756,8 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
       charred = flag;
       if (flag) {
         chill = 0;
-        applyChillTint();
+        burn = 0;
+        applyStatusTint();
         streaming = false;
       }
       for (const [mesh, role] of meshes) {
@@ -655,14 +798,20 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon') {
       }
       applyChillTint();
     },
-    // 0 = normal, 1 = fully frozen (drives the blue overlay)
+    // 0 = normal, 1 = fully frozen (blue overlay) / fully alight (red overlay)
+    setStatus(chillAmount, burnAmount) {
+      const c = Math.max(0, Math.min(1, chillAmount || 0));
+      const b = Math.max(0, Math.min(1, burnAmount || 0));
+      if (Math.abs(c - chill) < 0.002 && Math.abs(b - burn) < 0.002) return;
+      chill = c;
+      burn = b;
+      applyStatusTint();
+    },
     setChill(amount) {
-      const next = Math.max(0, Math.min(1, amount));
-      if (Math.abs(next - chill) < 0.002) return;
-      chill = next;
-      applyChillTint();
+      this.setStatus(amount, burn);
     },
     getChill: () => chill,
+    getBurn: () => burn,
     hasStream: () => !!beam,
     setStream(on) {
       streaming = !!on && !!beam;

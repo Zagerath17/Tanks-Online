@@ -8,7 +8,7 @@ export function createAudio(camera, scene) {
 
   const buffers = {};
   const loader = new THREE.AudioLoader();
-  for (const name of ['shot', 'explosion', 'hit', 'engine', 'cryo']) {
+  for (const name of ['shot', 'explosion', 'hit', 'engine', 'cryo', 'flame']) {
     loader.load(`./assets/sfx/${name}.wav`, (b) => { buffers[name] = b; });
   }
 

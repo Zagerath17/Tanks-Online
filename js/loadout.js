@@ -8,7 +8,7 @@ export { SKINS };
 export const TURRETS = [
   { id: 'cannon', name: 'Cannon', locked: false },
   { id: 'arctic', name: 'Arctic Snap', locked: false },
-  { id: 'autocannon', name: 'Autocannon', locked: true },
+  { id: 'inferno', name: 'Torrential Inferno', locked: false },
   { id: 'railgun', name: 'Railgun', locked: true },
   { id: 'mortar', name: 'Mortar', locked: true },
   { id: 'laser', name: 'Laser', locked: true },

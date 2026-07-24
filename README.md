@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.13
+# Tank Remake — prototype 0.17
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -16,7 +16,13 @@ The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon
 
 A cryo projector: finned heat-exchanger barrel, twin coolant bottles, a flared nozzle. Instead of shells it pours a blizzard about a tank and a half in front of you — three layered noise-shaded cone shells with ice motes tumbling through them, so the plume has real depth and never repeats.
 
-Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains over about ten seconds of continuous stream and starts refilling the instant you release, taking around eighteen seconds to come back. The stream does 50 damage per second, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
+Hold fire to pour. A thin bar at the bottom middle of the screen is your charge: it drains over about ten seconds of continuous stream and starts refilling the instant you release, taking around eighteen seconds to come back. The stream does 50 damage every half second, and freezes what it touches — the slow builds gradually, reaching its full 50% after roughly three seconds of unbroken contact — it slows driving, hull pivot, and turret traverse alike, and a frozen tank turns visibly blue in proportion to how frozen it is. Break contact and the ice holds for a couple of seconds before thawing at the same rate it built.
+
+## Torrential Inferno
+
+The Arctic Snap's opposite number: a flamethrower with an armoured fuel drum across the back, heat-shielded flanks, a wide-bore barrel and igniter prongs ringing a pilot flame. Same fuel bar, same range, same hold-to-pour handling — but it hits for 75 every half second and sets tanks alight.
+
+The burn builds exactly like the freeze does: a few seconds of unbroken contact to reach full, holding a couple of seconds after you break off before it cools at the rate it came on. While it's alight it keeps eating hull on its own — at full burn, 20% of the flamethrower's own output, so 30 a second — so a solid burn keeps working long after you've stopped firing. Burning tanks glow red in proportion to how alight they are and throw embers.
 
 ## Editor
 

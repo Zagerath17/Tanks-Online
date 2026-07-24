@@ -15,6 +15,7 @@ export function createPlayerController(model, physics) {
   const body = physics.createChassis();
   let slowMul = 1; // 1 = normal, 0.5 = fully frozen
   let airborne = 0; // seconds since the last confirmed ground contact
+  let drive = 0;    // the speed the controller is commanding, in m/s
 
   const state = {
     v: 0, // forward ground speed (HUD, engine, treads)
@@ -58,6 +59,7 @@ export function createPlayerController(model, physics) {
     state.pitch = 0;
     state.flipT = 0;
     airborne = 0;
+    drive = 0;
     slowMul = 1;
     model.gun.position.x = 0;
     model.turret.rotation.y = 0;
@@ -103,21 +105,27 @@ export function createPlayerController(model, physics) {
 
     const vel = body.velocity;
     _vel.set(vel.x, vel.y, vel.z);
-    let vF = _vel.dot(_fwd);
+    const measured = _vel.dot(_fwd);
 
     if (state.grounded && state.upright) {
-      // throttle -> target forward speed, scaled by any freeze slow
+      // The commanded speed lives here, not on the body. Reading it back off
+      // the body each frame meant anything that bled velocity (friction, a
+      // scrape, a landing) also erased the throttle's progress.
       if (input.throttle > 0) {
-        vF += (vF < 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
+        drive += (drive < 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
       } else if (input.throttle < 0) {
-        vF -= (vF > 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
+        drive -= (drive > 0 ? SPEC.brakeAccel : SPEC.accel) * slowMul * dt;
       } else {
         const d = SPEC.drag * dt;
-        vF = Math.abs(vF) <= d ? 0 : vF - Math.sign(vF) * d;
+        drive = Math.abs(drive) <= d ? 0 : drive - Math.sign(drive) * d;
       }
-      vF = THREE.MathUtils.clamp(vF, -SPEC.maxReverse * slowMul, SPEC.maxForward * slowMul);
+      drive = THREE.MathUtils.clamp(drive, -SPEC.maxReverse * slowMul, SPEC.maxForward * slowMul);
 
-      const dvF = vF - _vel.dot(_fwd);
+      // but stay honest about walls: bleed the command toward what the body
+      // is actually managing, slowly enough that friction can't win
+      drive += (measured - drive) * Math.min(1, 1.5 * dt);
+
+      const dvF = drive - measured;
       vel.x += _fwd.x * dvF;
       vel.y += _fwd.y * dvF;
       vel.z += _fwd.z * dvF;
@@ -136,8 +144,10 @@ export function createPlayerController(model, physics) {
       av.x += _up.x * dAv;
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
+    } else {
+      drive = measured; // airborne or flipped: the body is on its own
     }
-    state.v = vF;
+    state.v = drive;
 
     // --- turret chases the crosshair point within its own limits ----------
     if (Math.hypot(_fwd.x, _fwd.z) > 0.15) {
@@ -149,10 +159,13 @@ export function createPlayerController(model, physics) {
         Math.sin(relTarget - state.turretYaw),
         Math.cos(relTarget - state.turretYaw)
       );
-      state.turretYaw += THREE.MathUtils.clamp(yawErr, -TURRET_RATE * dt, TURRET_RATE * dt);
+      // a frozen tank swings its turret sluggishly too
+      const traverse = TURRET_RATE * slowMul * dt;
+      state.turretYaw += THREE.MathUtils.clamp(yawErr, -traverse, traverse);
       state.turretYaw = Math.atan2(Math.sin(state.turretYaw), Math.cos(state.turretYaw));
       const pt = THREE.MathUtils.clamp(aimPitch, AIM_PITCH.min, AIM_PITCH.max);
-      state.pitch += THREE.MathUtils.clamp(pt - state.pitch, -PITCH_RATE * dt, PITCH_RATE * dt);
+      const elevate = PITCH_RATE * slowMul * dt;
+      state.pitch += THREE.MathUtils.clamp(pt - state.pitch, -elevate, elevate);
     }
     model.turret.rotation.y = state.turretYaw;
     model.pitchGroup.rotation.z = state.pitch;

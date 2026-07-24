@@ -696,3 +696,16 @@ body.garage canvas:active { cursor: grabbing; }
 /* stream weapons swap the crosshair reload bar for the fuel bar */
 body.streamweapon #reloadwrap { display: none; }
 body.streamweapon.ingame #cryowrap { display: block; }
+
+
+/* ---- Torrential Inferno fuel bar (v0.15) ------------------------------ */
+
+body.flameweapon #cryowrap {
+  background: rgba(28, 14, 8, 0.72);
+  border-color: rgba(255, 170, 110, 0.45);
+}
+
+body.flameweapon #cryofill {
+  background: linear-gradient(90deg, #e04a10, #ffc070);
+  box-shadow: 0 0 6px rgba(255, 150, 70, 0.55);
+}

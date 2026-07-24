@@ -129,6 +129,22 @@ export function createFx(scene) {
     });
   }
 
+  function ember(pos) {
+    spawn({
+      pos: pos.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 2.4, 0.6 + Math.random() * 1.4, (Math.random() - 0.5) * 1.8
+      )),
+      vel: new THREE.Vector3((Math.random() - 0.5) * 0.8, 1.6 + Math.random() * 1.4, (Math.random() - 0.5) * 0.8),
+      life: 0.5 + Math.random() * 0.5,
+      scale: 0.16 + Math.random() * 0.16,
+      grow: 0.6,
+      color: 0xff9a3c,
+      opacity: 0.85,
+      additive: true,
+      drag: 0.8,
+    });
+  }
+
   function impact(pos) {
     spawn({ pos, life: 0.08, scale: 1.1, grow: 6, color: 0xffd08a, additive: true });
     for (let i = 0; i < 6; i++) {
@@ -211,5 +227,5 @@ export function createFx(scene) {
     }
   }
 
-  return { muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, impact, explosion, prewarm, update };
+  return { muzzleFlash, barrelSmoke, huskSmoke, bulletTrail, ember, impact, explosion, prewarm, update };
 }

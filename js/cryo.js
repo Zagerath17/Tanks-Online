@@ -12,6 +12,33 @@ export const CRYO = {
   r1: 1.55,
 };
 
+// Per-element look. Frost drifts and swirls; fire runs faster, billows
+// wider at the tip, and its embers rise as they travel.
+const PRESETS = {
+  cryo: {
+    r1: 1.55,
+    moteColor: 0xeaf7ff,
+    moteSpeed: [9, 8],
+    buoyancy: 0,
+    layers: [
+      { scale: 1.5, speed: 2.2, seed: 0.0, rs: 1.00, core: 0xf2fbff, edge: 0x63a9f0, op: 0.42 },
+      { scale: 2.6, speed: 3.1, seed: 11.3, rs: 0.78, core: 0xffffff, edge: 0x8fd4ff, op: 0.34 },
+      { scale: 4.4, speed: 4.3, seed: 23.7, rs: 1.18, core: 0xdff2ff, edge: 0x3f7fd0, op: 0.22 },
+    ],
+  },
+  flame: {
+    r1: 1.85,
+    moteColor: 0xffc070,
+    moteSpeed: [11, 9],
+    buoyancy: 2.6,
+    layers: [
+      { scale: 1.4, speed: 3.4, seed: 5.1, rs: 1.00, core: 0xfff3c4, edge: 0xff5a1e, op: 0.46 },
+      { scale: 2.4, speed: 4.6, seed: 17.9, rs: 0.76, core: 0xffffff, edge: 0xffa63c, op: 0.36 },
+      { scale: 4.0, speed: 6.0, seed: 31.2, rs: 1.22, core: 0xffd88a, edge: 0xc82a08, op: 0.24 },
+    ],
+  },
+};
+
 const VERT = `
 varying vec2 vUv;
 void main() {
@@ -137,15 +164,13 @@ function coneShell(range, r0, r1, rings = 22, seg = 26, curve = 1.35) {
   return geo;
 }
 
-export function createCryoBeam() {
+export function createStreamBeam(kind = 'cryo') {
+  const P = PRESETS[kind] || PRESETS.cryo;
+  const R1 = P.r1;
   const group = new THREE.Group();
   group.visible = false;
 
-  const LAYERS = [
-    { scale: 1.5, speed: 2.2, seed: 0.0, rs: 1.00, core: 0xf2fbff, edge: 0x63a9f0, op: 0.42 },
-    { scale: 2.6, speed: 3.1, seed: 11.3, rs: 0.78, core: 0xffffff, edge: 0x8fd4ff, op: 0.34 },
-    { scale: 4.4, speed: 4.3, seed: 23.7, rs: 1.18, core: 0xdff2ff, edge: 0x3f7fd0, op: 0.22 },
-  ];
+  const LAYERS = P.layers;
 
   const mats = [];
   for (const L of LAYERS) {
@@ -168,7 +193,7 @@ export function createCryoBeam() {
     });
     mat.userData.baseOpacity = L.op;
     const mesh = new THREE.Mesh(
-      coneShell(CRYO.range, CRYO.r0 * L.rs, CRYO.r1 * L.rs),
+      coneShell(CRYO.range, CRYO.r0 * L.rs, R1 * L.rs),
       mat
     );
     mesh.frustumCulled = false;
@@ -188,7 +213,7 @@ export function createCryoBeam() {
   const radius = new Float32Array(COUNT);
 
   function seed(i, stagger) {
-    const speed = 9 + Math.random() * 8;
+    const speed = P.moteSpeed[0] + Math.random() * P.moteSpeed[1];
     const ml = (CRYO.range / speed) * (0.7 + Math.random() * 0.5);
     maxLife[i] = ml;
     life[i] = stagger ? Math.random() * ml : ml;
@@ -214,7 +239,7 @@ export function createCryoBeam() {
   const moteMat = new THREE.ShaderMaterial({
     vertexShader: MOTE_VERT,
     fragmentShader: MOTE_FRAG,
-    uniforms: { uColor: { value: new THREE.Color(0xeaf7ff) } },
+    uniforms: { uColor: { value: new THREE.Color(P.moteColor) } },
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
@@ -249,10 +274,10 @@ export function createCryoBeam() {
       // swirl outward: radius grows with distance, angle winds slowly
       spin[i] += dt * 1.8;
       const t = 1 - life[i] / maxLife[i];
-      const spread = CRYO.r0 + (CRYO.r1 - CRYO.r0) * Math.pow(t, 1.3);
+      const spread = CRYO.r0 + (R1 - CRYO.r0) * Math.pow(t, 1.3);
       mPos[i3] += vel[i3] * dt;
       const rr = spread * (0.25 + 0.75 * (radius[i] / Math.max(0.001, CRYO.r0)));
-      mPos[i3 + 1] = Math.cos(spin[i]) * rr + vel[i3 + 1] * t;
+      mPos[i3 + 1] = Math.cos(spin[i]) * rr + vel[i3 + 1] * t + P.buoyancy * t * t;
       mPos[i3 + 2] = Math.sin(spin[i]) * rr + vel[i3 + 2] * t;
       // fade in fast at the nozzle, out toward the tip
       const fadeIn = Math.min(1, t / 0.12);
@@ -273,3 +298,4 @@ export function createCryoBeam() {
 
   return { group, update, dispose };
 }
+

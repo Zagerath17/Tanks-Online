@@ -76,7 +76,10 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       turretId: 'cannon',
       streaming: false,
       chill: 0,
-      offBeam: 99,
+      chillOff: 99,
+      burn: 0,
+      burnOff: 99,
+      emberAcc: 0,
     };
     ru.body.position.set(0, -50, 0); // parked until first state
     players.set(pid, ru);
@@ -203,8 +206,13 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       const pouring = ru.alive && ru.streaming && m.hasStream();
       m.setStream(pouring);
       m.updateStream(dt);
-      if (pouring && !ru.cryoSound) ru.cryoSound = audio.loopOn(m.root, 'cryo');
-      if (ru.cryoSound) ru.cryoSound.update(1, pouring ? 0.45 : 0);
+      const clip = ru.turretId === 'inferno' ? 'flame' : 'cryo';
+      if (pouring && ru.streamClip !== clip) {
+        if (ru.streamSound) ru.streamSound.stop();
+        ru.streamSound = audio.loopOn(m.root, clip);
+        ru.streamClip = clip;
+      }
+      if (ru.streamSound) ru.streamSound.update(1, pouring ? 0.45 : 0);
 
       // barrel recoil + after-shot smoke
       ru.recoil = Math.max(0, ru.recoil - dt * (0.4 + ru.recoil * 9));

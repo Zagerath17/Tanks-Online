@@ -101,11 +101,17 @@ const local = {
   deadT: 0,
   recoil: 0,
   chill: 0,
-  offBeam: 99,
+  chillOff: 99,
+  burn: 0,
+  burnOff: 99,
+  cryoTick: 0,
+  flameTick: 0,
+  emberAcc: 0,
 };
 
 const engine = audio.engineLoop(playerModel.root);
 const cryoSound = audio.loopOn(playerModel.root, 'cryo');
+const flameSound = audio.loopOn(playerModel.root, 'flame');
 
 // Arctic Snap trigger + fuel
 let firingHeld = false;
@@ -235,6 +241,7 @@ function stopStreaming() {
   cryo.streaming = false;
   playerModel.setStream(false);
   cryoSound.update(1, 0);
+  flameSound.update(1, 0);
 }
 
 function leaveToMenu() {
@@ -689,8 +696,12 @@ function editorSpawnPoint() {
 function spawnLocal(slot) {
   player.reset(slot);
   local.chill = 0;
-  local.offBeam = 99;
-  playerModel.setChill(0);
+  local.chillOff = 99;
+  local.burn = 0;
+  local.burnOff = 99;
+  local.cryoTick = 0;
+  local.flameTick = 0;
+  playerModel.setStatus(0, 0);
   player.setSlow(1);
   cryo.fuel = 100;
   cryo.streaming = false;
@@ -797,11 +808,24 @@ document.addEventListener('mousemove', (e) => {
 // Weapon mode: the cannon reloads between shots, Arctic Snap burns fuel
 // ---------------------------------------------------------------------------
 function refreshWeaponHud() {
-  document.body.classList.toggle('streamweapon', playerModel.hasStream());
+  const spec = streamSpecOf(playerModel.turretId);
+  document.body.classList.toggle('streamweapon', !!spec);
+  document.body.classList.toggle('flameweapon', !!spec && spec.element === 'flame');
 }
 refreshWeaponHud();
 
 const ARCTIC = TURRET_SPECS.arctic;
+const INFERNO = TURRET_SPECS.inferno;
+// the burn ticks for a share of the flamethrower's own damage output
+const INFERNO_DPS = INFERNO.tickDamage / INFERNO.tickInterval;
+const BURN_DPS = INFERNO.burnFrac * INFERNO_DPS;
+
+// the spec of whatever stream weapon a tank is carrying (null if it's a gun)
+function streamSpecOf(turretId) {
+  const s = TURRET_SPECS[turretId];
+  return s && s.mode === 'stream' ? s : null;
+}
+
 const _bp = new THREE.Vector3();
 const _bd = new THREE.Vector3();
 const _bq = new THREE.Quaternion();
@@ -809,76 +833,131 @@ const _bv = new THREE.Vector3();
 const _tgt = new THREE.Vector3();
 
 // Is `targetPos` inside the cone pouring from this model's nozzle?
-function streamHits(model, targetPos) {
+function streamHits(model, targetPos, spec) {
   model.muzzle.getWorldPosition(_bp);
   model.muzzle.getWorldQuaternion(_bq);
   _bd.set(1, 0, 0).applyQuaternion(_bq);
   _bv.copy(targetPos).sub(_bp);
   const along = _bv.dot(_bd);
-  if (along < -0.6 || along > ARCTIC.range) return false;
+  if (along < -0.6 || along > spec.range) return false;
   const perp = Math.sqrt(Math.max(0, _bv.lengthSq() - along * along));
-  const t = Math.max(0, along) / ARCTIC.range;
-  return perp <= 0.95 + (ARCTIC.coneR - 0.95) * t; // the spray widens with range
+  const t = Math.max(0, along) / spec.range;
+  return perp <= 0.95 + (spec.coneR - 0.95) * t; // the spray widens with range
 }
 
-// Freeze builds while the stream lands and thaws once it stops
-function tickChill(unit, hit, dt) {
-  if (hit) {
-    unit.offBeam = 0;
-    unit.chill = Math.min(1, unit.chill + ARCTIC.chillRise * dt);
-  } else {
-    unit.offBeam += dt;
-    if (unit.offBeam > ARCTIC.thawDelay) {
-      unit.chill = Math.max(0, unit.chill - ARCTIC.chillFall * dt);
+// Both status effects build while their stream lands, hold for a moment, and
+// then fade at the rate they came on.
+function rampStatus(value, hit, offTimer, spec, dt) {
+  if (hit) return [Math.min(1, value + spec.statusRise * dt), 0];
+  const off = offTimer + dt;
+  const next = off > spec.statusDelay
+    ? Math.max(0, value - spec.statusFall * dt)
+    : value;
+  return [next, off];
+}
+
+function tickStatus(unit, dt, hitCryo, hitFlame) {
+  [unit.chill, unit.chillOff] = rampStatus(unit.chill, hitCryo, unit.chillOff, ARCTIC, dt);
+  [unit.burn, unit.burnOff] = rampStatus(unit.burn, hitFlame, unit.burnOff, INFERNO, dt);
+  unit.model.setStatus(unit.chill, unit.burn);
+
+  // a tank well alight throws embers
+  if (unit.burn > 0.25) {
+    unit.emberAcc = (unit.emberAcc || 0) + dt * unit.burn;
+    while (unit.emberAcc > 0.09) {
+      unit.emberAcc -= 0.09;
+      fx.ember(unit.model.root.position);
     }
   }
-  unit.model.setChill(unit.chill);
 }
 
 function updateStreamWeapon(dt) {
-  const wants = firingHeld && local.alive && playerModel.hasStream();
+  const spec = streamSpecOf(playerModel.turretId);
+  const wants = firingHeld && local.alive && !!spec;
+
   if (cryo.streaming) {
     if (!wants || cryo.fuel <= 0) cryo.streaming = false;
-  } else if (wants && cryo.fuel >= ARCTIC.restartAt) {
+  } else if (wants && cryo.fuel >= spec.restartAt) {
     cryo.streaming = true;
   }
 
-  if (cryo.streaming) {
-    cryo.fuel = Math.max(0, cryo.fuel - ARCTIC.fuelDrain * dt);
-  } else {
-    // recharging starts the instant the trigger is released
-    cryo.fuel = Math.min(100, cryo.fuel + ARCTIC.fuelRecharge * dt);
+  if (spec) {
+    if (cryo.streaming) {
+      cryo.fuel = Math.max(0, cryo.fuel - spec.fuelDrain * dt);
+    } else {
+      // recharging starts the instant the trigger is released
+      cryo.fuel = Math.min(100, cryo.fuel + spec.fuelRecharge * dt);
+    }
   }
 
   playerModel.setStream(cryo.streaming);
   playerModel.updateStream(dt);
-  cryoSound.update(1, cryo.streaming ? 0.5 : 0);
+  const isFlame = spec && spec.element === 'flame';
+  cryoSound.update(1, cryo.streaming && !isFlame ? 0.5 : 0);
+  flameSound.update(1, cryo.streaming && isFlame ? 0.55 : 0);
   elCryoFill.style.transform = `scaleX(${cryo.fuel / 100})`;
 }
 
-// Resolve every live cryo stream against every tank
+// Damage arrives in half-second bites; the first lands the moment the stream
+// touches you, so contact reads immediately.
+function tickDamage(unit, key, hit, spec, dt) {
+  if (!hit) {
+    unit[key] = 0;
+    return;
+  }
+  if (unit[key] <= 0) {
+    localDrain(spec.tickDamage);
+    unit[key] = spec.tickInterval;
+  } else {
+    unit[key] -= dt;
+  }
+}
+
+// Resolve every live stream — frost and fire — against every tank
 function resolveStreams(dt) {
   const remotes = phase === 'playing' ? remote.targets() : [];
-  let localHit = false;
+  const mySpec = cryo.streaming ? streamSpecOf(playerModel.turretId) : null;
+  let hitByCryo = false;
+  let hitByFlame = false;
 
   for (const ru of remotes) {
     const visible = ru.alive && ru.model.root.visible;
-    if (visible && ru.streaming && ru.model.hasStream() && local.alive) {
-      _tgt.copy(playerModel.root.position);
-      _tgt.y += 1.0;
-      if (streamHits(ru.model, _tgt)) localHit = true;
+
+    // their stream on me
+    if (visible && ru.streaming && local.alive) {
+      const theirs = streamSpecOf(ru.turretId);
+      if (theirs) {
+        _tgt.copy(playerModel.root.position);
+        _tgt.y += 1.0;
+        if (streamHits(ru.model, _tgt, theirs)) {
+          if (theirs.element === 'flame') hitByFlame = true;
+          else hitByCryo = true;
+        }
+      }
     }
-    let hitByMe = false;
-    if (cryo.streaming && visible) {
+
+    // my stream on them (their client owns their damage; this is the look)
+    let cryoOnThem = false;
+    let flameOnThem = false;
+    if (mySpec && visible) {
       _tgt.copy(ru.pos);
       _tgt.y += 1.0;
-      hitByMe = streamHits(playerModel, _tgt);
+      if (streamHits(playerModel, _tgt, mySpec)) {
+        if (mySpec.element === 'flame') flameOnThem = true;
+        else cryoOnThem = true;
+      }
     }
-    tickChill(ru, hitByMe, dt);
+    tickStatus(ru, dt, cryoOnThem, flameOnThem);
   }
 
-  if (localHit) localDrain(ARCTIC.dps * dt);
-  tickChill(local, localHit, dt);
+  tickDamage(local, 'cryoTick', hitByCryo, ARCTIC, dt);
+  tickDamage(local, 'flameTick', hitByFlame, INFERNO, dt);
+  tickStatus(local, dt, hitByCryo, hitByFlame);
+
+  // burning keeps eating hull even after the stream moves off
+  if (local.burn > 0 && local.alive) {
+    localDrain(BURN_DPS * local.burn * dt);
+  }
   player.setSlow(1 - ARCTIC.maxSlow * local.chill);
 }
 
@@ -895,8 +974,6 @@ function muzzleWorld(unit, outPos, outDir) {
   outDir.set(1, 0, 0).applyQuaternion(_fq);
 }
 
-let camKick = 0;
-
 function tryPlayerFire() {
   if (!local.alive || local.cooldown > 0) return;
   local.cooldown = FIRE_INTERVAL;
@@ -907,7 +984,6 @@ function tryPlayerFire() {
   fx.muzzleFlash(_fpos.clone(), _fdir.clone());
   audio.playAt('shot', _fpos, { volume: 0.9, rate: 0.94 + Math.random() * 0.12 });
   player.applyRecoil(_fdir);
-  camKick = 0.55;
   if (phase === 'playing') {
     net.sendShot({
       x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
@@ -993,41 +1069,43 @@ function updateLocalUnit(dt) {
 let camYaw = 0;
 let camPitch = 0;
 const camPos = new THREE.Vector3(0, 26, 60);
-const _desired = new THREE.Vector3();
 const _lookAt = new THREE.Vector3(0, 2, 0);
 
-function lerpAngle(a, b, t) {
-  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
-  return a + d * t;
-}
+// Rig geometry: the camera sits on a sphere of fixed radius around the tank,
+// so its distance never changes — pitching just walks it around the arc.
+const CAM_BACK = 10.5;
+const CAM_UP = 5.6;
+const CAM_R = Math.hypot(CAM_BACK, CAM_UP);
+const CAM_BASE_ELEV = Math.atan2(CAM_UP, CAM_BACK);
 
-function updateCamera(dt) {
-  camKick = Math.max(0, camKick - camKick * 7 * dt - 0.05 * dt);
-  camYaw = lerpAngle(camYaw, viewYaw, 1 - Math.exp(-16 * dt));
-  camPitch += (viewPitch - camPitch) * (1 - Math.exp(-16 * dt));
+function updateCamera() {
+  // no easing: the rig is rigidly bolted to the aim
+  camYaw = viewYaw;
+  camPitch = viewPitch;
 
   const cy = Math.cos(camYaw);
   const sy = -Math.sin(camYaw);
-  const cp = Math.cos(camPitch);
-  const sp = Math.sin(camPitch);
   const tp = playerModel.root.position;
 
-  const D = 45;
-  _lookAt.set(
-    tp.x + cp * cy * D,
-    tp.y + 2.0 + sp * D,
-    tp.z + cp * sy * D
+  const elev = THREE.MathUtils.clamp(CAM_BASE_ELEV - camPitch, -0.18, 1.30);
+  const ce = Math.cos(elev);
+  const se = Math.sin(elev);
+
+  camera.position.set(
+    tp.x - cy * CAM_R * ce,
+    tp.y + CAM_R * se,
+    tp.z - sy * CAM_R * ce
   );
+  // the only thing that ever moves it: refusing to sink into the ground
+  const minY = groundYAt(camera.position.x, camera.position.z) + 0.8;
+  if (camera.position.y < minY) camera.position.y = minY;
 
-  const dist = 10.5 + camKick * 2.4;
-  let camY = tp.y + 5.6 - sp * 9;
-  _desired.set(tp.x - cy * dist, 0, tp.z - sy * dist);
-  camY = Math.max(camY, groundYAt(_desired.x, _desired.z) + 0.8, tp.y + 0.9);
-  _desired.y = camY;
-
-  camPos.lerp(_desired, 1 - Math.exp(-9 * dt));
-  camera.position.copy(camPos);
+  const cp = Math.cos(camPitch);
+  const sp = Math.sin(camPitch);
+  const D = 45;
+  _lookAt.set(tp.x + cp * cy * D, tp.y + 2.0 + sp * D, tp.z + cp * sy * D);
   camera.lookAt(_lookAt);
+  camPos.copy(camera.position);
 }
 
 let idleAngle = 0;

@@ -130,13 +130,24 @@ export function createGarage({ scene, fx, audio, bullets }) {
   let fuel = 100;
   let streaming = false;
 
+  function activeSpec() {
+    const s = TURRET_SPECS[model.turretId];
+    return s && s.mode === 'stream' ? s : null;
+  }
+
   function setStream(on) {
-    if (!model.hasStream()) return;
-    streaming = on && fuel > (streaming ? 0 : TURRET_SPECS.arctic.restartAt);
+    const spec = activeSpec();
+    if (!spec) return;
+    streaming = on && fuel > (streaming ? 0 : spec.restartAt);
   }
 
   function updateStream(dt) {
-    const spec = TURRET_SPECS.arctic;
+    const spec = activeSpec();
+    if (!spec) {
+      model.setStream(false);
+      model.updateStream(dt);
+      return;
+    }
     if (streaming && fuel > 0) {
       fuel = Math.max(0, fuel - spec.fuelDrain * dt);
       if (fuel === 0) streaming = false;
