@@ -13,7 +13,7 @@ export const PROJECTILES = {
   },
   plasma: {
     speed: 86, // half the shell's muzzle velocity
-    range: 100, // expires at 100 m
+    range: 70, // expires at 70 m
     damage: 25,
     trail: 'plasma',
   },

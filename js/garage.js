@@ -105,11 +105,25 @@ export function createGarage({ scene, fx, audio, bullets }) {
     return s && s.mode === 'projectile' ? s : null;
   }
 
+  // the Aegis has nothing to lock onto in the bay, so it just idles there
+  function isBeamWeapon() {
+    const s = TURRET_SPECS[model.turretId];
+    return !!(s && s.mode === 'beam');
+  }
+
+  // the stream weapons need to be audible on the stand too
+  const cryoSound = audio.loopOn(model.root, 'cryo');
+  const flameSound = audio.loopOn(model.root, 'flame');
+
   function fire() {
     if (model.hasStream()) return false; // stream weapons fire by holding
     if (cooldown > 0) return false;
     const spec = gunSpec();
     if (!spec) return false;
+    if (spec.fuelPerShot) {
+      if (fuel < spec.fuelPerShot) return false;
+      fuel = Math.max(0, fuel - spec.fuelPerShot);
+    }
     const plasma = spec.projectile === 'plasma';
 
     cooldown = spec.fireInterval;
@@ -163,11 +177,25 @@ export function createGarage({ scene, fx, audio, bullets }) {
     streaming = on && fuel > (streaming ? 0 : spec.restartAt);
   }
 
+  let triggerHeld = false;
+
+  function setTrigger(on) {
+    triggerHeld = on;
+    if (model.hasStream()) setStream(on);
+  }
+
   function updateStream(dt) {
     const spec = activeSpec();
     if (!spec) {
       model.setStream(false);
       model.updateStream(dt);
+      cryoSound.update(1, 0);
+      flameSound.update(1, 0);
+      const gun = gunSpec();
+      if (gun && gun.auto && triggerHeld) fire();
+      if (gun && gun.fuelPerShot && !triggerHeld) {
+        fuel = Math.min(100, fuel + gun.fuelRecharge * dt);
+      }
       return;
     }
     if (streaming && fuel > 0) {
@@ -179,8 +207,12 @@ export function createGarage({ scene, fx, audio, bullets }) {
     } else {
       fuel = Math.min(100, fuel + spec.fuelRecharge * dt);
     }
-    model.setStream(streaming && fuel > 0);
+    const pouring = streaming && fuel > 0;
+    model.setStream(pouring);
     model.updateStream(dt);
+    const isFlame = spec.element === 'flame';
+    cryoSound.update(1, pouring && !isFlame ? 0.5 : 0);
+    flameSound.update(1, pouring && isFlame ? 0.55 : 0);
   }
 
   // ---- per-frame -----------------------------------------------------------
@@ -243,13 +275,21 @@ export function createGarage({ scene, fx, audio, bullets }) {
   function exit() {
     group.visible = false;
     streaming = false;
+    triggerHeld = false;
     model.setStream(false);
+    cryoSound.update(1, 0);
+    flameSound.update(1, 0);
   }
 
   return {
-    enter, exit, update, fire, orbit, flingOrbit, applySkin, applyTurret, applyHull, setStream,
+    enter, exit, update, fire, orbit, flingOrbit, applySkin, applyTurret, applyHull, setStream, setTrigger,
     reloadFrac: () => 1 - Math.max(0, cooldown) / ((gunSpec() || { fireInterval: FIRE_INTERVAL }).fireInterval),
     fuelFrac: () => fuel / 100,
     isStreamWeapon: () => model.hasStream(),
+    isBeamWeapon,
+    usesCharge: () => {
+      const g = gunSpec();
+      return model.hasStream() || isBeamWeapon() || !!(g && g.fuelPerShot);
+    },
   };
 }

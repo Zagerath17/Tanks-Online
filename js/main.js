@@ -9,11 +9,14 @@ import { readInput, readFly } from './controls.js';
 import { createMenu } from './menu.js';
 import { createRemoteManager } from './remote.js';
 import { createPhysics } from './physics.js';
+import { createTreadMarks } from './tracks.js';
+import { createArcBeam, createRailBeam } from './arc.js';
 import { createEditor } from './editor.js';
 import { createColorWheel } from './colorwheel.js';
 import { createGarage } from './garage.js';
 import { TURRETS, HULLS, SKINS, selection, loadSelection, saveSelection, currentSkin, currentTurret, currentHull } from './loadout.js';
 import * as net from './net.js';
+import * as accounts from './auth.js';
 
 const FIRE_INTERVAL = 2.5; // fallback when a turret doesn't say otherwise
 
@@ -83,6 +86,9 @@ const fx = createFx(scene);
 const audio = createAudio(camera, scene);
 const bullets = createBullets(scene, fx);
 const remote = createRemoteManager({ scene, fx, audio, physics });
+const tracks = createTreadMarks(scene);
+const arcBeam = createArcBeam(scene);
+const railBeam = createRailBeam(scene);
 const editor = createEditor({ scene, physics });
 loadSelection();
 const garage = createGarage({ scene, fx, audio, bullets });
@@ -126,6 +132,9 @@ const flameSound = audio.loopOn(playerModel.root, 'flame');
 
 // Arctic Snap trigger + fuel
 let firingHeld = false;
+let lastTrackX = 0;
+let lastTrackZ = 0;
+const _trackFwd = new THREE.Vector3();
 const cryo = { fuel: 100, streaming: false };
 
 // ---------------------------------------------------------------------------
@@ -204,8 +213,119 @@ const menu = createMenu({
   onStart: () => net.startGame(),
   onLeave: () => leaveToMenu(),
   onEditor: () => enterEditor(),
+  onGuest: () => {
+    menu.show('scr-main');
+  },
+  onLogin: async ({ username, password }) => {
+    if (!accounts.authConfigured()) { menu.err('login-err', CONFIG_MSG); return; }
+    menu.err('login-err', 'signing in...');
+    try {
+      const p = await accounts.signIn({ username, password });
+      menu.setAccount(p.username);
+      await adoptCloudLoadout();
+      menu.err('login-err', '');
+      menu.show('scr-main');
+    } catch (e) {
+      menu.err('login-err', String(e.message || e));
+    }
+  },
+  onSignUp: async ({ email, username, password }) => {
+    if (!accounts.authConfigured()) { menu.err('signup-err', CONFIG_MSG); return; }
+    menu.err('signup-err', 'creating account...');
+    try {
+      await accounts.signUp({ email, username, password });
+      menu.err('signup-err', 'check your email to verify, then log in');
+      menu.show('scr-login');
+      menu.err('login-err', 'verify your email, then sign in');
+    } catch (e) {
+      menu.err('signup-err', String(e.message || e));
+    }
+  },
+  onForgot: async (username) => {
+    if (!accounts.authConfigured()) { menu.err('login-err', CONFIG_MSG); return; }
+    if (!username) { menu.err('login-err', 'type your username first'); return; }
+    try {
+      const to = await accounts.resetPassword(username);
+      menu.err('login-err', `reset link sent to ${to}`);
+    } catch (e) {
+      menu.err('login-err', String(e.message || e));
+    }
+  },
+  onLogout: async () => {
+    if (!accounts.currentProfile()) { menu.show('scr-auth'); return; }
+    await accounts.logOut();
+    menu.setAccount(null);
+    menu.show('scr-auth');
+  },
+  onDeleteAccount: async () => {
+    const p = accounts.currentProfile();
+    if (!p) return;
+    if (!confirm(`Delete the account "${p.username}"? This erases the account, its email and its loadout for good.`)) return;
+    const pw = prompt('Confirm your password to delete the account:');
+    if (!pw) return;
+    try {
+      await accounts.deleteAccount(pw);
+      menu.setAccount(null);
+      menu.show('scr-auth');
+      alert('Account deleted.');
+    } catch (e) {
+      alert(String(e.message || e));
+    }
+  },
   onGarage: () => enterGarage(),
 });
+
+async function adoptCloudLoadout() {
+  const saved = await accounts.loadCloudLoadout();
+  if (!saved) {
+    // first sign-in on this account: seed it from whatever is set locally
+    accounts.saveCloudLoadout(loadoutSnapshot());
+    return;
+  }
+  applyLoadout(saved);
+}
+
+function loadoutSnapshot() {
+  return {
+    turret: (TURRETS[selection.turret] || TURRETS[0]).id,
+    hull: (HULLS[selection.hull] || HULLS[0]).id,
+    skin: (SKINS[selection.skin] || SKINS[0]).id,
+  };
+}
+
+function applyLoadout(saved) {
+  const ti = TURRETS.findIndex((x) => x.id === saved.turret);
+  const hi = HULLS.findIndex((x) => x.id === saved.hull);
+  const si = SKINS.findIndex((x) => x.id === saved.skin);
+  if (ti >= 0 && !TURRETS[ti].locked) {
+    selection.turret = ti;
+    playerModel.setTurret(TURRETS[ti].id);
+  }
+  if (hi >= 0 && !HULLS[hi].locked) {
+    selection.hull = hi;
+    playerModel.setHull(HULLS[hi].id);
+    player.syncHull();
+    local.maxHp = playerModel.maxHp;
+    local.hp = Math.min(local.hp, local.maxHp);
+  }
+  if (si >= 0) {
+    selection.skin = si;
+    playerModel.setSkin(SKINS[si]);
+  }
+  saveSelection();
+  refreshWeaponHud();
+  renderGarageItems();
+}
+
+// Boot: show the account gate, and keep the chip in step with Firebase.
+if (accounts.authConfigured()) {
+  accounts.watchAuth();
+  accounts.onProfileChange((p) => menu.setAccount(p ? p.username : null));
+} else {
+  menu.setAccount(null);
+  menu.err('auth-err', 'accounts need firebase \u2014 see the README');
+}
+menu.show('scr-auth');
 
 function refreshLobbyUi() {
   menu.setLobby({
@@ -225,6 +345,7 @@ function enterLobby() {
     },
     onPlayer: (pid, data) => {
       lobbyPlayers[pid] = data;
+      if (pid === net.getMyId() && Number.isInteger(data.team)) myTeam = data.team;
       if (phase === 'lobby') refreshLobbyUi();
       if (phase === 'playing' && pid !== net.getMyId()) remote.applyState(pid, data);
     },
@@ -237,6 +358,16 @@ function enterLobby() {
       if (pid === net.getMyId() || phase !== 'playing') return;
       const pos = new THREE.Vector3(s.x, s.y, s.z);
       const dir = new THREE.Vector3(s.dx, s.dy, s.dz).normalize();
+      if (s.k === 'rail') {
+        const rspec = TURRET_SPECS.railgun;
+        const rp = new THREE.Vector3(s.x, s.y, s.z);
+        const rd = new THREE.Vector3(s.dx, s.dy, s.dz).normalize();
+        railBeam.fire(rp, rd, rspec.range);
+        fx.muzzleFlash(rp.clone(), rd.clone(), 'plasma');
+        audio.playAt('rail', rp, { volume: 0.85, rate: 0.97 + Math.random() * 0.07 });
+        resolveRailShot(rp, rd, remote.shotFrom(pid, 'rail'), rspec);
+        return;
+      }
       const kind = s.k === 'plasma' ? 'plasma' : 'shell';
       const ru = remote.shotFrom(pid, kind);
       fx.muzzleFlash(pos.clone(), dir.clone(), kind === 'plasma' ? 'plasma' : 'fire');
@@ -257,10 +388,14 @@ function stopStreaming() {
   playerModel.setStream(false);
   cryoSound.update(1, 0);
   flameSound.update(1, 0);
+  aegis.active = false;
+  aegis.lock = null;
+  arcBeam.hide();
 }
 
 function leaveToMenu() {
   stopStreaming();
+  tracks.clear();
   net.leaveLobby();
   remote.clear();
   bullets.clear();
@@ -344,6 +479,7 @@ elGarageItems.addEventListener('click', (e) => {
     refreshWeaponHud();
   }
   saveSelection();
+  accounts.saveCloudLoadout(loadoutSnapshot());
   renderGarageItems();
 });
 
@@ -397,10 +533,8 @@ let gDrag = null;
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (phase !== 'garage' || e.button !== 0) return;
   gDrag = { lastX: e.clientX, moved: 0, vx: 0, streaming: false };
-  if (garage.isStreamWeapon()) {
-    garage.setStream(true);
-    gDrag.streaming = true;
-  }
+  garage.setTrigger(true);
+  if (garage.isStreamWeapon()) gDrag.streaming = true;
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -410,8 +544,9 @@ window.addEventListener('mousemove', (e) => {
   gDrag.moved += Math.abs(dx);
   gDrag.vx = dx;
   // once it's clearly a drag, stop pouring and just spin the stand
-  if (gDrag.streaming && gDrag.moved >= 5) {
-    garage.setStream(false);
+  if (gDrag.moved >= 5) {
+    // once it's clearly a drag, stop firing and just spin the stand
+    garage.setTrigger(false);
     gDrag.streaming = false;
   }
   garage.orbit(dx);
@@ -419,7 +554,7 @@ window.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', () => {
   if (!gDrag) return;
-  garage.setStream(false);
+  garage.setTrigger(false);
   if (gDrag.moved < 5) garage.fire();
   else garage.flingOrbit(gDrag.vx);
   gDrag = null;
@@ -430,12 +565,12 @@ window.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
   e.preventDefault();
-  if (garage.isStreamWeapon()) garage.setStream(true);
-  else garage.fire();
+  garage.setTrigger(true);
+  if (!garage.isStreamWeapon()) garage.fire();
 });
 
 window.addEventListener('keyup', (e) => {
-  if (phase === 'garage' && e.code === 'Space') garage.setStream(false);
+  if (phase === 'garage' && e.code === 'Space') garage.setTrigger(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -455,6 +590,7 @@ function enterEditor() {
 
 function leaveEditor() {
   stopStreaming();
+  tracks.clear();
   editor.exit();
   arenaGroup.visible = true;
   physics.setArenaActive(true);
@@ -730,6 +866,16 @@ function spawnLocal(slot) {
   player.setSlow(1);
   cryo.fuel = 100;
   cryo.streaming = false;
+  cryo.dry = false;
+  aegis.lock = null;
+  aegis.active = false;
+  aegis.tick = 0;
+  arcBeam.hide();
+  rail.wind = 0;
+  railBeam.hide();
+  playerModel.setCharge(0);
+  lastTrackX = playerModel.root.position.x;
+  lastTrackZ = playerModel.root.position.z;
   playerModel.setStream(false);
   refreshWeaponHud();
   playerModel.root.visible = true;
@@ -781,7 +927,9 @@ function pushState() {
     sk: selection.skin,
     tr: playerModel.turretId,
     hl: playerModel.hullId,
-    st: cryo.streaming,
+    st: cryo.streaming || aegis.active,
+    tm: myTeam,
+    lk: aegis.lock ? aegis.lock.id : null,
     t: Date.now(),
   });
 }
@@ -811,6 +959,13 @@ canvas.addEventListener('mousedown', (e) => {
   if (!playerModel.hasStream()) tryPlayerFire();
 });
 
+// automatic guns keep firing for as long as the trigger is down
+function updateAutoFire() {
+  if (!firingHeld || !local.alive) return;
+  const spec = gunSpecOf(playerModel.turretId);
+  if (spec && spec.auto) tryPlayerFire();
+}
+
 window.addEventListener('mouseup', () => { firingHeld = false; });
 window.addEventListener('blur', () => { firingHeld = false; });
 
@@ -836,10 +991,37 @@ document.addEventListener('mousemove', (e) => {
 // ---------------------------------------------------------------------------
 // Weapon mode: the cannon reloads between shots, Arctic Snap burns fuel
 // ---------------------------------------------------------------------------
+// Any weapon that spends a charge bar rather than reloading between shots
+function energySpecOf(turretId) {
+  const s = TURRET_SPECS[turretId];
+  if (!s) return null;
+  if (s.mode === 'stream' || s.mode === 'beam' || s.mode === 'railgun') return s;
+  if (s.fuelPerShot) return s; // the plasma repeater burns charge per bolt
+  return null;
+}
+
+function railSpecOf(turretId) {
+  const s = TURRET_SPECS[turretId];
+  return s && s.mode === 'railgun' ? s : null;
+}
+
+function beamSpecOf(turretId) {
+  const s = TURRET_SPECS[turretId];
+  return s && s.mode === 'beam' ? s : null;
+}
+
+// my team; everyone in a lobby is alternated onto one of two sides
+let myTeam = 0;
+
 function refreshWeaponHud() {
-  const spec = streamSpecOf(playerModel.turretId);
+  const spec = energySpecOf(playerModel.turretId);
+  const stream = streamSpecOf(playerModel.turretId);
   document.body.classList.toggle('streamweapon', !!spec);
-  document.body.classList.toggle('flameweapon', !!spec && spec.element === 'flame');
+  document.body.classList.toggle('flameweapon', !!stream && stream.element === 'flame');
+  const beam = beamSpecOf(playerModel.turretId);
+  document.body.classList.toggle('plasmaweapon', !!spec && !stream && !beam);
+  document.body.classList.toggle('aegisweapon', !!beam);
+  document.body.classList.toggle('railweapon', !!railSpecOf(playerModel.turretId));
 }
 refreshWeaponHud();
 
@@ -862,16 +1044,38 @@ const _bv = new THREE.Vector3();
 const _tgt = new THREE.Vector3();
 
 // Is `targetPos` inside the cone pouring from this model's nozzle?
-function streamHits(model, targetPos, spec) {
+function pointInStream(model, point, spec) {
   model.muzzle.getWorldPosition(_bp);
   model.muzzle.getWorldQuaternion(_bq);
   _bd.set(1, 0, 0).applyQuaternion(_bq);
-  _bv.copy(targetPos).sub(_bp);
+  _bv.copy(point).sub(_bp);
   const along = _bv.dot(_bd);
   if (along < -0.6 || along > spec.range) return false;
   const perp = Math.sqrt(Math.max(0, _bv.lengthSq() - along * along));
   const t = Math.max(0, along) / spec.range;
   return perp <= 0.95 + (spec.coneR - 0.95) * t; // the spray widens with range
+}
+
+// Sample points spread over the target's actual hull. Testing only its centre
+// meant a six-metre tank had to have its MIDDLE inside the cone before it took
+// any damage — the stream would visibly wash over a tank's front and do
+// nothing, which is what made the range feel far shorter than it looked.
+const _sampQ = new THREE.Quaternion();
+const _sampV = new THREE.Vector3();
+const SAMPLES = [
+  [0, 0.55, 0], [0.62, 0.35, 0], [-0.62, 0.35, 0],
+  [0.3, 0.5, 0.6], [0.3, 0.5, -0.6], [-0.3, 0.5, 0.6], [-0.3, 0.5, -0.6],
+];
+
+function streamHitsBody(sourceModel, targetModel, targetPos, targetQuat, spec) {
+  const H = targetModel.hull.hit;
+  _sampQ.copy(targetQuat);
+  for (const [fx_, fy_, fz_] of SAMPLES) {
+    _sampV.set(fx_ * H.bodyX, fy_ * H.bodyY1, fz_ * H.bodyZ).applyQuaternion(_sampQ);
+    _sampV.add(targetPos);
+    if (pointInStream(sourceModel, _sampV, spec)) return true;
+  }
+  return false;
 }
 
 // Both status effects build while their stream lands, hold for a moment, and
@@ -909,6 +1113,7 @@ function tickStatus(unit, dt, hitCryo, hitFlame) {
 
 function updateStreamWeapon(dt) {
   const spec = streamSpecOf(playerModel.turretId);
+  const energy = energySpecOf(playerModel.turretId);
   const wants = firingHeld && local.alive && !!spec;
 
   if (cryo.streaming) {
@@ -924,6 +1129,14 @@ function updateStreamWeapon(dt) {
       // recharging starts the instant the trigger is released
       cryo.fuel = Math.min(100, cryo.fuel + spec.fuelRecharge * dt);
     }
+  } else if (energy) {
+    // the repeater spends its charge in tryPlayerFire; here it just refills
+    // whenever the trigger is up
+    if (!firingHeld || local.cooldown > 0) {
+      cryo.fuel = Math.min(100, cryo.fuel + energy.fuelRecharge * dt);
+    }
+  } else {
+    cryo.fuel = 100;
   }
 
   playerModel.setStream(cryo.streaming);
@@ -949,6 +1162,227 @@ function tickDamage(unit, key, hit, spec, dt) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Railgun: hold to spin it up, and after a second it lets go. The shot is
+// instant and punches straight through everything in its path, shedding
+// damage with each tank it passes.
+// ---------------------------------------------------------------------------
+const rail = { wind: 0 };
+const _rp = new THREE.Vector3();
+const _rd = new THREE.Vector3();
+const _rq = new THREE.Quaternion();
+const _rs = new THREE.Vector3();
+
+// Every tank the line passes through, nearest first.
+function raycastTanks(origin, dir, range, units) {
+  const found = [];
+  for (const u of units) {
+    const model = u.isLocal ? playerModel : u.model;
+    if (!u.alive || !model.root.visible) continue;
+    const pos = u.isLocal ? playerModel.root.position : u.pos;
+    _rs.copy(pos).sub(origin);
+    const along = _rs.dot(dir);
+    if (along < 0 || along > range) continue;
+    // cheap reject before the exact test
+    if (Math.sqrt(Math.max(0, _rs.lengthSq() - along * along)) > 5) continue;
+    for (let d = Math.max(0, along - 4); d <= along + 4; d += 0.35) {
+      _rs.copy(origin).addScaledVector(dir, d);
+      if (model.hitTest(_rs)) {
+        found.push({ unit: u, dist: d });
+        break;
+      }
+    }
+  }
+  found.sort((a, b) => a.dist - b.dist);
+  return found;
+}
+
+// Resolve a rail shot: only the local tank's own health is applied here,
+// since every tank owns its own hit points.
+function resolveRailShot(origin, dir, shooter, spec) {
+  const units = [local, ...remote.targets()].filter((u) => u !== shooter);
+  const hits = raycastTanks(origin, dir, spec.range, units);
+  hits.forEach((h, i) => {
+    const dmg = Math.max(0, spec.damage - spec.falloff * i);
+    if (dmg <= 0) return;
+    _rs.copy(origin).addScaledVector(dir, h.dist);
+    fx.plasmaImpact(_rs.clone());
+    if (h.unit === local) localDrain(dmg);
+  });
+}
+
+function updateRailgun(dt) {
+  const spec = railSpecOf(playerModel.turretId);
+  if (!spec) {
+    rail.wind = 0;
+    playerModel.setCharge(0);
+    return;
+  }
+
+  const ready = cryo.fuel >= 99.5;
+  const wants = firingHeld && local.alive && ready;
+
+  if (wants) {
+    rail.wind = Math.min(spec.windUp, rail.wind + dt);
+    if (rail.wind >= spec.windUp) {
+      // let go
+      playerModel.muzzle.getWorldPosition(_rp);
+      playerModel.muzzle.getWorldQuaternion(_rq);
+      _rd.set(1, 0, 0).applyQuaternion(_rq);
+      railBeam.fire(_rp, _rd, spec.range);
+      fx.muzzleFlash(_rp.clone(), _rd.clone(), 'plasma');
+      audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
+      player.applyRecoil(_rd, 2.2);
+      resolveRailShot(_rp, _rd, local, spec);
+      cryo.fuel = 0;
+      rail.wind = 0;
+      if (phase === 'playing') {
+        net.sendShot({
+          x: r3(_rp.x), y: r3(_rp.y), z: r3(_rp.z),
+          dx: r3(_rd.x), dy: r3(_rd.y), dz: r3(_rd.z),
+          k: 'rail',
+        });
+      }
+    }
+  } else {
+    rail.wind = Math.max(0, rail.wind - dt * 2.5); // spins back down if released
+    cryo.fuel = Math.min(100, cryo.fuel + spec.fuelRecharge * dt);
+  }
+
+  playerModel.setCharge(rail.wind / spec.windUp);
+  elCryoFill.style.transform = `scaleX(${cryo.fuel / 100})`;
+}
+
+// ---------------------------------------------------------------------------
+// Aegis Emitter: the beam picks its own target inside a cone around your aim,
+// then either mends a teammate or drains an enemy.
+// ---------------------------------------------------------------------------
+const aegis = { lock: null, tick: 0, active: false };
+const _amz = new THREE.Vector3();
+const _adir = new THREE.Vector3();
+const _atv = new THREE.Vector3();
+const _aq = new THREE.Quaternion();
+const AEGIS_GREEN = 0x53e07a;
+const AEGIS_RED = 0xff4a3d;
+
+function pickAegisTarget(spec) {
+  playerModel.muzzle.getWorldPosition(_amz);
+  playerModel.muzzle.getWorldQuaternion(_aq);
+  _adir.set(1, 0, 0).applyQuaternion(_aq);
+
+  let best = null;
+  let bestAngle = spec.lockAngle;
+  for (const ru of remote.targets()) {
+    if (!ru.alive || !ru.model.root.visible) continue;
+    _atv.copy(ru.pos);
+    _atv.y += 1.0;
+    _atv.sub(_amz);
+    const dist = _atv.length();
+    if (dist < 0.5 || dist > spec.range) continue;
+    _atv.divideScalar(dist);
+    const angle = Math.acos(THREE.MathUtils.clamp(_atv.dot(_adir), -1, 1));
+    if (angle < bestAngle) {
+      bestAngle = angle;
+      best = ru;
+    }
+  }
+  return best;
+}
+
+function updateAegis(dt) {
+  const spec = beamSpecOf(playerModel.turretId);
+  if (!spec) {
+    aegis.lock = null;
+    aegis.active = false;
+    arcBeam.hide();
+    return;
+  }
+
+  const wants = firingHeld && local.alive;
+  if (aegis.active) {
+    if (!wants || cryo.fuel <= 0) aegis.active = false;
+  } else if (wants && cryo.fuel >= spec.restartAt) {
+    aegis.active = true;
+  }
+
+  // hold a lock while it stays valid, otherwise look for a new one
+  if (aegis.active) {
+    const held = aegis.lock;
+    const stillGood = held && held.alive && held.model.root.visible
+      && pickAegisTargetIsValid(held, spec);
+    aegis.lock = stillGood ? held : pickAegisTarget(spec);
+  } else {
+    aegis.lock = null;
+  }
+
+  const firing = aegis.active && !!aegis.lock;
+  if (firing) {
+    cryo.fuel = Math.max(0, cryo.fuel - spec.fuelDrain * dt);
+  } else {
+    cryo.fuel = Math.min(100, cryo.fuel + spec.fuelRecharge * dt);
+  }
+
+  const friendly = firing && aegis.lock.team === myTeam;
+
+  // ticks land ten times a second while the beam is connected
+  if (firing) {
+    aegis.tick -= dt;
+    if (aegis.tick <= 0) {
+      aegis.tick = spec.tickInterval;
+      if (!friendly) {
+        // the victim applies the damage themselves; we take the lifesteal
+        localHeal(spec.damageTick * spec.lifestealFrac);
+      }
+    }
+  } else {
+    aegis.tick = 0;
+  }
+
+  playerModel.muzzle.getWorldPosition(_amz);
+  if (firing) {
+    _atv.copy(aegis.lock.pos);
+    _atv.y += 1.0;
+  }
+  arcBeam.update(dt, camera, _amz, _atv, firing, friendly ? AEGIS_GREEN : AEGIS_RED);
+  elCryoFill.style.transform = `scaleX(${cryo.fuel / 100})`;
+}
+
+function pickAegisTargetIsValid(ru, spec) {
+  playerModel.muzzle.getWorldPosition(_amz);
+  playerModel.muzzle.getWorldQuaternion(_aq);
+  _adir.set(1, 0, 0).applyQuaternion(_aq);
+  _atv.copy(ru.pos);
+  _atv.y += 1.0;
+  _atv.sub(_amz);
+  const dist = _atv.length();
+  if (dist < 0.5 || dist > spec.range) return false;
+  _atv.divideScalar(dist);
+  // a held lock is allowed to drift a little wider before it breaks
+  return Math.acos(THREE.MathUtils.clamp(_atv.dot(_adir), -1, 1)) < spec.lockAngle * 1.35;
+}
+
+// Someone else's Aegis is on me: apply their tick to myself, since each tank
+// is the authority on its own health.
+function receiveAegis(dt) {
+  for (const ru of remote.targets()) {
+    if (!ru.streaming || ru.lockId !== net.getMyId()) continue;
+    const spec = beamSpecOf(ru.turretId);
+    if (!spec || !local.alive) continue;
+    ru.beamTick = (ru.beamTick || 0) - dt;
+    if (ru.beamTick <= 0) {
+      ru.beamTick = spec.tickInterval;
+      if (ru.team === myTeam) localHeal(spec.healTick);
+      else localDrain(spec.damageTick);
+    }
+  }
+}
+
+function localHeal(amount) {
+  if (!local.alive) return;
+  local.hp = Math.min(local.maxHp, local.hp + amount);
+  updateHpHud();
+}
+
 // Resolve every live stream — frost and fire — against every tank
 function resolveStreams(dt) {
   const remotes = phase === 'playing' ? remote.targets() : [];
@@ -962,26 +1396,20 @@ function resolveStreams(dt) {
     // their stream on me
     if (visible && ru.streaming && local.alive) {
       const theirs = streamSpecOf(ru.turretId);
-      if (theirs) {
-        _tgt.copy(playerModel.root.position);
-        _tgt.y += 1.0;
-        if (streamHits(ru.model, _tgt, theirs)) {
-          if (theirs.element === 'flame') hitByFlame = true;
-          else hitByCryo = true;
-        }
+      if (theirs && streamHitsBody(
+        ru.model, playerModel, playerModel.root.position, playerModel.root.quaternion, theirs
+      )) {
+        if (theirs.element === 'flame') hitByFlame = true;
+        else hitByCryo = true;
       }
     }
 
     // my stream on them (their client owns their damage; this is the look)
     let cryoOnThem = false;
     let flameOnThem = false;
-    if (mySpec && visible) {
-      _tgt.copy(ru.pos);
-      _tgt.y += 1.0;
-      if (streamHits(playerModel, _tgt, mySpec)) {
-        if (mySpec.element === 'flame') flameOnThem = true;
-        else cryoOnThem = true;
-      }
+    if (mySpec && visible && streamHitsBody(playerModel, ru.model, ru.pos, ru.quat, mySpec)) {
+      if (mySpec.element === 'flame') flameOnThem = true;
+      else cryoOnThem = true;
     }
     tickStatus(ru, dt, cryoOnThem, flameOnThem);
   }
@@ -1015,6 +1443,17 @@ function tryPlayerFire() {
   if (!local.alive || local.cooldown > 0) return;
   const spec = gunSpecOf(playerModel.turretId);
   if (!spec) return;
+
+  // charge-fed guns need enough in the bar for another bolt
+  if (spec.fuelPerShot) {
+    const floor = cryo.dry ? spec.restartAt : spec.fuelPerShot;
+    if (cryo.fuel < floor) {
+      cryo.dry = true;
+      return;
+    }
+    cryo.dry = false;
+    cryo.fuel = Math.max(0, cryo.fuel - spec.fuelPerShot);
+  }
 
   const plasma = spec.projectile === 'plasma';
   local.cooldown = spec.fireInterval;
@@ -1262,8 +1701,35 @@ renderer.setAnimationLoop(() => {
       localDie();
     }
 
+    // press tread marks into the ground under whoever is driving
+    if (local.alive) {
+      const p = playerModel.root.position;
+      const movedLocal = Math.hypot(p.x - lastTrackX, p.z - lastTrackZ);
+      tracks.trail(
+        'local', playerModel, p.y, player.state.heading,
+        movedLocal, player.state.contact
+      );
+      lastTrackX = p.x;
+      lastTrackZ = p.z;
+    }
+    for (const ru of remote.targets()) {
+      if (!ru.alive || !ru.model.root.visible) continue;
+      const moved = Math.hypot(ru.pos.x - (ru.trackX || ru.pos.x), ru.pos.z - (ru.trackZ || ru.pos.z));
+      _trackFwd.set(1, 0, 0).applyQuaternion(ru.quat);
+      const heading = Math.atan2(-_trackFwd.z, _trackFwd.x);
+      tracks.trail(ru.id, ru.model, ru.pos.y, heading, moved, true);
+      ru.trackX = ru.pos.x;
+      ru.trackZ = ru.pos.z;
+    }
+    tracks.update(dt);
+
     updateLocalUnit(dt);
+    updateAutoFire();
     updateStreamWeapon(dt);
+    updateAegis(dt);
+    updateRailgun(dt);
+    railBeam.update(dt);
+    receiveAegis(dt);
     resolveStreams(dt);
 
     bullets.update(
@@ -1317,7 +1783,7 @@ renderer.setAnimationLoop(() => {
     engine.update(0.72, 0);
     sun.position.set(18, 30, 14);
     sun.target.position.set(0, 0, 0);
-    elGarageReload.style.transform = `scaleX(${garage.isStreamWeapon() ? garage.fuelFrac() : garage.reloadFrac()})`;
+    elGarageReload.style.transform = `scaleX(${garage.usesCharge() ? garage.fuelFrac() : garage.reloadFrac()})`;
   } else {
     updateIdleCamera(dt);
     fx.update(dt);

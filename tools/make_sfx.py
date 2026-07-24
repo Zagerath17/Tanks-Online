@@ -411,40 +411,91 @@ def make_flame():
     return loop_align(normalize(out, 0.9))
 
 
-# --- plasma discharge -------------------------------------------------------
+# --- plasma bolt ------------------------------------------------------------
 def make_plasma():
-    """A capacitor dumping into a coil: a bright electric snap, a short
-    downward-swept whine as the bolt leaves the accelerator, and a hollow
-    resonant tail. Deliberately shorter and thinner than the cannon so a
-    two-a-second cadence doesn't turn into mud."""
-    n = int(SR * 0.42)
+    """A heavy electromagnetic thump, not the thin capacitor zap this replaced.
 
-    # snap: the discharge itself
-    snap = [s * e for s, e in zip(noise(n), env_exp(n, 0.008))]
-    snap = highpass(snap, 2200)
+    At eight bolts a second anything with a tail smears into a drone, so this
+    is built dry and short (0.13 s): a fast downward pitch drop for weight, a
+    tight body thump, and a brief metallic edge for the rail snap. No long
+    resonant ring, no noise wash — those were what made the old one sound
+    fizzy and cheap when repeated.
+    """
+    n = int(SR * 0.13)
 
-    # coil whine: a fast downward sweep, the bolt accelerating out
-    whine = []
+    # pitch drop: the bolt leaving the rails. Fast exponential sweep well
+    # down into the bass, which is what gives it punch at any fire rate.
+    drop = []
     phase = 0.0
     for i in range(n):
         t = i / SR
-        f = 1750 * math.exp(-t / 0.055) + 340
+        f = 520 * math.exp(-t / 0.022) + 62
         phase += 2 * math.pi * f / SR
-        whine.append(math.sin(phase) * math.exp(-i / (0.05 * SR)))
+        drop.append(math.sin(phase) * math.exp(-i / (0.045 * SR)))
 
-    # resonant body: a couple of metallic modes ringing in the emitter
-    body = [0.0] * n
-    for f, tau, amp in [(430, 0.075, 1.0), (712, 0.055, 0.6), (1180, 0.04, 0.34)]:
+    # body thump underneath, giving it mass
+    thump = [
+        math.sin(2 * math.pi * 88 * (i / SR)) * math.exp(-i / (0.03 * SR))
+        for i in range(n)
+    ]
+
+    # rail snap: a very short bright edge so it still reads as electric
+    snap = [s * e for s, e in zip(noise(n), env_exp(n, 0.0035))]
+    snap = highpass(snap, 2600)
+
+    # a single mid mode, decaying fast — enough metal to place it, not enough
+    # to ring into the next shot
+    ring = [
+        0.5 * math.sin(2 * math.pi * 620 * (i / SR)) * math.exp(-i / (0.014 * SR))
+        for i in range(n)
+    ]
+
+    out = mix(gain(drop, 1.15), gain(thump, 0.75), gain(snap, 0.4), gain(ring, 0.3))
+    out = lowpass(out, 5200)
+    return normalize(softclip(out, 1.25), 0.88)
+
+
+# --- railgun discharge ------------------------------------------------------
+def make_rail():
+    """A capacitor bank emptying at once: a rising whine cut off by a hard
+    crack, then a long metallic ring down the rails. Heavier and longer than
+    anything else in the pack, because it only goes off every five seconds."""
+    n = int(SR * 1.1)
+
+    # the crack itself
+    crack = [s * e for s, e in zip(noise(n), env_exp(n, 0.012))]
+    crack = highpass(crack, 1200)
+
+    # a hard downward sweep — the slug leaving the rails
+    sweep = []
+    phase = 0.0
+    for i in range(n):
+        t = i / SR
+        f = 2400 * math.exp(-t / 0.05) + 90
+        phase += 2 * math.pi * f / SR
+        sweep.append(math.sin(phase) * math.exp(-i / (0.09 * SR)))
+
+    # deep body
+    body = [
+        0.9 * math.sin(2 * math.pi * 54 * (i / SR)) * math.exp(-i / (0.22 * SR))
+        + 0.5 * math.sin(2 * math.pi * 81 * (i / SR) + 0.7) * math.exp(-i / (0.16 * SR))
+        for i in range(n)
+    ]
+
+    # rails ringing afterwards
+    ring = [0.0] * n
+    for f, tau, amp in [(340, 0.30, 1.0), (521, 0.24, 0.6), (869, 0.17, 0.34), (1310, 0.12, 0.2)]:
         ph = random.uniform(0, math.pi * 2)
         for i in range(n):
-            body[i] += amp * math.sin(2 * math.pi * f * (i / SR) + ph) * math.exp(-i / (tau * SR))
+            ring[i] += amp * math.sin(2 * math.pi * f * (i / SR) + ph) * math.exp(-i / (tau * SR))
 
     # ionised wash trailing off
-    wash = [s * e for s, e in zip(noise(n), env_exp(n, 0.09))]
-    wash = highpass(lowpass(wash, 3000), 500)
+    wash = [s * e for s, e in zip(noise(n), env_exp(n, 0.28))]
+    wash = highpass(lowpass(wash, 2600), 300)
 
-    out = mix(gain(snap, 0.85), gain(whine, 0.75), gain(body, 0.5), gain(wash, 0.35))
-    return normalize(softclip(out, 1.35), 0.85)
+    out = mix(gain(crack, 0.9), gain(sweep, 0.85), gain(body, 1.1),
+              gain(ring, 0.42), gain(wash, 0.3))
+    return normalize(softclip(out, 1.4), 0.94)
 
 
 if __name__ == '__main__':
@@ -457,3 +508,4 @@ if __name__ == '__main__':
     write_wav(os.path.join(dest, 'cryo.wav'), make_cryo())
     write_wav(os.path.join(dest, 'flame.wav'), make_flame())
     write_wav(os.path.join(dest, 'plasma.wav'), make_plasma())
+    write_wav(os.path.join(dest, 'rail.wav'), make_rail())

@@ -11,9 +11,46 @@
 
   <!-- ============ menu ============ -->
   <div id="menu">
-    <div class="screen" id="scr-main">
+    <div id="account">
+      <button id="account-name">signed out</button>
+      <div id="account-menu" class="hidden">
+        <button id="btn-logout">Log out</button>
+        <button id="btn-delete">Delete account</button>
+      </div>
+    </div>
+
+    <div class="screen" id="scr-auth">
       <h1 class="menu-title">TANK REMAKE</h1>
-      <p class="menu-sub">prototype 0.23 &middot; not pay-to-win</p>
+      <p class="menu-sub">sign in to play</p>
+      <button class="mbtn" id="btn-goto-login">Log In</button>
+      <button class="mbtn" id="btn-goto-signup">Sign Up</button>
+      <button class="mbtn back" id="btn-guest">Continue without an account</button>
+      <p class="menu-err" id="auth-err"></p>
+    </div>
+
+    <div class="screen hidden" id="scr-login">
+      <h2>Log In</h2>
+      <input id="login-user" placeholder="username" autocomplete="username" spellcheck="false" />
+      <input id="login-pass" type="password" placeholder="password" autocomplete="current-password" />
+      <button class="mbtn" id="btn-login">Log In</button>
+      <button class="mbtn back" id="btn-forgot">Forgot password</button>
+      <button class="mbtn back" id="back-login">Back</button>
+      <p class="menu-err" id="login-err"></p>
+    </div>
+
+    <div class="screen hidden" id="scr-signup">
+      <h2>Sign Up</h2>
+      <input id="signup-email" type="email" placeholder="email" autocomplete="email" spellcheck="false" />
+      <input id="signup-user" placeholder="username" autocomplete="username" spellcheck="false" />
+      <input id="signup-pass" type="password" placeholder="password" autocomplete="new-password" />
+      <button class="mbtn" id="btn-signup">Create Account</button>
+      <button class="mbtn back" id="back-signup">Back</button>
+      <p class="menu-err" id="signup-err"></p>
+    </div>
+
+    <div class="screen hidden" id="scr-main">
+      <h1 class="menu-title">TANK REMAKE</h1>
+      <p class="menu-sub">prototype 0.26 &middot; not pay-to-win</p>
       <button class="mbtn" id="btn-play">Play</button>
       <button class="mbtn" id="btn-custom">Custom</button>
       <button class="mbtn" id="btn-garage">Garage</button>
@@ -82,7 +119,7 @@
       <div class="row"><span class="keys"><kbd>W</kbd><kbd>S</kbd></span> drive / reverse</div>
       <div class="row"><span class="keys"><kbd>A</kbd><kbd>D</kbd></span> pivot hull</div>
       <div class="row"><span class="keys"><kbd>Mouse</kbd></span> aim turret</div>
-      <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire / hold to freeze</div>
+      <div class="row"><span class="keys"><kbd>LMB</kbd></span> fire &middot; hold for stream weapons</div>
     </div>
 
     <div class="hud controls" id="editorhud">

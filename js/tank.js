@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeGridTexture, makeHubTexture } from './grid-texture.js';
+import { makeMetalTexture, makeHubTexture } from './grid-texture.js';
 import { createStreamBeam } from './cryo.js';
 
 // ---------------------------------------------------------------------------
@@ -34,9 +34,14 @@ const HULL_DEFS = {
     maxHp: 1000,
     speedMul: 1.0,
     // hull side profile (x = fore/aft, y = up), extruded across the width
+    // the reference silhouette: a single clean raked glacis
     profile: [
       [-2.25, 0.40], [2.20, 0.40], [2.45, 0.62],
       [1.05, 1.16], [-1.60, 1.16], [-2.35, 1.02], [-2.45, 0.78],
+    ],
+    details: [
+      { part: 'glacis applique', x: 1.66, y: 0.86, z: 0, sx: 0.60, sy: 0.08, sz: 1.34, rot: -0.40 },
+      { part: 'rear grille', x: -1.95, y: 1.20, z: 0, sx: 0.60, sy: 0.08, sz: 1.20, mat: 'metal' },
     ],
     depth: 1.70,
     deckY: 1.16,
@@ -55,9 +60,18 @@ const HULL_DEFS = {
     speedMul: 0.765, // 15% slower again than the Paladin's 0.9
     // the heaviest chassis in the game: a long, deep, slab-sided hull on
     // seven road wheels, carrying the widest track the ramps will take
+    // a ram prow stepping up through layered belt armour to a slab deck
     profile: [
-      [-2.90, 0.50], [2.86, 0.50], [3.15, 0.76],
-      [1.42, 1.48], [-2.10, 1.48], [-3.00, 1.30], [-3.15, 1.00],
+      [-2.90, 0.50], [2.55, 0.50], [3.15, 0.72],
+      [2.62, 0.96], [2.72, 1.16], [2.20, 1.48],
+      [-2.20, 1.48], [-3.02, 1.34], [-3.15, 1.02],
+    ],
+    details: [
+      { part: 'prow rib', x: 2.92, y: 0.66, z: 0, sx: 0.26, sy: 0.09, sz: 1.60, mat: 'metal' },
+      { part: 'belt step', x: 2.50, y: 1.06, z: 0, sx: 0.22, sy: 0.14, sz: 1.70 },
+      { part: 'engine deck', x: -2.28, y: 1.56, z: 0, sx: 0.86, sy: 0.12, sz: 1.72 },
+      { part: 'louvre', x: -1.60, y: 1.545, z: 0, sx: 0.16, sy: 0.09, sz: 1.40, mat: 'metal' },
+      { part: 'louvre', x: -1.28, y: 1.545, z: 0, sx: 0.16, sy: 0.09, sz: 1.40, mat: 'metal' },
     ],
     depth: 2.18,
     deckY: 1.48,
@@ -76,9 +90,17 @@ const HULL_DEFS = {
     speedMul: 0.9, // 10% slower than the Vanguard
     // a heavy chassis: longer, wider, taller, riding on six road wheels with
     // a third return roller to carry the extra track
+    // squared-off and slab-fronted, with bolt-on plate over the glacis
     profile: [
-      [-2.46, 0.44], [2.42, 0.44], [2.68, 0.68],
-      [1.20, 1.28], [-1.78, 1.28], [-2.56, 1.12], [-2.68, 0.86],
+      [-2.46, 0.44], [2.50, 0.44], [2.68, 0.60],
+      [2.68, 1.02], [2.30, 1.28],
+      [-1.90, 1.28], [-2.60, 1.16], [-2.68, 0.84],
+    ],
+    details: [
+      { part: 'armour block', x: 2.60, y: 0.72, z: 0.42, sx: 0.20, sy: 0.22, sz: 0.46, mat: 'metal' },
+      { part: 'armour block', x: 2.60, y: 0.72, z: -0.42, sx: 0.20, sy: 0.22, sz: 0.46, mat: 'metal' },
+      { part: 'front plate', x: 2.60, y: 1.06, z: 0, sx: 0.18, sy: 0.20, sz: 1.44 },
+      { part: 'deck riser', x: -2.05, y: 1.34, z: 0, sx: 0.62, sy: 0.10, sz: 1.42 },
     ],
     depth: 1.88,
     deckY: 1.28,
@@ -94,13 +116,19 @@ const HULL_DEFS = {
   falcon: {
     name: 'Falcon',
     maxHp: 650,
-    speedMul: 1.344, // 12% quicker again than the Pioneer's 1.2
+    speedMul: 1.4784, // 12% over the Pioneer, then 10% again on top
     // the smallest chassis: short, low, and tightly sprung. Width is floored
     // by the turret ring every hull has to carry, so it buys its compactness
     // in length and height instead.
+    // one long unbroken rake from a knife nose to a short tail — stripped
     profile: [
-      [-1.58, 0.34], [1.52, 0.34], [1.75, 0.52],
-      [0.68, 0.90], [-1.10, 0.90], [-1.66, 0.80], [-1.75, 0.62],
+      [-1.58, 0.34], [1.28, 0.34], [1.75, 0.50],
+      [1.02, 0.84], [0.42, 0.90],
+      [-1.16, 0.90], [-1.62, 0.80], [-1.75, 0.58],
+    ],
+    details: [
+      { part: 'rear louvre', x: -1.28, y: 0.955, z: 0, sx: 0.52, sy: 0.11, sz: 0.92, mat: 'metal' },
+      { part: 'nose splitter', x: 1.50, y: 0.545, z: 0, sx: 0.34, sy: 0.06, sz: 1.14, mat: 'metal' },
     ],
     depth: 1.42,
     deckY: 0.90,
@@ -118,9 +146,16 @@ const HULL_DEFS = {
     maxHp: 800,
     speedMul: 1.2, // 20% quicker than the Vanguard
     // shorter, narrower, lower — a compact scout hull
+    // a stepped two-stage glacis, short and busy — a working scout hull
     profile: [
-      [-1.92, 0.38], [1.86, 0.38], [2.10, 0.58],
-      [0.86, 1.02], [-1.34, 1.02], [-1.98, 0.90], [-2.10, 0.70],
+      [-1.92, 0.38], [1.80, 0.38], [2.10, 0.56],
+      [1.62, 0.74], [1.30, 0.78], [0.72, 1.02],
+      [-1.30, 1.02], [-1.98, 0.92], [-2.10, 0.68],
+    ],
+    details: [
+      { part: 'stowage box', x: -1.58, y: 1.10, z: 0.30, sx: 0.46, sy: 0.17, sz: 0.52, mat: 'metal' },
+      { part: 'rear grille', x: -1.58, y: 1.05, z: -0.34, sx: 0.46, sy: 0.07, sz: 0.44, mat: 'metal' },
+      { part: 'step plate', x: 1.46, y: 0.66, z: 0, sx: 0.30, sy: 0.07, sz: 1.22 },
     ],
     depth: 1.52,
     deckY: 1.02,
@@ -197,7 +232,7 @@ function deriveHull(id, def) {
 
   return {
     id, name: def.name, maxHp: def.maxHp, speedMul: def.speedMul,
-    profile: def.profile, depth: def.depth, deckY: def.deckY, turretX: def.turretX,
+    profile: def.profile, details: def.details || [], depth: def.depth, deckY: def.deckY, turretX: def.turretX,
     tread: t, hit, chassis, move,
   };
 }
@@ -249,6 +284,46 @@ export const SKINS = [
     pattern: { cells: 8, lineWidth: 3 },
   },
   {
+    id: 'red', name: 'Red',
+    hull: ['#a8302a', '#8c2722'], turret: ['#b83a32', '#9a2e28'], barrel: ['#8a2822', '#71201c'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'orange', name: 'Orange',
+    hull: ['#c26a1c', '#a45716'], turret: ['#d2761f', '#b06119'], barrel: ['#a05616', '#874712'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'yellow', name: 'Yellow',
+    hull: ['#c9a81c', '#a98d16'], turret: ['#d9b722', '#b5991a'], barrel: ['#a58a16', '#8a7312'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'green', name: 'Green',
+    hull: ['#2b8c3d', '#227430'], turret: ['#309a44', '#267f36'], barrel: ['#227430', '#1b5e27'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'blue', name: 'Blue',
+    hull: ['#2455ac', '#1d468f'], turret: ['#2a60bd', '#224e9a'], barrel: ['#1d468f', '#173a76'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'indigo', name: 'Indigo',
+    hull: ['#3b2f8f', '#302677'], turret: ['#45379f', '#382c82'], barrel: ['#2d2470', '#241d5c'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'violet', name: 'Violet',
+    hull: ['#76309c', '#612782'], turret: ['#8437ac', '#6d2d8d'], barrel: ['#5d2680', '#4c1f69'],
+    pattern: { cells: 6, lineWidth: 3 },
+  },
+  {
+    id: 'black', name: 'Black',
+    hull: ['#1a1c1f', '#111315'], turret: ['#212427', '#16181a'], barrel: ['#141618', '#0d0f10'],
+    pattern: { cells: 5, lineWidth: 4 },
+  },
+  {
     id: 'rust', name: 'Rust',
     hull: ['#7d5133', '#6a442b'], turret: ['#8a5a39', '#754b30'], barrel: ['#63402a', '#523522'],
     pattern: { cells: 5, lineWidth: 5, major: 4 },
@@ -264,16 +339,22 @@ export const TURRET_SPECS = {
   plasma: {
     mode: 'projectile',
     projectile: 'plasma',
-    fireInterval: 0.25, // a bolt every quarter second, alternating barrels
+    fireInterval: 0.125, // a bolt every eighth of a second, barrels alternating
     damage: 25,
     dual: true,        // barrels take it in turns
+    auto: true,        // hold the trigger and it keeps firing
     recoil: 0.1,       // a plasma bolt barely nudges the tank
     smokeTime: 0,      // no propellant, so no barrel smoke
+    // charge bar, same 0-100 scale the stream weapons use, but spent per
+    // bolt rather than per second
+    fuelPerShot: 4,    // ~25 bolts, a little over three seconds of fire
+    fuelRecharge: 11,  // ~9 s back to full, starting the moment you release
+    restartAt: 8,
   },
   arctic: {
     mode: 'stream',
     element: 'cryo',
-    range: 7.5,        // about a tank and a half
+    range: 9.0,        // matches the beam geometry exactly (see cryo.js)
     coneR: 2.2,        // spray half-width at maximum range
     tickDamage: 10,    // 100 dps, applied in tenth-second bites
     tickInterval: 0.1,
@@ -285,10 +366,31 @@ export const TURRET_SPECS = {
     statusDelay: 2,    // ...after a couple of seconds off the beam
     maxSlow: 0.5,      // frozen tanks move at half speed
   },
+  railgun: {
+    mode: 'railgun',
+    range: 120,
+    windUp: 1.0,        // a second of spin-up before it lets go
+    damage: 650,
+    falloff: 150,       // each tank it punches through takes 150 less
+    rechargeTime: 5,
+    fuelRecharge: 20,   // 100 / 5 s
+  },
+  aegis: {
+    mode: 'beam',
+    range: 26,
+    lockAngle: 0.42,     // ~24 degrees either side of where you're aiming
+    tickInterval: 0.1,
+    damageTick: 7.5,     // 75 a second to an enemy
+    healTick: 5,         // 50 a second to a teammate
+    lifestealFrac: 0.2,  // and you take back a fifth of the damage you deal
+    fuelDrain: 10,
+    fuelRecharge: 5.6,
+    restartAt: 8,
+  },
   inferno: {
     mode: 'stream',
     element: 'flame',
-    range: 7.5,
+    range: 9.0,        // matches the beam geometry exactly
     coneR: 2.2,
     tickDamage: 6,     // 60 dps, applied in tenth-second bites
     tickInterval: 0.1,
@@ -356,35 +458,34 @@ function pathPoint(T, t) {
 // Materials
 // ---------------------------------------------------------------------------
 function buildMaterials(p) {
+  // A skin's old grid settings now drive how the steel is finished: finer
+  // cells mean a tighter brush grain, heavier lines mean a more beaten plate.
   const pat = p.pattern || {};
-  const cells = pat.cells || 6;
-  const lw = pat.lineWidth || 3;
-  const major = pat.major;
-  const hullTex = makeGridTexture({
-    cells, base: p.hull[0], line: p.hull[1], lineWidth: lw, major,
-    majorLine: p.hull[1], majorWidth: lw + 2, repeat: [0.5, 0.5],
+  const grain = Math.min(2, Math.max(0.5, (pat.cells || 6) / 6));
+  const wear = Math.min(2, Math.max(0.5, (pat.lineWidth || 3) / 3));
+
+  const hullTex = makeMetalTexture({
+    base: p.hull[0], shade: p.hull[1], grain, wear, repeat: [1.6, 1.6],
   });
-  const turretTex = makeGridTexture({
-    cells, base: p.turret[0], line: p.turret[1], lineWidth: lw, major,
-    majorLine: p.turret[1], majorWidth: lw + 2, repeat: [0.7, 0.7],
+  const turretTex = makeMetalTexture({
+    base: p.turret[0], shade: p.turret[1], grain, wear, repeat: [1.8, 1.8],
   });
-  const barrelTex = makeGridTexture({
-    cells: Math.max(2, Math.round(cells * 0.7)),
-    base: p.barrel[0], line: p.barrel[1], lineWidth: lw, repeat: [2, 1],
+  const barrelTex = makeMetalTexture({
+    base: p.barrel[0], shade: p.barrel[1], grain: grain * 1.4, wear, repeat: [3, 1],
   });
-  // Tracks read as rubber: near-black, subtle grid, glossy clearcoat sheen
-  const trackTex = makeGridTexture({
-    cells: 4, base: '#1d1f24', line: '#282b31', lineWidth: 3, repeat: [4, 4],
+  // Tracks stay rubber: near-black, fine grain, glossy clearcoat sheen
+  const trackTex = makeMetalTexture({
+    base: '#1d1f24', shade: '#141619', grain: 1.6, wear: 0.6, repeat: [3, 3],
   });
-  const tyreTex = makeGridTexture({
-    cells: 6, base: '#1a1c20', line: '#25282e', lineWidth: 2, repeat: [6, 1],
+  const tyreTex = makeMetalTexture({
+    base: '#1a1c20', shade: '#121417', grain: 1.8, wear: 0.5, repeat: [5, 1],
   });
   const hubTex = makeHubTexture();
 
   return {
-    hull: new THREE.MeshStandardMaterial({ map: hullTex, roughness: 0.8, metalness: 0.15 }),
-    turret: new THREE.MeshStandardMaterial({ map: turretTex, roughness: 0.75, metalness: 0.15 }),
-    barrel: new THREE.MeshStandardMaterial({ map: barrelTex, roughness: 0.6, metalness: 0.3 }),
+    hull: new THREE.MeshStandardMaterial({ map: hullTex, roughness: 0.62, metalness: 0.55 }),
+    turret: new THREE.MeshStandardMaterial({ map: turretTex, roughness: 0.58, metalness: 0.58 }),
+    barrel: new THREE.MeshStandardMaterial({ map: barrelTex, roughness: 0.48, metalness: 0.68 }),
     track: new THREE.MeshPhysicalMaterial({
       map: trackTex, roughness: 0.55, metalness: 0.0,
       clearcoat: 0.7, clearcoatRoughness: 0.32,
@@ -441,7 +542,23 @@ function buildHull(M, hull) {
     bevelSegments: 1,
   });
   hullGeo.translate(0, 0, -hull.depth / 2);
-  return new THREE.Mesh(hullGeo, M.hull);
+
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(hullGeo, M.hull));
+
+  // Bolt-on parts that give each hull its character. Every one is checked to
+  // sit inside the hull's own width, clear of the turret ring, and below deck
+  // level anywhere the gun can sweep.
+  for (const d of hull.details) {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(d.sx, d.sy, d.sz),
+      d.mat === 'metal' ? M.metal : M.hull
+    );
+    mesh.position.set(d.x, d.y, d.z);
+    if (d.rot) mesh.rotation.z = d.rot;
+    group.add(mesh);
+  }
+  return group;
 }
 
 // ---------------------------------------------------------------------------
@@ -855,10 +972,230 @@ function buildPlasmaTurret(M) {
   return { turret: t, pitchGroup, gun, muzzle, muzzles };
 }
 
+// ---------------------------------------------------------------------------
+// Aegis Emitter: a tesla set. A stepped insulator stack carries a wound coil
+// and a copper toroid; out front, two swept prongs hold a charged sphere in
+// the gap they leave, and that gap is where the lifeline strikes from.
+// ---------------------------------------------------------------------------
+function buildAegisTurret(M) {
+  const t = new THREE.Group();
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  const profile = new THREE.Shape();
+  profile.moveTo(-0.74, 0.0);
+  profile.lineTo(0.62, 0.0);
+  profile.lineTo(0.78, 0.18);
+  profile.lineTo(0.52, 0.48);
+  profile.lineTo(-0.40, 0.58);
+  profile.lineTo(-0.78, 0.38);
+  profile.closePath();
+  const bodyGeo = new THREE.ExtrudeGeometry(profile, {
+    depth: 1.16, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1,
+  });
+  bodyGeo.translate(0, 0, -0.58);
+  const body = new THREE.Mesh(bodyGeo, M.turret);
+  body.position.y = 0.08;
+  t.add(body);
+
+  // insulator stack: ceramic discs of decreasing size
+  for (let i = 0; i < 4; i++) {
+    const r = 0.24 - i * 0.028;
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.05, 16), M.metal);
+    disc.position.set(-0.34, 0.68 + i * 0.09, 0);
+    t.add(disc);
+  }
+
+  // wound coil above the stack
+  const coil = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.30, 16), M.barrel);
+  coil.position.set(-0.34, 1.10, 0);
+  t.add(coil);
+  for (let i = 0; i < 5; i++) {
+    const wind = new THREE.Mesh(new THREE.TorusGeometry(0.163, 0.021, 8, 18), M.plasma);
+    wind.position.set(-0.34, 0.99 + i * 0.055, 0);
+    wind.rotation.x = Math.PI / 2;
+    t.add(wind);
+  }
+
+  // copper toroid capping the coil
+  const toroid = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.062, 10, 22), M.plasma);
+  toroid.position.set(-0.34, 1.30, 0);
+  toroid.rotation.x = Math.PI / 2;
+  t.add(toroid);
+
+  // conduits running forward to the emitter
+  for (const side of [-1, 1]) {
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.02, 8), M.plasma);
+    cable.rotation.z = Math.PI / 2;
+    cable.position.set(0.16, 0.50, side * 0.2);
+    t.add(cable);
+  }
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.74, 0.36, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.44, 0.66), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  // stubby emitter housing
+  const housingGeo = new THREE.CylinderGeometry(0.17, 0.19, 0.6, 10);
+  housingGeo.rotateZ(Math.PI / 2);
+  const housing = new THREE.Mesh(housingGeo, M.barrel);
+  housing.position.set(0.42, 0.02, 0);
+  gun.add(housing);
+
+  // two swept prongs holding the gap
+  for (const side of [-1, 1]) {
+    const prong = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.07), M.metal);
+    prong.position.set(0.98, 0.02, side * 0.15);
+    prong.rotation.y = -side * 0.20;
+    gun.add(prong);
+
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 10), M.plasma);
+    tip.position.set(1.28, 0.02, side * 0.09);
+    gun.add(tip);
+  }
+
+  // the charged sphere suspended between them
+  const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.105, 1), M.plasma);
+  orb.position.set(1.18, 0.02, 0);
+  gun.add(orb);
+
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.03, 8, 18), M.metal);
+  ring.position.set(0.78, 0.02, 0);
+  ring.rotation.y = Math.PI / 2;
+  gun.add(ring);
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(1.42, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle };
+}
+
+// ---------------------------------------------------------------------------
+// Railgun: a tall, narrow mount carrying a very long two-rail barrel. Twin
+// capacitor towers flank the breech and a stack of accelerator rings runs the
+// length of the rails; both light up and spin as the shot winds up.
+// ---------------------------------------------------------------------------
+function buildRailgunTurret(M) {
+  const t = new THREE.Group();
+  const charge = []; // parts the wind-up animates
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  // tall pedestal: this turret sits high
+  const pedGeo = new THREE.CylinderGeometry(0.46, 0.58, 0.52, 12);
+  const pedestal = new THREE.Mesh(pedGeo, M.turret);
+  pedestal.position.set(-0.06, 0.32, 0);
+  t.add(pedestal);
+
+  const profile = new THREE.Shape();
+  profile.moveTo(-0.66, 0.0);
+  profile.lineTo(0.54, 0.0);
+  profile.lineTo(0.70, 0.20);
+  profile.lineTo(0.46, 0.56);
+  profile.lineTo(-0.38, 0.66);
+  profile.lineTo(-0.70, 0.44);
+  profile.closePath();
+  const bodyGeo = new THREE.ExtrudeGeometry(profile, {
+    depth: 1.00, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1,
+  });
+  bodyGeo.translate(0, 0, -0.50);
+  const body = new THREE.Mesh(bodyGeo, M.turret);
+  body.position.set(-0.06, 0.56, 0);
+  t.add(body);
+
+  // capacitor towers either side of the breech
+  for (const side of [-1, 1]) {
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.62, 12), M.metal);
+    tower.position.set(-0.34, 0.96, side * 0.42);
+    t.add(tower);
+    for (let i = 0; i < 3; i++) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.026, 8, 16), M.plasma);
+      band.position.set(-0.34, 0.78 + i * 0.18, side * 0.42);
+      band.rotation.x = Math.PI / 2;
+      t.add(band);
+      charge.push(band);
+    }
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.10, 12, 10), M.plasma);
+    cap.position.set(-0.34, 1.30, side * 0.42);
+    t.add(cap);
+    charge.push(cap);
+  }
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.52, 1.02, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.66), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  // breech block
+  const breech = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.4, 0.5), M.barrel);
+  breech.position.set(0.34, 0.02, 0);
+  gun.add(breech);
+
+  // twin rails running the length of the barrel
+  for (const side of [-1, 1]) {
+    const railGeo = new THREE.BoxGeometry(2.9, 0.075, 0.075);
+    const rail = new THREE.Mesh(railGeo, M.metal);
+    rail.position.set(1.9, 0.02, side * 0.115);
+    gun.add(rail);
+  }
+
+  // accelerator rings threaded along the rails
+  for (let i = 0; i < 9; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.028, 8, 16), i % 2 ? M.plasma : M.metal);
+    ring.position.set(0.72 + i * 0.32, 0.02, 0);
+    ring.rotation.y = Math.PI / 2;
+    gun.add(ring);
+    if (i % 2) charge.push(ring);
+  }
+
+  // a shroud over the rear half of the barrel
+  const shroudGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.2, 10);
+  shroudGeo.rotateZ(Math.PI / 2);
+  const shroud = new THREE.Mesh(shroudGeo, M.barrel);
+  shroud.position.set(1.1, 0.02, 0);
+  gun.add(shroud);
+
+  // muzzle brake at the very end of a long barrel
+  const brakeGeo = new THREE.CylinderGeometry(0.17, 0.13, 0.3, 10);
+  brakeGeo.rotateZ(Math.PI / 2);
+  const brake = new THREE.Mesh(brakeGeo, M.metal);
+  brake.position.set(3.4, 0.02, 0);
+  gun.add(brake);
+
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), M.plasma);
+  core.position.set(3.4, 0.02, 0);
+  gun.add(core);
+  charge.push(core);
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(3.6, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle, chargeParts: charge };
+}
+
 function buildTurret(M, kind) {
   if (kind === 'arctic') return buildArcticTurret(M);
   if (kind === 'inferno') return buildInfernoTurret(M);
   if (kind === 'plasma') return buildPlasmaTurret(M);
+  if (kind === 'aegis') return buildAegisTurret(M);
+  if (kind === 'railgun') return buildRailgunTurret(M);
   return buildCannonTurret(M);
 }
 
@@ -1017,6 +1354,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
   }
 
   let parts = attachTurret(turretId);
+  const parts_ = { get chargeParts() { return parts.chargeParts; } };
   const { turret, pitchGroup, gun, muzzle } = parts;
   let nextMuzzle = 0;
 
@@ -1161,6 +1499,19 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
         for (const [mesh, role] of meshes) mesh.material = charredMat;
       }
       applyChillTint();
+    },
+    // 0 = idle, 1 = fully wound up. Drives whatever glowing parts the
+    // equipped turret registered — rings spin faster and swell as it charges.
+    setCharge(frac) {
+      const parts = parts_.chargeParts;
+      if (!parts) return;
+      const f = Math.max(0, Math.min(1, frac));
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        const s = 1 + f * 0.45;
+        p.scale.setScalar(s);
+        p.rotation.z = (p.rotation.z || 0) + f * 0.42;
+      }
     },
     // 0 = normal, 1 = fully frozen (blue overlay) / fully alight (red overlay)
     setStatus(chillAmount, burnAmount) {

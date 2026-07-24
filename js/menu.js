@@ -2,7 +2,7 @@
 export function createMenu(handlers) {
   const el = (id) => document.getElementById(id);
   const menu = el('menu');
-  const screenIds = ['scr-main', 'scr-play', 'scr-custom', 'scr-join', 'scr-lobby'];
+  const screenIds = ['scr-auth', 'scr-login', 'scr-signup', 'scr-main', 'scr-play', 'scr-custom', 'scr-join', 'scr-lobby'];
 
   function show(id) {
     for (const s of screenIds) el(s).classList.toggle('hidden', s !== id);
@@ -17,6 +17,67 @@ export function createMenu(handlers) {
 
   function err(id, msg) {
     el(id).textContent = msg || '';
+  }
+
+  // --- accounts ---
+  const accountBtn = el('account-name');
+  const accountMenu = el('account-menu');
+
+  el('btn-goto-login').addEventListener('click', () => {
+    err('login-err', '');
+    show('scr-login');
+    el('login-user').focus();
+  });
+  el('btn-goto-signup').addEventListener('click', () => {
+    err('signup-err', '');
+    show('scr-signup');
+    el('signup-email').focus();
+  });
+  el('btn-guest').addEventListener('click', () => handlers.onGuest());
+  el('back-login').addEventListener('click', () => show('scr-auth'));
+  el('back-signup').addEventListener('click', () => show('scr-auth'));
+
+  el('btn-login').addEventListener('click', () => handlers.onLogin({
+    username: el('login-user').value.trim(),
+    password: el('login-pass').value,
+  }));
+  el('login-pass').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') el('btn-login').click();
+  });
+  el('btn-forgot').addEventListener('click', () => handlers.onForgot(el('login-user').value.trim()));
+
+  el('btn-signup').addEventListener('click', () => handlers.onSignUp({
+    email: el('signup-email').value.trim(),
+    username: el('signup-user').value.trim(),
+    password: el('signup-pass').value,
+  }));
+  el('signup-pass').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') el('btn-signup').click();
+  });
+
+  accountBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    accountMenu.classList.toggle('hidden');
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (!accountMenu.contains(e.target) && e.target !== accountBtn) {
+      accountMenu.classList.add('hidden');
+    }
+  });
+  el('btn-logout').addEventListener('click', () => {
+    accountMenu.classList.add('hidden');
+    handlers.onLogout();
+  });
+  el('btn-delete').addEventListener('click', () => {
+    accountMenu.classList.add('hidden');
+    handlers.onDeleteAccount();
+  });
+
+  function setAccount(name) {
+    accountBtn.textContent = name || 'guest';
+    accountMenu.classList.add('hidden');
+    el('btn-logout').textContent = name ? 'Log out' : 'Sign in';
+    el('btn-delete').style.display = name ? '' : 'none';
   }
 
   // --- main ---
@@ -75,6 +136,8 @@ export function createMenu(handlers) {
     el('lobby-players').innerHTML = ids
       .map((id, i) => {
         const tags = [];
+        const t = players[id] && players[id].team;
+        tags.push(t ? 'gold' : 'blue');
         if (id === hostId) tags.push('host');
         if (id === myId) tags.push('you');
         return `<div class="lp">tank ${String(i + 1).padStart(2, '0')}${
@@ -89,5 +152,5 @@ export function createMenu(handlers) {
       : 'waiting for the host to start';
   }
 
-  return { show, hideAll, err, setLobby };
+  return { show, hideAll, err, setLobby, setAccount };
 }

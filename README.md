@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.23
+# Tank Remake — prototype 0.26
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -20,7 +20,7 @@ The five working hulls span 1.8x in length, 2.3x in health and 1.8x in speed:
 | Paladin | 1250 | 8.55 | 5.36 x 3.34 x 1.28 |
 | Vanguard | 1000 | 9.50 | 4.90 x 3.02 x 1.16 |
 | Pioneer | 800 | 11.40 | 4.20 x 2.74 x 1.02 |
-| Falcon | 650 | 12.77 | 3.50 x 2.56 x 0.90 | A hull carries its own silhouette, tread layout, hit boxes, collision body, health pool and top speed, all derived from its own model so they can never disagree. **Skins** are all live: eight repaints, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
+| Falcon | 650 | 14.04 | 3.50 x 2.56 x 0.90 | A hull carries its own silhouette, tread layout, hit boxes, collision body, health pool and top speed, all derived from its own model so they can never disagree. **Skins** are all live: sixteen repaints — eight military finishes plus a full ROYGBIV set and black, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
 
 ## Arctic Snap
 
@@ -38,9 +38,23 @@ It sounds nothing like the Arctic Snap either, which took some doing: both loops
 
 ## Dual Plasma
 
-Twin emitters set wide apart, fed from a charged accumulator sphere cradled between them, with a capacitor bank on the roof and acceleration coils stepping down each barrel. The barrels alternate: a bolt every quarter second, so each side fires twice a second.
+Twin emitters set wide apart, fed from a charged accumulator sphere cradled between them, with a capacitor bank on the roof and acceleration coils stepping down each barrel. The barrels alternate: hold the trigger and it pours out a bolt every eighth of a second, each side firing four times a second. It runs off a charge bar like the stream weapons — about three seconds of continuous fire, then roughly nine to build back.
 
-The bolts are layered — an unlit blazing core inside a pulsing plasma shell, a soft halo, and a billboarded corona, shedding glowing motes as they fly. They travel at half the cannon shell's speed, fly perfectly flat with no drop, and burn out at exactly 100 m. Each one does 25 damage, and impacts burst blue instead of orange.
+The bolts are layered — an unlit blazing core inside a pulsing plasma shell, a soft halo, and a billboarded corona, shedding glowing motes as they fly. They travel at half the cannon shell's speed, fly perfectly flat with no drop, and burn out at 70 m. Each one does 25 damage, and impacts burst blue instead of orange.
+
+Tanks leave tread marks pressed into the ground — grouser bars with worn ends and scuffed soil between them, laid under both tracks as you drive. They hold for twenty seconds before fading away.
+
+## Aegis Emitter
+
+A tesla set: an insulator stack carrying a wound coil and a copper toroid, with two swept prongs out front holding a charged sphere in the gap they leave. Hold the trigger and an electrified lifeline strikes from that gap to whichever tank sits closest to your aim — the beam finds its own target inside a 24-degree cone out to 26 m, and holds the lock until it drifts well outside.
+
+On a teammate the arc runs green and mends 50 health a second. On an enemy it runs red, draining 75 a second and feeding a fifth of that back into your own hull. Both tick ten times a second, and it runs off the same charge bar as the other sustained weapons.
+
+Because it needs to tell friend from foe, players in a Custom lobby are now alternated onto two sides as they join, shown in the lobby list.
+
+## Railgun
+
+A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Hold the trigger and it spins up for a second — rings swell and turn, the capacitor bands and the muzzle core brighten — then it lets go with an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
 
 ## Editor
 
@@ -50,27 +64,68 @@ Pick a decal's shape and colour from the toolbar: the three shape buttons choose
 
 The toolbar along the top saves maps: name the map, **save** it in the browser, **load** any saved map from the list, or **export** it as a `.json` file — that file is the game's map format, and **import** reads one back in. Browser saves survive reloads; exported files are the ones to keep and share.
 
-## Multiplayer setup (one time, ~2 minutes)
+## Firebase setup (one time, ~5 minutes)
 
-Multiplayer syncs through Firebase Realtime Database, which works from any static host on the free tier.
+Accounts and multiplayer both run on Firebase, free tier, no server of your own. Do all of this once.
 
-1. Go to console.firebase.google.com → Add project (any name; Analytics off is fine).
-2. Build → **Realtime Database** → Create database → start in test mode, or use these rules (Rules tab) to scope writes to lobbies only:
+### 1. Create the project
+console.firebase.google.com → **Add project**. Any name. Analytics can be off.
+
+### 2. Turn on email accounts
+Build → **Authentication** → Get started → **Sign-in method** → enable **Email/Password**. Leave "Email link" off; the game uses passwords.
+
+Firebase sends the verification and password-reset emails itself, from a `firebaseapp.com` address. If you want them to come from your own domain, that's Authentication → Templates, but it isn't needed to play.
+
+### 3. Create the database
+Build → **Realtime Database** → Create database → start in **test mode** (you'll replace the rules in a moment).
+
+### 4. Paste in these rules
+Realtime Database → **Rules** tab → replace everything → Publish:
 
 ```json
 {
   "rules": {
-    "lobbies": { ".read": true, ".write": true },
-    ".read": false,
-    ".write": false
+    "lobbies": {
+      ".read": true,
+      ".write": "auth != null || true"
+    },
+    "usernames": {
+      ".read": true,
+      "$name": {
+        ".write": "!data.exists() && newData.child('uid').val() === auth.uid || data.child('uid').val() === auth.uid"
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    }
   }
 }
 ```
 
-3. Project settings (gear) → Your apps → Web app (`</>`) → Register.
-4. Copy the config object over the placeholders in `js/firebase-config.js`. Make sure `databaseURL` is filled in — grab it from the Realtime Database page if the snippet omits it.
+What these do: anyone can read the username directory (that's how logging in by username finds the right account) and claim a name **only if nobody holds it already** — that single rule is what makes usernames exclusive, enforced by the server rather than trusted from the client. A profile can only ever be read or written by the account it belongs to.
 
-Until the config is filled in, the Custom screen tells you what's missing. Note the test-mode/lobby rules are wide open — fine for playing with friends, not hardened against griefers. Stale lobbies are cheap junk data; clear `/lobbies` from the Firebase console whenever you like.
+### 5. Register a web app and copy the config
+Project settings (gear icon) → Your apps → **Web app** (`</>`) → Register. Copy `apiKey`, `authDomain`, `databaseURL`, `projectId` and `appId` over the placeholders in `js/firebase-config.js`. If the snippet doesn't show `databaseURL`, take it from the Realtime Database page.
+
+### 6. Authorise your domain
+Authentication → Settings → **Authorized domains** → add wherever you host it (`yourname.github.io`, `yoursite.netlify.app`, …). `localhost` is already allowed.
+
+Until the config is filled in the game still runs — the account screen and the Custom screen just tell you what's missing, and you can play the Garage and Editor as a guest.
+
+**One privacy note worth knowing:** the username directory stores the email behind each name so that logging in by username can work at all, and it's publicly readable. That's the standard trade for username logins without a server. If you'd rather not expose emails, the fix is a Cloud Function that does the username→email lookup privately, which needs the Blaze plan.
+
+## Accounts
+
+Sign up with an email, a username and a password. Firebase emails you a verification link, and the game refuses to sign you in until you've clicked it — if you try, it resends the link. Usernames are 3–16 characters of letters, numbers or underscores, are claimed the moment you sign up, and can't be taken by anyone else; an email can only back one account.
+
+Log in with your **username** and password. "Forgot password" emails a reset link to whatever address is behind that username.
+
+Your name sits in the top-left of the menu. Clicking it offers **Log out** and **Delete account** — deleting asks for your password, then erases the profile, releases the username, and removes the login itself.
+
+Your garage loadout is saved to your account and follows you to any machine you sign in on. Playing as a guest keeps it in the browser instead.
 
 ## Controls
 

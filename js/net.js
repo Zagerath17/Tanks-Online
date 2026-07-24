@@ -50,7 +50,7 @@ export async function createLobby() {
         host: myId,
         state: 'waiting',
         created: Date.now(),
-        players: { [myId]: { joined: Date.now() } },
+        players: { [myId]: { joined: Date.now(), team: 0 } },
       };
     });
     if (res.committed) {
@@ -73,8 +73,10 @@ export async function joinLobby(code) {
   const res = await runTransaction(ref(db, `lobbies/${code}/players`), (players) => {
     players = players || {};
     if (players[myId]) return players;
-    if (Object.keys(players).length >= MAX_PLAYERS) return; // abort: full
-    players[myId] = { joined: Date.now() };
+    const n = Object.keys(players).length;
+    if (n >= MAX_PLAYERS) return; // abort: full
+    // alternate sides as people arrive, so the two teams stay even
+    players[myId] = { joined: Date.now(), team: n % 2 };
     return players;
   });
   if (!res.committed) throw new Error(`lobby is full (${MAX_PLAYERS} max)`);

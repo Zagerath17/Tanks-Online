@@ -7,7 +7,7 @@ import * as THREE from 'three';
 // follows the barrel for free.
 
 export const CRYO = {
-  range: 7.5, // about a tank and a half
+  range: 9.0, // the damage cone in tank.js uses exactly this
   r0: 0.16,
   r1: 1.55,
 };

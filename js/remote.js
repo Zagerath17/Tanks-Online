@@ -81,6 +81,8 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       burnOff: 99,
       chillNet: 0,
       burnNet: 0,
+      team: 0,
+      lockId: null,
       emberAcc: 0,
     };
     ru.body.position.set(0, -50, 0); // parked until first state
@@ -119,6 +121,8 @@ export function createRemoteManager({ scene, fx, audio, physics }) {
       physics.reshapeBody(ru.body, ru.model.hull.chassis);
     }
     ru.streaming = !!s.st;
+    if (Number.isInteger(s.tm)) ru.team = s.tm;
+    ru.lockId = typeof s.lk === 'string' ? s.lk : null;
     // the owner's own reading of how frozen / alight they are
     if (typeof s.ch === 'number') ru.chillNet = s.ch;
     if (typeof s.bn === 'number') ru.burnNet = s.bn;
