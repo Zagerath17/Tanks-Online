@@ -201,6 +201,21 @@ export function createPhysics() {
     return _rayResult.hasHit;
   }
 
+  // Height of the first solid surface under a point, or null. Used by the
+  // hull clamp so no part of the tank can ever end a step below the ground.
+  function surfaceY(x, y, z, drop) {
+    _ray.from.set(x, y, z);
+    _ray.to.set(x, y - drop, z);
+    _rayResult.reset();
+    _ray.intersectWorld(world, {
+      mode: CANNON.Ray.CLOSEST,
+      result: _rayResult,
+      skipBackfaces: true,
+      collisionFilterMask: GROUP_STATIC | GROUP_REMOTE,
+    });
+    return _rayResult.hasHit ? _rayResult.hitPointWorld.y : null;
+  }
+
   function groundedAt(pos, reach, body) {
     if (body && contactGrounded(body)) return true;
     // start the probe just inside the hull so a resting tank always registers
@@ -230,11 +245,11 @@ export function createPhysics() {
   }
 
   function step(dt) {
-    world.step(1 / 60, dt, 4);
+    world.step(1 / 60, dt, 6);
   }
 
   return {
     world, createChassis, createRemoteBody, reshapeBody, removeBody, addBody,
-    addStaticBox, setArenaActive, groundedAt, step,
+    addStaticBox, setArenaActive, groundedAt, surfaceY, step,
   };
 }

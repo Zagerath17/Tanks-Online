@@ -153,6 +153,10 @@ export function createTreadMarks(scene) {
     },
     transparent: true,
     depthWrite: false,
+    // Flat decals on the floor: which way the winding happens to face should
+    // never be able to hide them, and an instance matrix with an unexpected
+    // sign would do exactly that under the default FrontSide.
+    side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: -4,
     polygonOffsetUnits: -4,
@@ -162,6 +166,9 @@ export function createTreadMarks(scene) {
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.frustumCulled = false;
   mesh.renderOrder = 1;
+  // Untouched instances start with an all-zero matrix, which is degenerate
+  // rather than merely invisible. Only ever submit the ones actually written.
+  mesh.count = 0;
   scene.add(mesh);
 
   let next = 0;
@@ -181,6 +188,7 @@ export function createTreadMarks(scene) {
     _scale.set(length, 1, width);
     _m.compose(_pos, _quat, _scale);
     mesh.setMatrixAt(i, _m);
+    if (next > mesh.count) mesh.count = Math.min(next, MAX);
     ages[i] = 0;
     mesh.instanceMatrix.needsUpdate = true;
     geo.attributes.aAge.needsUpdate = true;
@@ -288,6 +296,8 @@ export function createTreadMarks(scene) {
 
   function clear() {
     ages.fill(-1);
+    mesh.count = 0;
+    next = 0;
     emitters.clear();
     geo.attributes.aAge.needsUpdate = true;
   }

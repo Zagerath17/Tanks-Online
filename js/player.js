@@ -42,6 +42,26 @@ export function createPlayerController(model, physics) {
   const _vel = new THREE.Vector3();
   const _off = new THREE.Vector3();
   const _yAxis = new CANNON.Vec3(0, 1, 0);
+  const _imp = new CANNON.Vec3();
+  const _rel = new CANNON.Vec3();
+  const _cn = new THREE.Vector3();
+
+  // seconds after a shot during which the drive controller keeps its hands
+  // off the forward velocity, so recoil is something you feel
+  const RECOIL_FREE = 0.42;
+  let recoilT = 0;
+
+  // --- suspension -----------------------------------------------------------
+  // A small sprung mass: the hull and turret ride a few centimetres above the
+  // tracks and settle on a damped spring. Just enough to read as suspension.
+  const SUS_K = 150;      // spring
+  const SUS_D = 15;       // damping
+  const SUS_LIMIT = 0.045;
+  let susY = 0;
+  let susVel = 0;
+  let susPitch = 0;
+  let susPitchVel = 0;
+  let lastFwdSpeed = 0;
 
   function syncModel() {
     _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
@@ -68,6 +88,9 @@ export function createPlayerController(model, physics) {
     state.pitch = 0;
     state.flipT = 0;
     airborne = 0;
+    recoilT = 0;
+    susY = 0; susVel = 0; susPitch = 0; susPitchVel = 0; lastFwdSpeed = 0;
+    if (model.sprung) { model.sprung.position.y = 0; model.sprung.rotation.z = 0; }
     drive = 0;
     slowMul = 1;
     model.gun.position.x = 0;
@@ -80,19 +103,28 @@ export function createPlayerController(model, physics) {
   // version was pure linear velocity, which the drive controller read as
   // "briefly reversing" — this pitches the nose up around the axis
   // perpendicular to the shot, so the whole tank visibly bucks.
-  function applyRecoil(dir, scale = 1) {
+  function applyRecoil(dir, scale = 1, worldPoint = null) {
     const dh = Math.hypot(dir.x, dir.z) || 1;
-    const dx = dir.x / dh;
-    const dz = dir.z / dh;
-    body.applyImpulse(new CANNON.Vec3(
-      -dx * body.mass * 0.45 * scale,
-      0,
-      -dz * body.mass * 0.45 * scale
-    ));
-    // nose-up axis = shotDir x worldUp = (-dz, 0, dx)
-    const rock = 1.05 * scale;
-    body.angularVelocity.x += -dz * rock;
-    body.angularVelocity.z += dx * rock;
+    const kick = body.mass * scale;
+    _imp.set(-dir.x / dh * kick, 0, -dir.z / dh * kick);
+    if (worldPoint) {
+      // Apply it where the gun actually is. The muzzle sits forward of and
+      // well above the centre of mass, so the torque that stands the tank up
+      // on its rear idlers falls out of the physics instead of being faked
+      // with a hand-picked angular velocity.
+      _rel.set(
+        worldPoint.x - body.position.x,
+        worldPoint.y - body.position.y,
+        worldPoint.z - body.position.z
+      );
+      body.applyImpulse(_imp, _rel);
+    } else {
+      body.applyImpulse(_imp);
+    }
+    // let the shove actually land: the drive controller is suppressed for a
+    // moment so it does not immediately cancel the recoil velocity
+    recoilT = RECOIL_FREE;
+    susVel -= 2.0 * scale; // and the hull drops onto its springs
   }
 
   // Ground drag for a hull nobody is driving — a dead husk or a tank lying on
@@ -196,7 +228,10 @@ export function createPlayerController(model, physics) {
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
 
-      if (touching) dampTumble(dt);
+      // The tumble damper is what normally stops a clipped edge winding up
+      // into a somersault — but it also flattens the rear-up from a heavy
+      // gun. Let it off the leash for the same moment the recoil is landing.
+      if (touching && recoilT <= 0) dampTumble(dt);
     } else {
       drive = measured; // airborne or flipped: the body is on its own
       if (touching) scrub(dt); // ...but a hull on its roof still drags
@@ -245,9 +280,57 @@ export function createPlayerController(model, physics) {
     model.updateTreads(dt, 0, 0);
   }
 
+  // No part of the hull may end a step below the ground. cannon-es resolves
+  // penetration over several frames, which is fine for gentle contact but not
+  // for a railgun's recoil — a hard enough impulse buries a corner of the
+  // tank in the floor for long enough to see. This checks the four bottom
+  // corners of the chassis box against the surface underneath and lifts the
+  // body out. It can only ever push UP, so it cannot cause sinking itself.
+  const CLAMP_TOL = 0.015;  // ignore contact-solver noise
+  const CLAMP_MAX = 0.25;   // never teleport further than this in one step
+  function clampToGround() {
+    _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    const c = model.chassis;
+    const bottom = c.shapeOffY - c.hy;
+    let worst = 0;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        _cn.set(sx * c.hx, bottom, sz * c.hz).applyQuaternion(_q);
+        const wx = body.position.x + _cn.x;
+        const wy = body.position.y + _cn.y;
+        const wz = body.position.z + _cn.z;
+        const gy = physics.surfaceY(wx, wy + 1.2, wz, 1.2 + CLAMP_MAX);
+        if (gy !== null && wy < gy - CLAMP_TOL) worst = Math.max(worst, gy - wy);
+      }
+    }
+    if (worst > 0) {
+      body.position.y += Math.min(worst, CLAMP_MAX);
+      if (body.velocity.y < 0) body.velocity.y = 0;
+    }
+  }
+
   // Post-physics: pull the solved transform onto the visual model
-  function postStep() {
+  function postStep(dt = 0) {
+    clampToGround();
+    updateSuspension(dt);
     syncModel();
+  }
+
+  function updateSuspension(dt) {
+    if (!model.sprung || dt <= 0) return;
+    // longitudinal acceleration squats the back / dives the nose
+    const accel = (state.v - lastFwdSpeed) / Math.max(dt, 1e-4);
+    lastFwdSpeed = state.v;
+    susPitchVel += THREE.MathUtils.clamp(accel, -40, 40) * 0.004;
+    susVel += -body.velocity.y * 0.9 * dt;
+
+    susVel += (-SUS_K * susY - SUS_D * susVel) * dt;
+    susY = THREE.MathUtils.clamp(susY + susVel * dt, -SUS_LIMIT, SUS_LIMIT * 0.5);
+    susPitchVel += (-SUS_K * 0.75 * susPitch - SUS_D * 1.1 * susPitchVel) * dt;
+    susPitch = THREE.MathUtils.clamp(susPitch + susPitchVel * dt, -0.05, 0.05);
+
+    model.sprung.position.y = susY;
+    model.sprung.rotation.z = susPitch;
   }
 
   return {

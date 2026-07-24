@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.31
+# Tank Remake — prototype 0.32
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -143,7 +143,7 @@ Everyone drives the same tank: 1000 HP, 200 damage per shell — five hits and y
 
 Tanks are real rigid bodies (cannon-es): momentum carries you off edges, you can tumble, land on your side, and flip over completely. Nothing rotates the hull upright for you — while the tracks are down the controller only bleeds off pitch and roll *rate*, enough that a clipped edge can't wind up into a somersault, and the moment you leave the ground it lets go entirely. A flipped tank has no drive; stay upside down for 4 seconds and the crew bails — it cooks off and you respawn.
 
-Ground grip is entirely the controller's job — the solver's own friction between hull and ground is zero on purpose. It sets forward speed, kills sideways slide, cancels the gravity that would otherwise creep it down a ramp, and drags a wreck to a halt when nobody's driving. The tracks are animated from the commanded speed rather than the measured one, so they visibly slip when a wall is holding you and the speedo reads zero. Firing recoil is a genuine physics impulse, tank-vs-tank contact is solved by the engine, and everything precompiles during the menu so the first shot of a match doesn't hitch.
+Ground grip is entirely the controller's job — the solver's own friction between hull and ground is zero on purpose. It sets forward speed, kills sideways slide, cancels the gravity that would otherwise creep it down a ramp, and drags a wreck to a halt when nobody's driving. The tracks are animated from the commanded speed rather than the measured one, so they visibly slip when a wall is holding you and the speedo reads zero. Firing recoil is a genuine physics impulse applied at the muzzle rather than at the centre of mass, so the rear-up falls out of the lever arm instead of being faked — the cannon shoves the hull back at nearly 4 m/s and the railgun at over 6, standing it up on its rear idlers. The drive controller and the tumble damper both stand down for the fraction of a second the shove is landing, so you feel it. Nothing may end a step below the ground: the four bottom corners of the chassis are checked against the surface underneath every frame and lifted out if a hard enough impulse has driven them in, so the tracks never sink into the floor. The hull and turret ride on a small sprung mass above the tracks — about four centimetres of travel — which dips under recoil and settles, while the tracks stay planted. Tank-vs-tank contact is solved by the engine, tank-vs-tank contact is solved by the engine, and everything precompiles during the menu so the first shot of a match doesn't hitch.
 
 ## Run it locally
 

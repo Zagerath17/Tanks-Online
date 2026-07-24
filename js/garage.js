@@ -655,10 +655,12 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       volume: plasma ? 0.62 : 0.9,
       rate: 0.94 + Math.random() * 0.12,
     });
-    // the whole hull bucks: nose lifts, suspension compresses, both settle
-    const kick = plasma ? 0.35 : 1;
-    pitchVel += 2.4 * kick;
-    squatVel -= 1.1 * kick;
+    // the whole hull bucks: nose lifts, suspension compresses, both settle.
+    // Scaled off the same recoil figure the match uses, so a gun that shoves
+    // the tank about out there shoves it about on the stand too.
+    const kick = (spec.recoilKick !== undefined ? spec.recoilKick : 1) / 2.4;
+    pitchVel += 5.6 * kick;
+    squatVel -= 2.4 * kick;
     return true;
   }
 
@@ -734,9 +736,10 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
         if (railBeam) railBeam.fire(_rp, _rd, spec.range);
         fx.muzzleFlash(_rp.clone(), _rd.clone(), 'plasma');
         audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
-        // it kicks the stand hard
-        pitchVel += 4.2;
-        squatVel -= 1.9;
+        // it kicks the stand very hard indeed
+        const rk = (spec.recoilKick !== undefined ? spec.recoilKick : 7) / 2.4;
+        pitchVel += 5.6 * rk;
+        squatVel -= 2.4 * rk;
         fuel = 0;
         rail.wind = 0;
         rail.winding = false;
@@ -833,7 +836,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     // ambience: the room hum, and the tank idling where it stands. The bay
     // tone is deliberately well down in the mix — it is background, not a
     // feature.
-    roomSound.update(0.34);
+    roomSound.update(0.136);
     idleSound.update(0, true);
     aimShafts(camera);
 

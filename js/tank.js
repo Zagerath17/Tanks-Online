@@ -335,7 +335,12 @@ export const PALETTE = { green: SKINS[0] };
 // Per-turret behaviour. 'projectile' fires shells on a cooldown; 'stream'
 // pours a continuous jet that burns fuel and has to recharge.
 export const TURRET_SPECS = {
-  cannon: { mode: 'projectile', fireInterval: 2.5, damage: 200, projectile: 'shell' },
+  cannon: {
+    mode: 'projectile', fireInterval: 2.5, damage: 200, projectile: 'shell',
+    // Backward impulse at the muzzle, in metres per second of hull velocity.
+    // A 200 mm gun shoves its own tank hard; this is deliberately heavy.
+    recoilKick: 4.5,
+  },
   plasma: {
     mode: 'projectile',
     projectile: 'plasma',
@@ -344,6 +349,7 @@ export const TURRET_SPECS = {
     dual: true,        // barrels take it in turns
     auto: true,        // hold the trigger and it keeps firing
     recoil: 0.1,       // a plasma bolt barely nudges the tank
+    recoilKick: 0.12,  // ...and barely shifts it
     smokeTime: 0,      // no propellant, so no barrel smoke
     // charge bar, same 0-100 scale the stream weapons use, but spent per
     // bolt rather than per second
@@ -372,6 +378,9 @@ export const TURRET_SPECS = {
     windUp: 1.0,        // a second of spin-up before it lets go
     damage: 650,
     falloff: 150,       // each tank it punches through takes 150 less
+    // The heaviest thing on any hull by a wide margin: it visibly throws the
+    // tank backwards and stands it up on its rear idlers.
+    recoilKick: 7.0,
     rechargeTime: 5,
     fuelRecharge: 20,   // 100 / 5 s
   },
@@ -1330,6 +1339,11 @@ function updateTread(tread, dt, speed) {
 export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId = DEFAULT_HULL) {
   let M = rememberBaseColors(buildMaterials(palette));
   const root = new THREE.Group();
+  // Everything above the running gear rides on the suspension. The tracks
+  // stay pinned to the root (and so to the ground); the hull and turret sit
+  // on `sprung`, which bobs and pitches a few centimetres under load.
+  const sprung = new THREE.Group();
+  root.add(sprung);
 
   let hull = hullSpec(hullId);
   let hullMesh = null;
@@ -1340,7 +1354,8 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
     hullMesh = buildHull(M, hull);
     treadL = buildTread(M, -1, hull);
     treadR = buildTread(M, 1, hull);
-    root.add(hullMesh, treadL.group, treadR.group);
+    sprung.add(hullMesh);
+    root.add(treadL.group, treadR.group);
     // Lay the link chains out immediately — a tank that never drives would
     // otherwise render its wheels with no tracks
     updateTread(treadL, 0, 0);
@@ -1349,7 +1364,8 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
 
   function disposeChassis() {
     for (const part of [hullMesh, treadL.group, treadR.group]) {
-      root.remove(part);
+      // the hull hangs off the sprung mass, the tracks off the root
+      (part.parent || root).remove(part);
       part.traverse((o) => {
         if (o.isMesh && !o.userData.fx) o.geometry.dispose();
       });
@@ -1364,7 +1380,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
   function attachTurret(kind) {
     const built = buildTurret(M, kind);
     built.turret.position.set(hull.turretX, hull.deckY, 0);
-    root.add(built.turret);
+    sprung.add(built.turret);
     const spec = TURRET_SPECS[kind];
     if (spec && spec.mode === 'stream') {
       beam = createStreamBeam(spec.element);
@@ -1449,6 +1465,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
 
   return {
     root,
+    sprung,
     turret,
     pitchGroup,
     gun,
@@ -1506,7 +1523,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
         beam.dispose();
         beam = null;
       }
-      root.remove(this.turret);
+      sprung.remove(this.turret);
       this.turret.traverse((o) => {
         if (o.isMesh && !o.userData.fx) o.geometry.dispose();
       });

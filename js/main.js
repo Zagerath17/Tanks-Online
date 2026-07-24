@@ -1258,7 +1258,7 @@ function updateRailgun(dt) {
       railBeam.fire(_rp, _rd, spec.range);
       fx.muzzleFlash(_rp.clone(), _rd.clone(), 'plasma');
       audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
-      player.applyRecoil(_rd, 2.2);
+      player.applyRecoil(_rd, spec.recoilKick !== undefined ? spec.recoilKick : 2.2, _rp);
       resolveRailShot(_rp, _rd, local, spec);
       cryo.fuel = 0;
       rail.wind = 0;
@@ -1539,7 +1539,11 @@ function tryPlayerFire() {
     volume: plasma ? 0.62 : 0.9,
     rate: 0.94 + Math.random() * 0.12,
   });
-  player.applyRecoil(_fdir, plasma ? 0.35 : 1);
+  player.applyRecoil(
+    _fdir,
+    spec.recoilKick !== undefined ? spec.recoilKick : (plasma ? 0.35 : 1),
+    _fpos
+  );
   if (phase === 'playing') {
     net.sendShot({
       x: r3(_fpos.x), y: r3(_fpos.y), z: r3(_fpos.z),
@@ -1760,7 +1764,7 @@ renderer.setAnimationLoop(() => {
     }
 
     physics.step(dt);
-    player.postStep();
+    player.postStep(dt);
 
     // stuck upside down long enough -> the crew bails and it cooks off
     if (local.alive && player.state.flipT > 4) {
