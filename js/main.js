@@ -109,7 +109,7 @@ const cryoSound = audio.loopOn(playerModel.root, 'cryo');
 
 // Arctic Snap trigger + fuel
 let firingHeld = false;
-const cryo = { fuel: 100, streaming: false, pause: 0 };
+const cryo = { fuel: 100, streaming: false };
 
 // ---------------------------------------------------------------------------
 // Phase + lobby bookkeeping
@@ -694,7 +694,6 @@ function spawnLocal(slot) {
   player.setSlow(1);
   cryo.fuel = 100;
   cryo.streaming = false;
-  cryo.pause = 0;
   playerModel.setStream(false);
   refreshWeaponHud();
   playerModel.root.visible = true;
@@ -846,10 +845,9 @@ function updateStreamWeapon(dt) {
 
   if (cryo.streaming) {
     cryo.fuel = Math.max(0, cryo.fuel - ARCTIC.fuelDrain * dt);
-    cryo.pause = ARCTIC.rechargeDelay;
   } else {
-    cryo.pause = Math.max(0, cryo.pause - dt);
-    if (cryo.pause === 0) cryo.fuel = Math.min(100, cryo.fuel + ARCTIC.fuelRecharge * dt);
+    // recharging starts the instant the trigger is released
+    cryo.fuel = Math.min(100, cryo.fuel + ARCTIC.fuelRecharge * dt);
   }
 
   playerModel.setStream(cryo.streaming);

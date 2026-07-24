@@ -71,9 +71,8 @@ export const TURRET_SPECS = {
     range: 7.5,      // about a tank and a half
     coneR: 2.2,      // spray half-width at maximum range
     dps: 50,
-    fuelDrain: 25,   // 4 s of continuous stream from full
-    fuelRecharge: 14,
-    rechargeDelay: 0.6,
+    fuelDrain: 10,   // 10 s of continuous stream from full
+    fuelRecharge: 5.6, // refills in ~18 s, starting the instant you let go
     restartAt: 8,    // must build this much back before it'll fire again
     chillRise: 1 / 3, // 3 s of stream to reach the full 50% slow
     chillFall: 1 / 3, // thaws at the same rate...
@@ -302,8 +301,9 @@ function buildCannonTurret(M) {
 }
 
 // ---------------------------------------------------------------------------
-// Arctic Snap: a cryo projector. Squat housing, twin coolant bottles, a
-// finned heat-exchanger barrel and a flared nozzle the blizzard pours from.
+// Arctic Snap: a cryo projector built in the same faceted language as the
+// hull — a low wedge housing, a recessed coolant spine, and a heavy octagonal
+// shroud venting frost just behind a tapered emitter.
 // ---------------------------------------------------------------------------
 function buildArcticTurret(M) {
   const t = new THREE.Group();
@@ -312,81 +312,91 @@ function buildArcticTurret(M) {
   collar.position.y = 0.06;
   t.add(collar);
 
-  const lower = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.44, 1.18), M.turret);
-  lower.position.set(0.02, 0.34, 0);
-  const upper = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.26, 0.86), M.turret);
-  upper.position.set(-0.1, 0.66, 0);
-  t.add(lower, upper);
+  // faceted housing: extruded side profile, like the hull
+  const profile = new THREE.Shape();
+  profile.moveTo(-0.78, 0.0);
+  profile.lineTo(0.70, 0.0);
+  profile.lineTo(0.88, 0.17);
+  profile.lineTo(0.60, 0.50);
+  profile.lineTo(-0.44, 0.62);
+  profile.lineTo(-0.82, 0.44);
+  profile.closePath();
+  const bodyGeo = new THREE.ExtrudeGeometry(profile, {
+    depth: 1.12, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1,
+  });
+  bodyGeo.translate(0, 0, -0.56);
+  const body = new THREE.Mesh(bodyGeo, M.turret);
+  body.position.y = 0.08;
+  t.add(body);
 
-  // coolant bottles lying fore-aft on the roof
-  const bottleGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.8, 16);
-  bottleGeo.rotateZ(Math.PI / 2);
-  const capGeo = new THREE.SphereGeometry(0.16, 14, 10);
+  // recessed coolant spine down the centre line, flanked by two thin runs
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.11, 0.32), M.metal);
+  spine.position.set(-0.14, 0.66, 0);
+  t.add(spine);
+  const runGeo = new THREE.BoxGeometry(0.88, 0.05, 0.055);
   for (const side of [-1, 1]) {
-    const bottle = new THREE.Mesh(bottleGeo, M.cryo);
-    bottle.position.set(-0.12, 0.68, side * 0.3);
-    t.add(bottle);
-    for (const end of [-1, 1]) {
-      const cap = new THREE.Mesh(capGeo, M.cryo);
-      cap.position.set(-0.12 + end * 0.4, 0.68, side * 0.3);
-      t.add(cap);
-    }
-    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.4, 0.4), M.metal);
-    strap.position.set(-0.12, 0.66, side * 0.3);
-    t.add(strap);
+    const run = new THREE.Mesh(runGeo, M.cryo);
+    run.position.set(-0.14, 0.705, side * 0.1);
+    t.add(run);
   }
 
-  // side intakes
-  const intakeGeo = new THREE.BoxGeometry(0.5, 0.34, 0.2);
+  // shoulder plates tying the housing into the shroud
+  const plateGeo = new THREE.BoxGeometry(0.42, 0.3, 0.1);
   for (const side of [-1, 1]) {
-    const intake = new THREE.Mesh(intakeGeo, M.turret);
-    intake.position.set(0.42, 0.32, side * 0.62);
-    intake.rotation.y = -side * 0.35;
-    t.add(intake);
+    const plate = new THREE.Mesh(plateGeo, M.turret);
+    plate.position.set(0.6, 0.3, side * 0.42);
+    plate.rotation.z = 0.12;
+    t.add(plate);
   }
 
   const pitchGroup = new THREE.Group();
-  pitchGroup.position.set(0.85, 0.4, 0);
+  pitchGroup.position.set(0.8, 0.34, 0);
   t.add(pitchGroup);
 
-  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 0.62), M.turret);
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.46, 0.68), M.turret);
   pitchGroup.add(mantlet);
 
   const gun = new THREE.Group();
   pitchGroup.add(gun);
 
-  // heat-exchanger core
-  const coreGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.95, 16);
-  coreGeo.rotateZ(Math.PI / 2);
-  const core = new THREE.Mesh(coreGeo, M.barrel);
-  core.position.set(0.52, 0.02, 0);
-  gun.add(core);
+  // octagonal shroud
+  const shroudGeo = new THREE.CylinderGeometry(0.2, 0.2, 1.12, 8);
+  shroudGeo.rotateZ(Math.PI / 2);
+  const shroud = new THREE.Mesh(shroudGeo, M.barrel);
+  shroud.position.set(0.62, 0.02, 0);
+  gun.add(shroud);
 
-  // cooling fins
-  const finGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.05, 18);
-  finGeo.rotateZ(Math.PI / 2);
-  for (const x of [0.24, 0.44, 0.64, 0.84]) {
-    const fin = new THREE.Mesh(finGeo, M.metal);
-    fin.position.set(x, 0.02, 0);
-    gun.add(fin);
+  // frost vents cut along the top and sides near the tip
+  const ventGeo = new THREE.BoxGeometry(0.34, 0.035, 0.075);
+  for (const [x, ang] of [[0.72, 0], [0.95, 0], [0.72, 2.09], [0.95, 2.09], [0.72, -2.09], [0.95, -2.09]]) {
+    const vent = new THREE.Mesh(ventGeo, M.cryo);
+    vent.position.set(x, 0.02 + Math.cos(ang) * 0.2, Math.sin(ang) * 0.2);
+    vent.rotation.x = ang;
+    gun.add(vent);
   }
 
-  // flared nozzle + glowing throat
-  const nozzleGeo = new THREE.CylinderGeometry(0.34, 0.15, 0.5, 20, 1, true);
-  nozzleGeo.rotateZ(-Math.PI / 2);
-  const nozzle = new THREE.Mesh(nozzleGeo, M.barrel);
-  nozzle.material.side = THREE.DoubleSide;
-  nozzle.position.set(1.24, 0.02, 0);
-  gun.add(nozzle);
+  // muzzle collar + tapered emitter (narrows to the tip, no funnel)
+  const collarGeo = new THREE.CylinderGeometry(0.235, 0.235, 0.1, 8);
+  collarGeo.rotateZ(Math.PI / 2);
+  const ring = new THREE.Mesh(collarGeo, M.metal);
+  ring.position.set(1.2, 0.02, 0);
+  gun.add(ring);
 
-  const throatGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.06, 18);
-  throatGeo.rotateZ(Math.PI / 2);
-  const throat = new THREE.Mesh(throatGeo, M.cryo);
-  throat.position.set(1.0, 0.02, 0);
-  gun.add(throat);
+  const emitterGeo = new THREE.CylinderGeometry(0.175, 0.105, 0.4, 8);
+  emitterGeo.rotateZ(Math.PI / 2);
+  const emitter = new THREE.Mesh(emitterGeo, M.barrel);
+  emitter.position.set(1.44, 0.02, 0);
+  gun.add(emitter);
+
+  // feed pipe slung under the shroud
+  const pipeGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.8, 10);
+  pipeGeo.rotateZ(Math.PI / 2);
+  const pipe = new THREE.Mesh(pipeGeo, M.metal);
+  pipe.position.set(0.55, -0.16, 0);
+  gun.add(pipe);
 
   const muzzle = new THREE.Object3D();
-  muzzle.position.set(1.5, 0.02, 0);
+  muzzle.position.set(1.66, 0.02, 0);
   gun.add(muzzle);
 
   return { turret: t, pitchGroup, gun, muzzle };

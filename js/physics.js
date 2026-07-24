@@ -132,12 +132,29 @@ export function createPhysics() {
     world.removeBody(body);
   }
 
-  // Ray straight down from a point — used for the grounded check
+  // ---- grounded test -------------------------------------------------------
+  // Contacts from the solver are the authoritative answer: if the chassis is
+  // resting on anything with a roughly upward normal, it's on the ground. A
+  // downward ray is only a backup for the frame after a teleport, when no
+  // contact has been generated yet. (A lone ray used to be the only test —
+  // one missed frame silently cut all drive force and froze the tank.)
   const _ray = new CANNON.Ray();
   const _rayResult = new CANNON.RaycastResult();
-  function groundedAt(pos, reach) {
-    _ray.from.copy(pos);
-    _ray.to.set(pos.x, pos.y - reach, pos.z);
+
+  function contactGrounded(body) {
+    for (const c of world.contacts) {
+      if (c.bi === body) {
+        if (c.ni.y < -0.4) return true; // normal points body -> ground
+      } else if (c.bj === body) {
+        if (c.ni.y > 0.4) return true; // normal points ground -> body
+      }
+    }
+    return false;
+  }
+
+  function rayHits(x, y, z, reach) {
+    _ray.from.set(x, y, z);
+    _ray.to.set(x, y - reach, z);
     _rayResult.reset();
     _ray.intersectWorld(world, {
       mode: CANNON.Ray.CLOSEST,
@@ -146,6 +163,20 @@ export function createPhysics() {
       collisionFilterMask: GROUP_STATIC | GROUP_REMOTE,
     });
     return _rayResult.hasHit;
+  }
+
+  function groundedAt(pos, reach, body) {
+    if (body && contactGrounded(body)) return true;
+    // start the probe just inside the hull so a resting tank always registers
+    const y = pos.y + 0.25;
+    const r = reach + 0.25;
+    return (
+      rayHits(pos.x, y, pos.z, r) ||
+      rayHits(pos.x + 1.4, y, pos.z, r) ||
+      rayHits(pos.x - 1.4, y, pos.z, r) ||
+      rayHits(pos.x, y, pos.z + 1.0, r) ||
+      rayHits(pos.x, y, pos.z - 1.0, r)
+    );
   }
 
   let arenaActive = true;

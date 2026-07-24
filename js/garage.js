@@ -129,7 +129,6 @@ export function createGarage({ scene, fx, audio, bullets }) {
   // ---- cryo stream (test-fire in the bay) ---------------------------------
   let fuel = 100;
   let streaming = false;
-  let rechargePause = 0;
 
   function setStream(on) {
     if (!model.hasStream()) return;
@@ -140,14 +139,12 @@ export function createGarage({ scene, fx, audio, bullets }) {
     const spec = TURRET_SPECS.arctic;
     if (streaming && fuel > 0) {
       fuel = Math.max(0, fuel - spec.fuelDrain * dt);
-      rechargePause = spec.rechargeDelay;
       if (fuel === 0) streaming = false;
       // the projector shoves back gently while it pours
       pitchVel += 1.1 * dt;
       squatVel -= 0.35 * dt;
     } else {
-      rechargePause = Math.max(0, rechargePause - dt);
-      if (rechargePause === 0) fuel = Math.min(100, fuel + spec.fuelRecharge * dt);
+      fuel = Math.min(100, fuel + spec.fuelRecharge * dt);
     }
     model.setStream(streaming && fuel > 0);
     model.updateStream(dt);
@@ -197,7 +194,6 @@ export function createGarage({ scene, fx, audio, bullets }) {
     model.setTurret(currentTurret());
     fuel = 100;
     streaming = false;
-    rechargePause = 0;
     cooldown = 0;
     gunRecoil = 0;
     pitch = 0;

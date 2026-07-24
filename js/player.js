@@ -14,6 +14,7 @@ const GROUND_REACH = CHASSIS.hy - CHASSIS.shapeOffY + 0.38;
 export function createPlayerController(model, physics) {
   const body = physics.createChassis();
   let slowMul = 1; // 1 = normal, 0.5 = fully frozen
+  let airborne = 0; // seconds since the last confirmed ground contact
 
   const state = {
     v: 0, // forward ground speed (HUD, engine, treads)
@@ -56,6 +57,8 @@ export function createPlayerController(model, physics) {
     state.turretYaw = 0;
     state.pitch = 0;
     state.flipT = 0;
+    airborne = 0;
+    slowMul = 1;
     model.gun.position.x = 0;
     model.turret.rotation.y = 0;
     model.pitchGroup.rotation.z = 0;
@@ -89,7 +92,11 @@ export function createPlayerController(model, physics) {
     _right.set(0, 0, 1).applyQuaternion(_q);
     _up.set(0, 1, 0).applyQuaternion(_q);
 
-    state.grounded = physics.groundedAt(body.position, GROUND_REACH);
+    // coyote time: keep drive authority through brief contact dropouts
+    // (cresting a ramp, rolling over a seam) instead of going inert
+    if (physics.groundedAt(body.position, GROUND_REACH, body)) airborne = 0;
+    else airborne += dt;
+    state.grounded = airborne < 0.16;
     state.upright = _up.y > 0.55;
     if (_up.y < 0.25) state.flipT += dt;
     else state.flipT = 0;
@@ -163,6 +170,6 @@ export function createPlayerController(model, physics) {
 
   return {
     state, body, update, postStep, reset, applyRecoil,
-    setSlow(mul) { slowMul = mul; },
+    setSlow(mul) { slowMul = Number.isFinite(mul) ? Math.min(1, Math.max(0.35, mul)) : 1; },
   };
 }

@@ -223,19 +223,6 @@ export function createCryoBeam() {
   motes.frustumCulled = false;
   group.add(motes);
 
-  // ---- nozzle glow ---------------------------------------------------------
-  const glowMat = new THREE.SpriteMaterial({
-    color: 0xbfe6ff,
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const glow = new THREE.Sprite(glowMat);
-  glow.scale.setScalar(1.1);
-  glow.position.x = 0.05;
-  group.add(glow);
-
   let intensity = 0; // eased 0..1 so the stream spools up and trails off
 
   function update(dt, on) {
@@ -252,9 +239,6 @@ export function createCryoBeam() {
       mats[i].uniforms.uTime.value += dt;
       mats[i].uniforms.uIntensity.value = mats[i].userData.baseOpacity * intensity;
     }
-    glowMat.opacity = 0.55 * intensity;
-    glow.scale.setScalar(0.9 + 0.35 * Math.sin(performance.now() * 0.006) * intensity + 0.3 * intensity);
-
     for (let i = 0; i < COUNT; i++) {
       life[i] -= dt;
       if (life[i] <= 0) {
