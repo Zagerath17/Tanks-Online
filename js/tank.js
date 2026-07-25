@@ -339,7 +339,7 @@ export const TURRET_SPECS = {
     mode: 'projectile', fireInterval: 2.5, damage: 200, projectile: 'shell',
     // Backward impulse at the muzzle, in metres per second of hull velocity.
     // A 200 mm gun shoves its own tank hard; this is deliberately heavy.
-    recoilKick: 4.5,   // the main gun really shoves
+    recoilKick: 1.75,  // 70% of the Thunderbolt's base kick (2.5)
   },
   // Thunderbolt: a heavy assault gun that fires when you LET GO, and that
   // will trade a shot for a much bigger one if you are willing to stand still

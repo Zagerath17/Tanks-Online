@@ -35,7 +35,7 @@ const FADE = 6;
 // One track imprint, three grousers long. The quad's baked rotations put
 // texture v along the direction of travel and u across the track, so the
 // grouser bands are stacked up the canvas and span its width.
-const BARS = 3;
+const BARS = 2;  // shorter stamps follow a turning arc far more closely
 
 function makeTreadTexture() {
   const w = 96;   // across the track
@@ -170,13 +170,16 @@ export function createTreadMarks(scene) {
   const _pos = new THREE.Vector3();
   const _quat = new THREE.Quaternion();
   const _scale = new THREE.Vector3();
-  const _yAxis = new THREE.Vector3(0, 1, 0);
+  const _euler = new THREE.Euler();
 
-  function stamp(x, y, z, heading, width, length) {
+  function stamp(x, y, z, heading, width, length, tilt = 0) {
     const i = next % MAX;
     next++;
     _pos.set(x, y, z);
-    _quat.setFromAxisAngle(_yAxis, heading);
+    // yaw to face the way the track was going, then pitch to lie ON the
+    // slope rather than hovering flat over it
+    _euler.set(0, heading, tilt, 'YZX');
+    _quat.setFromEuler(_euler);
     _scale.set(length, 1, width);
     _m.compose(_pos, _quat, _scale);
     mesh.setMatrixAt(i, _m);
@@ -213,7 +216,28 @@ export function createTreadMarks(scene) {
     // Airborne, or standing still: hold the anchors exactly where they are
     // and wait. Distance keeps accruing across the dropout, which is what
     // makes this survive the contact signal flickering.
-    if (!onGround || moved <= 0) return;
+    // Off the ground: hold briefly, because the contact signal flickers over
+    // seams and crests and losing the anchor there starves the emitter. But
+    // past a fraction of a second the tank is genuinely airborne, and the
+    // anchor is moved so that landing does not paint a stripe through the air
+    // along everywhere it flew.
+    if (!onGround) {
+      e.air = (e.air || 0) + (moved > 0 ? 0.016 : 0.016);
+      if (e.air > 0.15) {
+        for (let i = 0; i < 2; i++) {
+          const az = (i === 0 ? -1 : 1) * tread.z;
+          const r = e.rails[i];
+          if (r) {
+            r.x = model.root.position.x + rx * az;
+            r.z = model.root.position.z + rz * az;
+            r.y = groundY;
+          }
+        }
+      }
+      return;
+    }
+    e.air = 0;
+    if (moved <= 0) return;
 
     // EACH TRACK KEEPS ITS OWN ANCHOR.
     //
@@ -255,17 +279,27 @@ export function createTreadMarks(scene) {
       }
 
       const total = Math.hypot(tx - a.x, tz - a.z);
+      // Lay each stamp along the direction this track ACTUALLY travelled over
+      // the span, not along the hull's heading. Consecutive rectangles then
+      // share an edge instead of each pivoting about its own centre, which is
+      // what made a turn read as a run of loose blocks.
+      const segHeading = Math.atan2(-uz, ux);
+      // ...and pitch it onto the slope it crossed, so marks lie on a ramp
+      // instead of hovering flat above it
+      const climb = groundY - a.y;
+      const tilt = Math.atan2(climb, Math.max(total, 0.001));
       let walked = 0;
       while (total - walked >= span) {
         walked += span;
         const t = walked / total;
         stamp(
           a.x + ux * walked,
-          a.y + (groundY - a.y) * t + 0.015,
+          a.y + climb * t + 0.015,
           a.z + uz * walked,
-          heading,
+          segHeading,
           width,
-          span * 1.06 // slight overlap, so there is never a seam
+          span * 1.14, // short stamps need more overlap to hide the joins
+          tilt
         );
       }
       // carry the remainder, so the next mark lands exactly one span on

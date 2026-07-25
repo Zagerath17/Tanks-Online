@@ -178,6 +178,16 @@ kbd {
   transition: background 120ms linear;
 }
 
+/* Thunderbolt takes the wide bottom bar, like the stream weapons */
+body.boltweapon #cryowrap { display: block; }
+body.boltweapon #reloadwrap { display: none; }
+body.boltweapon #cryofill { background: var(--olive-400); }
+body.boltweapon #cryofill.charging { background: #d8b23a; }
+body.boltweapon #cryofill.charged {
+  background: #7a2f12;
+  box-shadow: 0 0 8px rgba(220, 108, 40, 0.9);
+}
+
 /* Thunderbolt: filling toward a banked shot, then holding one */
 #reload.charging { background: #d8b23a; }
 #reload.charged {

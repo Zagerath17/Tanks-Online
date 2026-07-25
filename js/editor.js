@@ -47,6 +47,8 @@ function slopeHeight(d) {
 // the same height have lines that carry straight across the join.
 const _wp = new THREE.Vector3();
 const _wn = new THREE.Vector3();
+const _t1 = new THREE.Vector3();
+const _t2 = new THREE.Vector3();
 const _nm = new THREE.Matrix3();
 
 function worldAlignUVs(mesh) {
@@ -67,7 +69,19 @@ function worldAlignUVs(mesh) {
     // project along whichever world axis the face points down most
     // One texture tile is GRID_TILE world units, exactly as on the ground, so
     // cells are the same size and land on the same world lines everywhere.
-    if (ay >= ax && ay >= az) uv.setXY(i, _wp.x / GRID_TILE, _wp.z / GRID_TILE);
+    //
+    // Flat and vertical faces can just drop an axis. A SLOPE cannot: dropping
+    // Y projects its incline from above, which stretches every cell by
+    // 1 / cos(angle) along the gradient and is why ramps never matched the
+    // walls next to them. Tilted faces get a proper in-plane frame instead —
+    // one axis horizontal across the slope, one running up it — so the cells
+    // come out square and still line up with the floor along the bottom edge.
+    const tilted = ay > 0.08 && ay < 0.985;
+    if (tilted) {
+      _t1.set(0, 1, 0).cross(_wn).normalize();     // across the slope
+      _t2.copy(_wn).cross(_t1).normalize();        // up the slope
+      uv.setXY(i, _wp.dot(_t1) / GRID_TILE, _wp.dot(_t2) / GRID_TILE);
+    } else if (ay >= ax && ay >= az) uv.setXY(i, _wp.x / GRID_TILE, _wp.z / GRID_TILE);
     else if (ax >= az) uv.setXY(i, _wp.z / GRID_TILE, _wp.y / GRID_TILE);
     else uv.setXY(i, _wp.x / GRID_TILE, _wp.y / GRID_TILE);
   }
@@ -814,6 +828,10 @@ export function createEditor({ scene, physics }) {
   return {
     enter, exit,
     setTool, rotateGhost, adjust, setDecalShape, setDecalColor,
+    // where the placement ghost is sitting, so other systems can drop things
+    // at the spot the player is actually aiming at
+    ghostPoint: () => (ghost.visible ? ghost.position.clone() : null),
+    ghostYaw: () => ghost.rotation.y,
     updateGhost, hideGhost, place, deleteAtCursor, clearAll,
     solidAt, getSpawns, serialize, loadData,
     getTool: () => tool,

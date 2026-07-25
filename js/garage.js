@@ -38,23 +38,24 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // Worn bay concrete, laid out in 2 m slabs, and a chequer-plate deck. The
   // floor and the platform were both flat colour before, which made the room
   // read as cardboard next to the tank standing on it.
+  // Poured concrete: grain and staining, no ruled lines. It was a grid
+  // before, which made the floor read as tiling rather than as a slab.
   const concrete = new THREE.MeshStandardMaterial({
-    map: makeGridTexture({
-      cells: 2, base: '#33383f', line: '#2b3037', lineWidth: 3,
-      major: 4, majorLine: '#262b31', majorWidth: 5,
+    map: makeMetalTexture({
+      base: '#3a3f46', shade: '#31363c', grain: 0.7, wear: 2.8,
       repeat: [BAY_TILES_X, BAY_TILES_Z], anisotropy: 16,
     }),
-    roughness: 0.96,
+    roughness: 0.98, metalness: 0.03,
   });
   // Painted blockwork: coursed, so the walls read as built rather than as
   // flat panels standing behind the tank.
+  // Painted steel panelling. Metal, not a ruled grid.
   const painted = new THREE.MeshStandardMaterial({
-    map: makeGridTexture({
-      cells: 3, base: '#3d444c', line: '#353b43', lineWidth: 2,
-      major: 6, majorLine: '#2f353c', majorWidth: 4,
-      repeat: [10, 4], anisotropy: 16,
+    map: makeMetalTexture({
+      base: '#464e57', shade: '#3a414a', grain: 2.2, wear: 1.5,
+      repeat: [7, 3], anisotropy: 16,
     }),
-    roughness: 0.85, metalness: 0.1,
+    roughness: 0.62, metalness: 0.55,
   });
   const steel = new THREE.MeshStandardMaterial({
     map: makeMetalTexture({ base: '#4a5159', shade: '#3e444b', grain: 1.4, wear: 1.2, repeat: [2, 2] }),
@@ -65,9 +66,11 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     roughness: 0.6, metalness: 0.6,
   });
   const rubber = new THREE.MeshStandardMaterial({ color: '#1d2024', roughness: 0.9 });
+  // Was hazard yellow; now dark machined steel, which sits better against
+  // the concrete and stops the bay reading as a construction site.
   const hazard = new THREE.MeshStandardMaterial({
-    map: makeMetalTexture({ base: '#b9962c', shade: '#96771f', grain: 0.8, wear: 2.4, repeat: [3, 1] }),
-    roughness: 0.8,
+    map: makeMetalTexture({ base: '#3c4148', shade: '#2e3238', grain: 1.4, wear: 1.8, repeat: [3, 1] }),
+    roughness: 0.42, metalness: 0.8,
   });
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), concrete);
@@ -421,25 +424,8 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     group.add(beam);
   }
 
-  // overhead gantry crane on rails, hook hanging over the tank
-  const railL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, BAY.d - 1), steel);
-  railL.position.set(-7.5, BAY.h - 1.1, 0);
-  const railR = railL.clone();
-  railR.position.x = 7.5;
-  group.add(railL, railR);
-
-  const bridge = new THREE.Mesh(new THREE.BoxGeometry(16.4, 0.55, 0.9), steel);
-  bridge.position.set(0, BAY.h - 1.6, -1.5);
-  group.add(bridge);
-  const trolley = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 1.3), darkSteel);
-  trolley.position.set(1.2, BAY.h - 2.2, -1.5);
-  group.add(trolley);
-  const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 3.6, 6), darkSteel);
-  cable.position.set(1.2, BAY.h - 4.3, -1.5);
-  group.add(cable);
-  const hook = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.07, 8, 14), steel);
-  hook.position.set(1.2, BAY.h - 6.2, -1.5);
-  group.add(hook);
+  // (the overhead gantry used to live here; the extractor fan owns this
+  // space now, and the two fouled each other)
 
   // strip lights under the beams
   const lampMat = new THREE.MeshStandardMaterial({
@@ -563,13 +549,19 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // toolbox trolleys either side of the stand
   for (const [x, z, ry] of [[-8.6, 6.5, 0.4], [8.8, 6.2, -0.5]]) {
     const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 0.8), hazard);
-    box.position.set(x, 0.68, z);
+    box.position.set(x, 0.55, z); // 1.1 tall, so this sits it ON the floor
     box.rotation.y = ry;
     box.castShadow = true;
     group.add(box);
     for (let d = 0; d < 3; d++) {
       const drawer = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.06, 0.06), darkSteel);
-      drawer.position.set(x, 0.35 + d * 0.32, z + 0.42 * Math.cos(ry));
+      // the face of the box, found through its own rotation — using cos(ry)
+      // alone left these hanging in space next to a turned trolley
+      drawer.position.set(
+        x + Math.sin(ry) * 0.41,
+        0.22 + d * 0.32,
+        z + Math.cos(ry) * 0.41
+      );
       drawer.rotation.y = ry;
       group.add(drawer);
     }
@@ -582,12 +574,11 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   const fanBlades = [];
   {
     const ceilMat = new THREE.MeshStandardMaterial({
-      map: makeGridTexture({
-        cells: 2, base: '#5a6169', line: '#4b525a', lineWidth: 3,
-        major: 4, majorLine: '#414850', majorWidth: 5,
-        repeat: [BAY_TILES_X, BAY_TILES_Z], anisotropy: 16,
+      map: makeMetalTexture({
+        base: '#525a63', shade: '#454c55', grain: 2.6, wear: 1.3,
+        repeat: [8, 9], anisotropy: 16,
       }),
-      roughness: 0.9, metalness: 0.12, side: THREE.DoubleSide,
+      roughness: 0.7, metalness: 0.45, side: THREE.DoubleSide,
     });
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), ceilMat);
     ceil.rotation.x = Math.PI / 2;
@@ -903,7 +894,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
         // No overhang on sloped runs: the +0.3 that hides seams on the flat
         // carries a tilted quad straight off the end of the ramp and leaves
         // it hanging in the air above the deck.
-        const geo = new THREE.PlaneGeometry(WIDE, len + (Math.abs(tilt) > 0.01 ? -0.06 : 0.3));
+        const geo = new THREE.PlaneGeometry(WIDE, len + (Math.abs(tilt) > 0.01 ? -0.06 : 0.08));
         const m = new THREE.Mesh(geo, mat);
         m.rotation.order = 'YXZ';
         m.rotation.y = heading;
@@ -925,7 +916,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     const zRampBase = STAND.halfZ + RAMP.len;
     lane(0, zApron, 0, zRampBase, 0, 0, 0.85);
     lane(0, zRampBase, 0, STAND.halfZ, 0, STAND.y, 0.85);
-    lane(0, STAND.halfZ - 0.05, 0, -STAND.halfZ + 1.4, STAND.y, STAND.y, 0.85);
+    lane(0, STAND.halfZ - 0.3, 0, -STAND.halfZ + 1.4, STAND.y, STAND.y, 0.85);
 
     // more traffic across the deck itself: shunted about, turned around, and
     // reversed off the back at some point
@@ -977,7 +968,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // hazard stripe painted on the floor around the working area
   {
     const paint = new THREE.MeshBasicMaterial({
-      color: '#b9962c', transparent: true, opacity: 0.5,
+      color: '#4a5058', transparent: true, opacity: 0.55,
     });
     const outX = STAND.halfX + 1.9;
     const outZ = STAND.halfZ + 2.4;

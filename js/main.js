@@ -844,13 +844,20 @@ window.addEventListener('keydown', (e) => {
   // clears the lot.
   else if (e.code === 'Digit6' || e.code === 'Digit7') {
     const hostile = e.code === 'Digit6';
+    // dropped where the placement ghost is, exactly like a wall or a slope;
+    // if there is no ghost (not aiming at anything) it goes out in front
+    const at = editor.ghostPoint();
     const h = player.state.heading;
-    dummies.add(
-      playerModel.root.position.x + Math.cos(h) * 18,
-      playerModel.root.position.z - Math.sin(h) * 18,
-      h + Math.PI,
-      !hostile
-    );
+    if (at) {
+      dummies.add(at.x, at.z, editor.ghostYaw(), !hostile);
+    } else {
+      dummies.add(
+        playerModel.root.position.x + Math.cos(h) * 18,
+        playerModel.root.position.z - Math.sin(h) * 18,
+        h + Math.PI,
+        !hostile
+      );
+    }
 
   } else if (e.code === 'Digit8') {
     dummies.clear();
@@ -1141,7 +1148,11 @@ let myTeam = 0;
 function refreshWeaponHud() {
   const spec = energySpecOf(playerModel.turretId);
   const stream = streamSpecOf(playerModel.turretId);
-  document.body.classList.toggle('streamweapon', !!spec);
+  // The Thunderbolt's charge belongs on the wide bottom bar with the other
+  // hold-to-use weapons, not on the little reload pip by the crosshair.
+  const boltGun = boltSpec(playerModel.turretId);
+  document.body.classList.toggle('boltweapon', !!boltGun);
+  document.body.classList.toggle('streamweapon', !!spec || !!boltGun);
   document.body.classList.toggle('flameweapon', !!stream && stream.element === 'flame');
   const beam = beamSpecOf(playerModel.turretId);
   document.body.classList.toggle('plasmaweapon', !!spec && !stream && !beam);
@@ -1434,7 +1445,9 @@ function pickAegisTarget(spec) {
 
   let best = null;
   let bestAngle = spec.lockAngle;
-  for (const ru of remote.targets()) {
+  // in the editor the only tanks around are the practice targets
+  const scan = phase === 'editor' ? dummies.targets() : remote.targets();
+  for (const ru of scan) {
     if (!ru.alive || !ru.model.root.visible) continue;
     _atv.copy(ru.pos);
     _atv.y += 1.0;
@@ -1496,8 +1509,14 @@ function updateAegis(dt) {
     aegis.tick -= dt;
     if (aegis.tick <= 0) {
       aegis.tick = spec.tickInterval;
-      if (!friendly) {
+      const onDummy = dummies.list.includes(aegis.lock);
+      if (friendly) {
+        // In a match the tank on the other end applies its own heal. A
+        // practice target has no other end, so do it here.
+        if (onDummy) dummies.heal(aegis.lock, spec.healTick);
+      } else {
         // the victim applies the damage themselves; we take the lifesteal
+        if (onDummy) dummies.damage(aegis.lock, spec.damageTick);
         localHeal(spec.damageTick * spec.lifestealFrac);
       }
     }
@@ -2065,12 +2084,12 @@ renderer.setAnimationLoop(() => {
         : (local.cooldown > 0
           ? 1 - Math.max(0, local.cooldown) / (local.lastInterval || bSpec.fireInterval)
           : Math.min(1, bolt.held / bSpec.chargeTime));
-      elReload.style.transform = `scaleX(${frac})`;
-      elReload.classList.toggle('charged', bolt.armed);
-      elReload.classList.toggle('charging', !bolt.armed && bolt.held > 0 && local.cooldown <= 0);
+      elCryoFill.style.transform = `scaleX(${frac})`;
+      elCryoFill.classList.toggle('charged', bolt.armed);
+      elCryoFill.classList.toggle('charging', !bolt.armed && bolt.held > 0 && local.cooldown <= 0);
     } else {
+      elCryoFill.classList.remove('charged', 'charging');
       elReload.style.transform = `scaleX(${1 - Math.max(0, local.cooldown) / fireIntervalOf(playerModel.turretId)})`;
-      elReload.classList.remove('charged', 'charging');
     }
     if (!local.alive) {
       elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(local.deadT))}`;

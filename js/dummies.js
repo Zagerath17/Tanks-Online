@@ -10,16 +10,13 @@ import { createTankModel, TURRET_SPECS, SKINS } from './tank.js';
 const HOSTILE_SKIN = 'crimson';
 const FRIENDLY_SKIN = 'forest';
 
-const AIM_RATE = 1.6;      // radians per second of turret traverse
 const FIRE_EVERY = 3.2;    // seconds between shots
-const RANGE = 70;          // won't bother shooting past this
 const HEALTH = 400;
 
 export function createDummies({ scene, physics, fx, audio, bullets }) {
   const list = [];
 
   const _p = new THREE.Vector3();
-  const _d = new THREE.Vector3();
   const _mp = new THREE.Vector3();
   const _md = new THREE.Vector3();
   const _q = new THREE.Quaternion();
@@ -48,6 +45,12 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
     const unit = {
       id: `dummy-${list.length}-${Math.random().toString(36).slice(2, 7)}`,
       friendly,
+      // the Aegis picks its lock out of a list of units, so a dummy has to
+      // look like one: a live world position, a team, and a health pool it
+      // can actually be topped back up into
+      pos: new THREE.Vector3(x, 0, z),
+      team: friendly ? 0 : 1,
+      maxHp: HEALTH,
       alive: true,
       hp: HEALTH,
       model,
@@ -59,6 +62,11 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
     };
     list.push(unit);
     return unit;
+  }
+
+  function heal(unit, amount) {
+    if (!unit || !unit.alive) return;
+    unit.hp = Math.min(HEALTH, unit.hp + amount);
   }
 
   function damage(unit, amount) {
@@ -104,25 +112,19 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
       root.quaternion.copy(_q);
       root.position.y -= u.model.chassis.hy - u.model.chassis.shapeOffY;
 
-      if (u.friendly || !playerAlive || !playerPos) {
-        u.model.turret.rotation.y = u.turretYaw;
-        continue;
-      }
+      u.pos.copy(root.position);
 
-      // traverse toward the player, then fire when it's lined up
-      _d.copy(playerPos).sub(root.position);
-      const dist = Math.hypot(_d.x, _d.z);
-      const want = Math.atan2(-_d.z, _d.x) - root.rotation.y;
-      let delta = ((want - u.turretYaw + Math.PI) % (Math.PI * 2)) - Math.PI;
-      if (delta < -Math.PI) delta += Math.PI * 2;
-      const step = Math.min(Math.abs(delta), AIM_RATE * dt) * Math.sign(delta);
-      u.turretYaw += step;
-      const pitch = Math.atan2(_d.y + 0.6, Math.max(0.5, dist));
-      u.model.turret.rotation.y = u.turretYaw;
-      u.model.pitchGroup.rotation.z = THREE.MathUtils.clamp(pitch, -0.2, 0.35);
+      // The turret is welded straight ahead. It does not track you: this is a
+      // range target that puts a round down its own centreline on a timer, so
+      // where you choose to stand relative to it is your problem. Point one
+      // at a friendly and it will shoot that instead — the shells are solid
+      // against anything in the target list bar the tank that fired them.
+      u.model.turret.rotation.y = 0;
+      u.model.pitchGroup.rotation.z = 0;
+      if (u.friendly) continue;
 
       u.cooldown -= dt;
-      if (u.cooldown <= 0 && dist < RANGE && Math.abs(delta) < 0.06) {
+      if (u.cooldown <= 0) {
         u.cooldown = FIRE_EVERY;
         u.model.muzzle.getWorldPosition(_mp);
         u.model.muzzle.getWorldQuaternion(_q);
@@ -147,5 +149,5 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
     return list.length;
   }
 
-  return { add, update, targets, damage, clear, count, list };
+  return { add, update, targets, damage, heal, clear, count, list };
 }
