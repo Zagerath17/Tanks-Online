@@ -6,6 +6,7 @@ import { heightAt } from './map.js';
 export const AIM_PITCH = { min: -0.12, max: 0.17 };
 
 const TURRET_RATE = 2.2; // rad/s traverse — the turret chases the aim
+const TURRET_DEADZONE = 0.0025; // rad (~0.14 deg): below this, hold still
 const PITCH_RATE = 1.1;
 
 export function createPlayerController(model, physics) {
@@ -46,12 +47,16 @@ export function createPlayerController(model, physics) {
   const _rel = new CANNON.Vec3();
   const _cn = new THREE.Vector3();
   const _fwdAxis = new THREE.Vector3();
+  const _pitchAxis = new THREE.Vector3();
 
   // seconds after a shot during which the drive controller keeps its hands
   // off the forward velocity, so recoil is something you feel
   const RECOIL_FREE = 0.42;
   // how much of a broadside shot's roll the suspension eats
   const ROLL_ABSORB = 0.82;
+  const PITCH_CAP = 0.75;       // rad/s: rears up, doesn't take off
+  const RECOIL_LIFT_CAP = 0.6;  // m/s upward the kick may ever impart
+  const RECOIL_DAMP = 0.45;     // how much of the damper survives the shot
   let recoilT = 0;
 
 
@@ -127,6 +132,25 @@ export function createPlayerController(model, physics) {
     av.y -= _fwdAxis.y * shed;
     av.z -= _fwdAxis.z * shed;
 
+    // Pitch is the component that reads, but it also has the longest lever:
+    // the muzzle is metres forward of the centre of mass and well above it,
+    // so a shot straight down the hull's axis puts everything into pitch and
+    // used to throw the whole tank off the ground. Cap the rate so it rears
+    // and settles instead of launching. (Firing across the hull barely
+    // touches pitch, which is why only forward and back shots bucked.)
+    _pitchAxis.set(0, 0, 1).applyQuaternion(_q);
+    const pitch = av.x * _pitchAxis.x + av.y * _pitchAxis.y + av.z * _pitchAxis.z;
+    const over = Math.abs(pitch) - PITCH_CAP;
+    if (over > 0) {
+      const trim = Math.sign(pitch) * over;
+      av.x -= _pitchAxis.x * trim;
+      av.y -= _pitchAxis.y * trim;
+      av.z -= _pitchAxis.z * trim;
+    }
+
+    // and never let a shot fling the hull upward off its tracks
+    if (body.velocity.y > RECOIL_LIFT_CAP) body.velocity.y = RECOIL_LIFT_CAP;
+
     // let the shove actually land: the drive controller is suppressed for a
     // moment so it does not immediately cancel the recoil velocity
     recoilT = RECOIL_FREE;
@@ -151,9 +175,10 @@ export function createPlayerController(model, physics) {
   // hull's own up axis — while the tracks are down. This is what stops a
   // nudge from an edge or another tank from winding up into a somersault,
   // without touching how the tank behaves once it is actually airborne.
-  function dampTumble(dt) {
+  // scale lets the recoil window damp partially rather than not at all
+  function dampTumble(dt, scale = 1) {
     const av = body.angularVelocity;
-    const k = Math.min(1, hull.move.stabilize * dt);
+    const k = Math.min(1, hull.move.stabilize * scale * dt);
     const upComp = av.x * _up.x + av.y * _up.y + av.z * _up.z;
     av.x -= (av.x - _up.x * upComp) * k;
     av.y -= (av.y - _up.y * upComp) * k;
@@ -233,10 +258,14 @@ export function createPlayerController(model, physics) {
       av.y += _up.y * dAv;
       av.z += _up.z * dAv;
 
-      // The tumble damper is what normally stops a clipped edge winding up
-      // into a somersault — but it also flattens the rear-up from a heavy
-      // gun. Let it off the leash for the same moment the recoil is landing.
-      if (touching && recoilT <= 0) dampTumble(dt);
+      // The tumble damper normally stops a clipped edge winding up into a
+      // somersault, and it would also flatten the rear-up from a heavy gun.
+      // It used to be switched off entirely while the recoil landed — which
+      // left the hull pitching unopposed for the best part of half a second,
+      // digging its rear in hard enough that the contact solver threw the
+      // whole tank into the air. Easing it off instead keeps the rear-up
+      // readable and still lets the shot settle.
+      if (touching) dampTumble(dt, recoilT > 0 ? RECOIL_DAMP : 1);
     } else {
       drive = measured; // airborne or flipped: the body is on its own
       if (touching) scrub(dt); // ...but a hull on its roof still drags
@@ -259,7 +288,12 @@ export function createPlayerController(model, physics) {
       );
       // a frozen tank swings its turret sluggishly too
       const traverse = TURRET_RATE * slowMul * dt;
-      state.turretYaw += THREE.MathUtils.clamp(yawErr, -traverse, traverse);
+      // Anything smaller than a sliver of one frame's traverse is noise in the
+      // aim solution, not an intent to move. Chasing it made the turret buzz
+      // while the hull was turning underneath it.
+      if (Math.abs(yawErr) > TURRET_DEADZONE) {
+        state.turretYaw += THREE.MathUtils.clamp(yawErr, -traverse, traverse);
+      }
       state.turretYaw = Math.atan2(Math.sin(state.turretYaw), Math.cos(state.turretYaw));
       const pt = THREE.MathUtils.clamp(aimPitch, AIM_PITCH.min, AIM_PITCH.max);
       const elevate = PITCH_RATE * slowMul * dt;

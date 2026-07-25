@@ -12,23 +12,29 @@ const HOLD = 20;
 const FADE = 6;
 // stamp length is set per hull from its own link pitch (see trail below)
 
-// REVERTED to the v0.28 implementation, deliberately and in full.
+// WHY THE EARLIER "FIXES" TO THIS FILE DREW NOTHING.
 //
-// Two rewrites of this file since then were, as far as every check I could
-// make could tell, more correct than this one — the grouser bars lay across
-// the track instead of along it, the stamps met instead of leaving gaps, and
-// the spacing was frame-rate independent. Neither of them drew anything on
-// screen. This one is wrong in all of those ways and it works, which beats
-// being right and invisible. Do not "fix" the rotateY below without checking
-// on a real GPU first: it is load-bearing.
+// Three attempts made the bars lie across the track and closed the gaps, and
+// all three rendered nothing. The texture and the geometry were never the
+// problem — the emitter was. Every one of those attempts anchored the trail
+// to the last stamp's position and reset that anchor whenever the tank lost
+// ground contact:
 //
-// One track imprint, three grousers long.
+//     if (!onGround) { anchor = tankPosition; return; }
 //
-// The quad's baked rotations mean texture **v** runs along the direction of
-// travel and **u** runs across the track. So the grouser bars are horizontal
-// bands stacked up the canvas (repeating along v), each spanning the full
-// width — that prints them across the track the way real links do. Getting
-// this the other way round prints lengthwise stripes instead.
+// player.js defines state.contact as "tracks actually touching something THIS
+// frame", and it flickers — that is exactly why drive authority needs coyote
+// time. So the anchor was being yanked back to the tank several times a
+// second and never got a full stamp-length away from it. Below about one
+// dropout in five frames the output falls off a cliff to zero marks. Not
+// fewer marks: none. Hence invisible.
+//
+// The rule this file now follows: a dropout SKIPS stamping, it never moves
+// the anchor. Only a real teleport does that.
+//
+// One track imprint, three grousers long. The quad's baked rotations put
+// texture v along the direction of travel and u across the track, so the
+// grouser bands are stacked up the canvas and span its width.
 const BARS = 3;
 
 function makeTreadTexture() {
@@ -60,14 +66,14 @@ function makeTreadTexture() {
     ctx.fillStyle = g;
     ctx.fillRect(4, y, w - 8, barH);
 
-    // the fine detail: each link's cleats, running across the track with the
-    // bar rather than along it
+    // the fine detail: each link's cleats, lying with the bar so they run
+    // across the track rather than along it
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
     for (let k = 0; k < 7; k++) {
       const x = 6 + k * ((w - 12) / 6.4);
       ctx.fillRect(x, y - pitch * 0.04, 1.5, barH + pitch * 0.08);
     }
-    // worn ends of the bar, so no two imprints read identically
+    // worn ends, so no two imprints read identically
     ctx.clearRect(4, y + Math.random() * barH * 0.6, 3 + Math.random() * 5, 2);
     ctx.clearRect(w - 8, y + Math.random() * barH * 0.6, 3 + Math.random() * 5, 2);
   }
@@ -80,7 +86,7 @@ function makeTreadTexture() {
   ctx.fillStyle = centre;
   ctx.fillRect(0, 0, w, h);
 
-  // soften the outer edges of the track (the u extremes)
+  // soften the outer edges of the track
   const edge = ctx.createLinearGradient(0, 0, w, 0);
   edge.addColorStop(0, 'rgba(0,0,0,1)');
   edge.addColorStop(0.10, 'rgba(0,0,0,0)');
@@ -92,7 +98,7 @@ function makeTreadTexture() {
   ctx.globalCompositeOperation = 'source-over';
 
   const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.ClampToEdgeWrapping; // across: one track, no repeat
+  tex.wrapS = THREE.ClampToEdgeWrapping; // across the track: no repeat
   tex.wrapT = THREE.RepeatWrapping;      // along travel: tiles link to link
   tex.anisotropy = 8;
   return tex;
@@ -180,12 +186,12 @@ export function createTreadMarks(scene) {
 
   // Lay marks under both tracks of a tank that's actually on the ground.
   // key identifies the tank so each one keeps its own spacing counter.
-  // Lay marks at exact intervals along the ground actually covered, rather
-  // than one per frame once enough distance has piled up. Stamping at the
-  // tank's current position meant the gap between stamps was the span PLUS
-  // however far the last frame moved — which is what broke the trail into
-  // dashes. Walking the path also means the spacing no longer depends on
-  // framerate at all.
+  // Marks are laid along the ground actually covered, at exact intervals, so
+  // the trail is continuous and its spacing doesn't depend on framerate.
+  //
+  // Read the note at the top of this file before touching the anchor logic:
+  // losing ground contact must SKIP a stamp, never move the anchor, or the
+  // emitter starves and draws nothing at all.
   function trail(key, model, groundY, heading, moved, onGround) {
     const tread = model.hull.tread;
     // one stamp covers exactly BARS links, so the printed grousers land at
@@ -197,58 +203,55 @@ export function createTreadMarks(scene) {
 
     let e = emitters.get(key);
     if (!e) {
-      e = { x: px, z: pz, y: groundY, started: false };
+      e = { x: px, z: pz, y: groundY };
       emitters.set(key, e);
     }
-    if (!onGround || moved <= 0) {
-      // keep the anchor with the tank so lifting off doesn't draw a streak
-      e.x = px;
-      e.z = pz;
-      e.y = groundY;
-      return;
-    }
 
-    let dx = px - e.x;
-    let dz = pz - e.z;
-    let dist = Math.hypot(dx, dz);
-    if (dist < 1e-6) return;
+    // Airborne, or standing still: hold the anchor exactly where it is and
+    // wait. Distance keeps accruing across the dropout, which is what makes
+    // this survive the contact signal flickering.
+    if (!onGround || moved <= 0) return;
 
-    // a big jump means a respawn or a teleport: reset rather than paint a line
-    if (dist > span * 12) {
-      e.x = px;
-      e.z = pz;
-      e.y = groundY;
-      return;
-    }
+    const dx = px - e.x;
+    const dz = pz - e.z;
+    const dist = Math.hypot(dx, dz);
     if (dist < span) return;
 
     const ux = dx / dist;
     const uz = dz / dist;
+
+    // A jump far larger than a few frames of driving means a respawn, a
+    // teleport, or a long flight — resume a span behind the tank rather than
+    // painting a stripe across everything in between.
+    if (dist > span * 5) {
+      e.x = px - ux * span;
+      e.z = pz - uz * span;
+      e.y = groundY;
+    }
+
     const rx = Math.sin(heading);
     const rz = Math.cos(heading);
-
+    const total = Math.hypot(px - e.x, pz - e.z);
     let walked = 0;
-    while (dist - walked >= span) {
+    while (total - walked >= span) {
       walked += span;
-      const cx = e.x + ux * walked;
-      const cz = e.z + uz * walked;
-      const cy = e.y + (groundY - e.y) * (walked / dist);
+      const t = walked / total;
       for (const side of [-1, 1]) {
         const oz = side * tread.z;
         stamp(
-          cx + rx * oz,
-          cy + 0.015,
-          cz + rz * oz,
+          e.x + ux * walked + rx * oz,
+          e.y + (groundY - e.y) * t + 0.015,
+          e.z + uz * walked + rz * oz,
           heading,
           width,
           span * 1.06 // slight overlap, so there is never a seam
         );
       }
     }
-    // carry the leftover so the next stamp lands exactly one span on
+    // carry the remainder, so the next mark lands exactly one span on
+    e.y += (groundY - e.y) * (walked / total);
     e.x += ux * walked;
     e.z += uz * walked;
-    e.y += (groundY - e.y) * (walked / dist);
   }
 
   function forget(key) {

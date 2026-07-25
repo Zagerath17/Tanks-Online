@@ -71,6 +71,266 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     group.add(wall);
   }
 
+  // ---- wall furniture ------------------------------------------------------
+  // Ribbed panelling low down, services run high, and the sort of fittings
+  // that accumulate on the walls of somewhere tanks actually get worked on.
+  {
+    const HALF_W = BAY.w / 2 - 0.22;
+    const HALF_D = BAY.d / 2 - 0.22;
+
+    const rib = new THREE.MeshStandardMaterial({ color: '#454c55', roughness: 0.8, metalness: 0.2 });
+    const pipeMat = new THREE.MeshStandardMaterial({ color: '#5a626b', roughness: 0.45, metalness: 0.7 });
+    const ductMat = new THREE.MeshStandardMaterial({ color: '#6a7078', roughness: 0.6, metalness: 0.4 });
+    const boxMat = new THREE.MeshStandardMaterial({ color: '#3a4048', roughness: 0.7, metalness: 0.35 });
+    const redMat = new THREE.MeshStandardMaterial({ color: '#8e2f26', roughness: 0.6, metalness: 0.2 });
+    const signMat = new THREE.MeshStandardMaterial({
+      color: '#c8b34a', emissive: '#4a4020', emissiveIntensity: 0.4, roughness: 0.7,
+    });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: '#9fb6c6', emissive: '#8fa8bd', emissiveIntensity: 0.55,
+      roughness: 0.35, metalness: 0.1, transparent: true, opacity: 0.5,
+    });
+
+    // dado rail and a kick plate along each side wall
+    for (const sx of [-1, 1]) {
+      const dado = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, BAY.d - 1), rib);
+      dado.position.set(sx * HALF_W, 2.5, 0);
+      group.add(dado);
+      const kick = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.5, BAY.d - 1), boxMat);
+      kick.position.set(sx * HALF_W, 0.25, 0);
+      group.add(kick);
+      // vertical ribs between floor and dado
+      for (let i = -7; i <= 7; i++) {
+        const r = new THREE.Mesh(new THREE.BoxGeometry(0.09, 2.0, 0.16), rib);
+        r.position.set(sx * HALF_W, 1.45, i * 2.1);
+        group.add(r);
+      }
+    }
+
+    // back wall gets the same treatment
+    {
+      const dado = new THREE.Mesh(new THREE.BoxGeometry(BAY.w - 1, 0.14, 0.1), rib);
+      dado.position.set(0, 2.5, -HALF_D);
+      group.add(dado);
+      const kick = new THREE.Mesh(new THREE.BoxGeometry(BAY.w - 1, 0.5, 0.14), boxMat);
+      kick.position.set(0, 0.25, -HALF_D);
+      group.add(kick);
+      for (let i = -6; i <= 6; i++) {
+        const r = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.0, 0.09), rib);
+        r.position.set(i * 2.2, 1.45, -HALF_D);
+        group.add(r);
+      }
+    }
+
+    // service runs high up: a fat duct with a pair of pipes under it
+    for (const sx of [-1, 1]) {
+      const duct = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, BAY.d - 2), ductMat);
+      duct.position.set(sx * (HALF_W - 0.45), BAY.h - 2.3, 0);
+      group.add(duct);
+      // banding along the duct
+      for (let i = -6; i <= 6; i++) {
+        const band = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.68, 0.07), boxMat);
+        band.position.set(sx * (HALF_W - 0.45), BAY.h - 2.3, i * 2.4);
+        group.add(band);
+      }
+      for (const [dy, r] of [[-0.62, 0.11], [-0.9, 0.08]]) {
+        const pipe = new THREE.Mesh(new THREE.CylinderGeometry(r, r, BAY.d - 2, 10), pipeMat);
+        pipe.rotation.x = Math.PI / 2;
+        pipe.position.set(sx * (HALF_W - 0.3), BAY.h - 2.3 + dy, 0);
+        group.add(pipe);
+      }
+      // brackets holding the run
+      for (let i = -5; i <= 5; i++) {
+        const br = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.12), boxMat);
+        br.position.set(sx * (HALF_W - 0.28), BAY.h - 1.9, i * 2.9);
+        group.add(br);
+      }
+    }
+
+    // clerestory windows high on the side walls, letting a little light in
+    for (const sx of [-1, 1]) {
+      for (let i = -2; i <= 2; i++) {
+        const pane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.5, 3.0), glassMat);
+        pane.position.set(sx * HALF_W, BAY.h - 4.4, i * 5.4);
+        group.add(pane);
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.72, 3.24), boxMat);
+        frame.position.set(sx * (HALF_W + 0.02), BAY.h - 4.4, i * 5.4);
+        group.add(frame);
+        // mullions
+        for (const mz of [-1, 0, 1]) {
+          const mull = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.5, 0.08), boxMat);
+          mull.position.set(sx * (HALF_W - 0.01), BAY.h - 4.4, i * 5.4 + mz);
+          group.add(mull);
+        }
+        const spill = new THREE.PointLight('#a8c4d8', 5, 12, 2);
+        spill.position.set(sx * (HALF_W - 1.4), BAY.h - 4.4, i * 5.4);
+        group.add(spill);
+      }
+    }
+
+    // consumer units and junction boxes, with conduit dropping to them
+    for (const [x, z, sx] of [[-HALF_W, -8.5, -1], [-HALF_W, 4.0, -1], [HALF_W, -3.0, 1], [HALF_W, 10.0, 1]]) {
+      const unit = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.85, 0.6), boxMat);
+      unit.position.set(x - sx * 0.1, 2.05, z);
+      group.add(unit);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.7, 0.48), rib);
+      door.position.set(x - sx * 0.23, 2.05, z);
+      group.add(door);
+      const conduit = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, BAY.h - 4.6, 8), pipeMat);
+      conduit.position.set(x - sx * 0.1, 2.05 + 0.42 + (BAY.h - 4.6) / 2, z);
+      group.add(conduit);
+    }
+
+    // fire points: extinguisher pairs on a backboard
+    for (const [x, z, sx] of [[-HALF_W, 12.0, -1], [HALF_W, -12.0, 1]]) {
+      const board = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.0, 1.1), redMat);
+      board.position.set(x - sx * 0.06, 1.1, z);
+      group.add(board);
+      for (const dz of [-0.28, 0.28]) {
+        const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.72, 12), redMat);
+        bottle.position.set(x - sx * 0.28, 0.95, z + dz);
+        bottle.castShadow = true;
+        group.add(bottle);
+        const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.18, 8), boxMat);
+        neck.position.set(x - sx * 0.28, 1.4, z + dz);
+        group.add(neck);
+      }
+    }
+
+    // hose reel on a drum
+    {
+      const x = -HALF_W;
+      const z = -2.0;
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.3, 20), redMat);
+      drum.rotation.z = Math.PI / 2;
+      drum.position.set(x + 0.3, 2.6, z);
+      group.add(drum);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.36, 12), boxMat);
+      hub.rotation.z = Math.PI / 2;
+      hub.position.set(x + 0.3, 2.6, z);
+      group.add(hub);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.1, 0.1), boxMat);
+      arm.position.set(x + 0.16, 2.6, z);
+      group.add(arm);
+    }
+
+    // wall cabinets over the benches
+    for (const [x, z, sx] of [[-HALF_W, -6.0, -1], [-HALF_W, 6.0, -1], [HALF_W, 2.0, 1]]) {
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.9, 2.4), rib);
+      cab.position.set(x - sx * 0.24, 3.5, z);
+      cab.castShadow = true;
+      group.add(cab);
+      for (const dz of [-0.6, 0.6]) {
+        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.5), pipeMat);
+        handle.position.set(x - sx * 0.47, 3.5, z + dz);
+        group.add(handle);
+      }
+    }
+
+    // notice board and hazard signage
+    for (const [x, z, sx, w] of [[-HALF_W, 0.5, -1, 1.9], [HALF_W, -8.0, 1, 1.5]]) {
+      const board = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.2, w), boxMat);
+      board.position.set(x - sx * 0.05, 3.4, z);
+      group.add(board);
+      for (let i = 0; i < 5; i++) {
+        const sheet = new THREE.Mesh(
+          new THREE.BoxGeometry(0.02, 0.3 + Math.random() * 0.16, 0.24), rib
+        );
+        sheet.position.set(
+          x - sx * 0.1,
+          3.15 + Math.random() * 0.5,
+          z - w / 2 + 0.25 + Math.random() * (w - 0.5)
+        );
+        group.add(sheet);
+      }
+    }
+    for (const [x, z, sx] of [[-HALF_W, -14.0, -1], [HALF_W, 14.0, 1], [HALF_W, -15.0, 1]]) {
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 0.55), signMat);
+      sign.position.set(x - sx * 0.04, 3.9, z);
+      sign.rotation.x = Math.PI / 4;
+      group.add(sign);
+    }
+
+    // a caged inspection lamp on a lead, hooked on the wall
+    {
+      const x = HALF_W;
+      const z = 6.5;
+      const lampBody = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.3, 10), boxMat);
+      lampBody.position.set(x - 0.3, 2.9, z);
+      group.add(lampBody);
+      const cage = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), pipeMat);
+      cage.position.set(x - 0.3, 2.68, z);
+      group.add(cage);
+      const glow = new THREE.PointLight('#ffe7bd', 8, 7, 2);
+      glow.position.set(x - 0.5, 2.6, z);
+      group.add(glow);
+      const lead = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.5, 6), boxMat);
+      lead.position.set(x - 0.22, 3.7, z);
+      lead.rotation.z = 0.12;
+      group.add(lead);
+    }
+
+    // wall-mounted ladder up to the gantry
+    {
+      const x = -HALF_W;
+      const z = -13.0;
+      for (const dz of [-0.32, 0.32]) {
+        const stile = new THREE.Mesh(new THREE.BoxGeometry(0.09, BAY.h - 2.4, 0.09), pipeMat);
+        stile.position.set(x + 0.28, (BAY.h - 2.4) / 2, z + dz);
+        group.add(stile);
+      }
+      for (let i = 0; i < 12; i++) {
+        const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.64, 8), pipeMat);
+        rung.rotation.x = Math.PI / 2;
+        rung.position.set(x + 0.28, 0.5 + i * 0.72, z);
+        group.add(rung);
+      }
+    }
+
+    // extractor fans set into the back wall
+    for (const dx of [-9.5, 9.5]) {
+      const housing = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.7, 0.3), boxMat);
+      housing.position.set(dx, BAY.h - 3.2, -HALF_D + 0.08);
+      group.add(housing);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.16, 10), pipeMat);
+      hub.rotation.x = Math.PI / 2;
+      hub.position.set(dx, BAY.h - 3.2, -HALF_D + 0.2);
+      group.add(hub);
+      for (let b = 0; b < 4; b++) {
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.04), pipeMat);
+        blade.position.set(
+          dx + Math.cos(b * Math.PI / 2) * 0.34,
+          BAY.h - 3.2 + Math.sin(b * Math.PI / 2) * 0.34,
+          -HALF_D + 0.22
+        );
+        blade.rotation.z = b * Math.PI / 2 + 0.5;
+        group.add(blade);
+      }
+      // louvres over the housing
+      for (let i = 0; i < 5; i++) {
+        const lv = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.14), rib);
+        lv.position.set(dx, BAY.h - 3.85 + i * 0.32, -HALF_D + 0.24);
+        lv.rotation.x = 0.4;
+        group.add(lv);
+      }
+    }
+
+    // stains and scorch where things get leaned against the wall
+    const stainMat = new THREE.MeshBasicMaterial({
+      color: '#1c1a18', transparent: true, opacity: 0.16, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    });
+    for (let i = 0; i < 10; i++) {
+      const sx = Math.random() < 0.5 ? -1 : 1;
+      const h = 0.7 + Math.random() * 1.8;
+      const w = 0.5 + Math.random() * 1.6;
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(w, h), stainMat);
+      s.rotation.y = sx > 0 ? -Math.PI / 2 : Math.PI / 2;
+      s.position.set(sx * (HALF_W - 0.03), h / 2, (Math.random() - 0.5) * (BAY.d - 4));
+      group.add(s);
+    }
+  }
+
   // ---- the door end -------------------------------------------------------
   {
     const z = BAY.d / 2;
@@ -408,61 +668,142 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   buildRamp(-1);
   buildRamp(1);
 
-  // ---- tread marks the tank left getting here -----------------------------
-  // It drove in off the apron, up the door-side ramp and onto the deck, so
-  // there is a pair of tracks worn into the floor showing the way it came.
+  // ---- tread marks worn into the floor -------------------------------------
+  // A busy bay: the current tank's route in, plus older lanes from everything
+  // that has been through before, crossing and overlapping each other.
+  //
+  // Each run gets its OWN texture instance. Sharing one and calling
+  // markTex.repeat.set() per run doesn't work — repeat lives on the texture,
+  // not the mesh, so whichever run set it last won and every other lane got
+  // its grousers stretched into a few long dashes.
   {
-    const c = document.createElement('canvas');
-    c.width = 128; c.height = 64;
-    const g = c.getContext('2d');
-    g.clearRect(0, 0, 128, 64);
-    g.fillStyle = 'rgba(18,17,16,0.34)';
-    g.fillRect(0, 3, 128, 58);
-    // grousers across the track
-    for (let i = 0; i < 8; i++) {
-      g.fillStyle = `rgba(14,13,12,${0.5 + Math.random() * 0.28})`;
-      g.fillRect(i * 16 + 2, 2, 9, 60);
+    function makeMarkTexture(grousers) {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 128;
+      const g = c.getContext('2d');
+      g.clearRect(0, 0, 64, 128);
+      // scuffed band the width of the track
+      g.fillStyle = 'rgba(18,17,16,0.30)';
+      g.fillRect(3, 0, 58, 128);
+      for (let i = 0; i < 500; i++) {
+        g.fillStyle = `rgba(12,11,10,${0.02 + Math.random() * 0.07})`;
+        g.fillRect(3 + Math.random() * 58, Math.random() * 128, 1 + Math.random() * 2, 1 + Math.random() * 2);
+      }
+      // grousers ACROSS the track, stacked along the direction of travel
+      const pitch = 128 / grousers;
+      for (let i = 0; i < grousers; i++) {
+        const y = i * pitch;
+        g.fillStyle = `rgba(13,12,11,${0.46 + Math.random() * 0.3})`;
+        g.fillRect(2, y, 60, pitch * 0.44);
+        // cleat detail along each bar
+        g.fillStyle = 'rgba(9,8,8,0.22)';
+        for (let k = 0; k < 6; k++) {
+          g.fillRect(6 + k * 9.2, y - 1, 1.5, pitch * 0.44 + 2);
+        }
+      }
+      // feather the two long edges of the track
+      const fade = g.createLinearGradient(0, 0, 64, 0);
+      fade.addColorStop(0, 'rgba(0,0,0,1)');
+      fade.addColorStop(0.14, 'rgba(0,0,0,0)');
+      fade.addColorStop(0.86, 'rgba(0,0,0,0)');
+      fade.addColorStop(1, 'rgba(0,0,0,1)');
+      g.globalCompositeOperation = 'destination-out';
+      g.fillStyle = fade;
+      g.fillRect(0, 0, 64, 128);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.anisotropy = 16;
+      return tex;
     }
-    // feather the two long edges
-    const fade = g.createLinearGradient(0, 0, 0, 64);
-    fade.addColorStop(0, 'rgba(0,0,0,1)');
-    fade.addColorStop(0.16, 'rgba(0,0,0,0)');
-    fade.addColorStop(0.84, 'rgba(0,0,0,0)');
-    fade.addColorStop(1, 'rgba(0,0,0,1)');
-    g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = fade;
-    g.fillRect(0, 0, 128, 64);
-    const markTex = new THREE.CanvasTexture(c);
-    markTex.colorSpace = THREE.SRGBColorSpace;
-    markTex.wrapS = THREE.RepeatWrapping;
-    markTex.wrapT = THREE.ClampToEdgeWrapping;
-    markTex.anisotropy = 16;
 
-    const markMat = new THREE.MeshBasicMaterial({
-      map: markTex, transparent: true, opacity: 0.85, depthWrite: false,
-      side: THREE.DoubleSide, polygonOffset: true,
-      polygonOffsetFactor: -4, polygonOffsetUnits: -4,
-    });
+    const GAUGE = 2.36;  // centre-to-centre of the two tracks
+    const WIDE = 0.62;   // track width
+    const PITCH = 0.42;  // metres of floor per printed grouser
 
-    const GAUGE = 2.36;   // centre-to-centre of the two tracks
-    const WIDE = 0.62;    // track width
-    // z0 -> z1 along the bay, at height y, optionally on the ramp slope
-    function laneRun(z0, z1, y0, y1, tilt) {
-      const len = Math.hypot(z1 - z0, y1 - y0);
+    // One pair of tracks from (x0,z0) to (x1,z1). Its own texture, its own
+    // repeat, so the grouser pitch is the same on every lane whatever its
+    // length. Runs slightly past both ends so joined segments never gap.
+    function lane(x0, z0, x1, z1, y0, y1, opacity, gauge = GAUGE) {
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const flat = Math.hypot(dx, dz);
+      if (flat < 0.05) return;
+      const len = Math.hypot(flat, y1 - y0);
+      const heading = Math.atan2(dx, dz); // rotation about Y for a +Z quad
+      const tilt = Math.atan2(y1 - y0, flat);
+      const grousers = Math.max(2, Math.round(len / PITCH));
+      const tex = makeMarkTexture(grousers);
+      tex.repeat.set(1, grousers);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity, depthWrite: false,
+        side: THREE.DoubleSide, polygonOffset: true,
+        polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+      });
+      const ux = dx / flat;
+      const uz = dz / flat;
+      // perpendicular, for the two track centres
+      const px = uz;
+      const pz = -ux;
       for (const side of [-1, 1]) {
-        const geo = new THREE.PlaneGeometry(WIDE, len);
-        const m = new THREE.Mesh(geo, markMat);
+        const geo = new THREE.PlaneGeometry(WIDE, len + 0.3);
+        const m = new THREE.Mesh(geo, mat);
+        m.rotation.order = 'YXZ';
+        m.rotation.y = heading;
         m.rotation.x = -Math.PI / 2 + tilt;
-        m.position.set(side * GAUGE / 2, (y0 + y1) / 2 + 0.012, (z0 + z1) / 2);
+        m.position.set(
+          (x0 + x1) / 2 + px * side * gauge / 2,
+          (y0 + y1) / 2 + 0.012,
+          (z0 + z1) / 2 + pz * side * gauge / 2
+        );
         m.renderOrder = 1;
-        markTex.repeat.set(1, Math.max(1, Math.round(len / 1.6)));
         group.add(m);
       }
     }
+
+    // the route the tank on the stand took: in off the apron, up the ramp,
+    // onto the deck — one continuous set of tracks
     const rise = Math.atan2(STAND.y, RAMP.len);
-    laneRun(BAY.d / 2 - 0.6, STAND.halfZ + RAMP.len, 0, 0, 0);          // apron
-    laneRun(STAND.halfZ + RAMP.len, STAND.halfZ, 0, STAND.y, rise);      // ramp
-    laneRun(STAND.halfZ, -STAND.halfZ + 1.2, STAND.y, STAND.y, 0);       // deck
+    const zApron = BAY.d / 2 - 0.4;
+    const zRampBase = STAND.halfZ + RAMP.len;
+    lane(0, zApron, 0, zRampBase, 0, 0, 0.85);
+    lane(0, zRampBase, 0, STAND.halfZ, 0, STAND.y, 0.85);
+    lane(0, STAND.halfZ, 0, -STAND.halfZ + 1.4, STAND.y, STAND.y, 0.85);
+
+    // older lanes across the bay floor, criss-crossing at angles and fading
+    // with age — machines have been in and out of here for years
+    const older = [
+      [-11.5, 15.5, 8.0, -13.0, 0.34],
+      [10.5, 15.8, -9.5, -11.0, 0.30],
+      [-13.0, 6.0, 13.0, 11.5, 0.26],
+      [12.5, 3.0, -12.5, 8.5, 0.24],
+      [-8.0, 16.0, -12.5, -6.0, 0.30],
+      [7.5, 16.2, 12.8, 1.0, 0.28],
+      [-13.2, -8.5, 6.0, 16.0, 0.22],
+      [13.0, -6.0, -4.0, 16.2, 0.22],
+    ];
+    for (const [ax, az, bx, bz, op] of older) {
+      lane(ax, az, bx, bz, 0, 0, op, GAUGE * (0.86 + Math.random() * 0.3));
+    }
+
+    // a couple of tight turning scuffs, laid as short chords round an arc
+    function pivotArc(cx, cz, radius, from, to, opacity) {
+      const steps = 7;
+      for (let i = 0; i < steps; i++) {
+        const a0 = from + (to - from) * (i / steps);
+        const a1 = from + (to - from) * ((i + 1) / steps);
+        lane(
+          cx + Math.cos(a0) * radius, cz + Math.sin(a0) * radius,
+          cx + Math.cos(a1) * radius, cz + Math.sin(a1) * radius,
+          0, 0, opacity
+        );
+      }
+    }
+    pivotArc(-6.5, 11.0, 4.2, -0.5, 1.5, 0.26);
+    pivotArc(8.0, 8.5, 3.4, 2.2, 4.1, 0.22);
   }
 
   // hazard stripe painted on the floor around the working area

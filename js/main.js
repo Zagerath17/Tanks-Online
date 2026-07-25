@@ -904,6 +904,7 @@ function spawnLocal(slot) {
   playerModel.setCharge(0);
   lastTrackX = playerModel.root.position.x;
   lastTrackZ = playerModel.root.position.z;
+  tracks.forget('local');
   playerModel.setStream(false);
   refreshWeaponHud();
   playerModel.root.visible = true;
@@ -1785,7 +1786,8 @@ function aimRaycast(out) {
   const inEditor = phase === 'editor';
   const half = inEditor ? editor.boundsHalf : ARENA.half;
   const targets = inEditor ? [] : remote.targets();
-  for (let d = 2; d < 170; d += 0.6) {
+
+  const blocked = (d) => {
     _rayPt.copy(camera.position).addScaledVector(_rayDir, d);
     if (
       Math.abs(_rayPt.x) > half ||
@@ -1793,18 +1795,41 @@ function aimRaycast(out) {
       _rayPt.y <= groundYAt(_rayPt.x, _rayPt.z) ||
       _rayPt.y > 90 ||
       (inEditor && editor.solidAt(_rayPt))
-    ) break;
-    let hit = false;
+    ) return true;
     for (const ru of targets) {
       if (!ru.alive || !ru.model.root.visible) continue;
       const ddx = _rayPt.x - ru.pos.x;
       const ddz = _rayPt.z - ru.pos.z;
-      if (ddx * ddx + ddz * ddz < 30 && ru.model.hitTest(_rayPt)) {
-        hit = true;
-        break;
-      }
+      if (ddx * ddx + ddz * ddz < 30 && ru.model.hitTest(_rayPt)) return true;
     }
-    if (hit) break;
+    return false;
+  };
+
+  const STEP = 0.6;
+  let far = 2;
+  let hit = false;
+  for (let d = 2; d < 170; d += STEP) {
+    far = d;
+    if (blocked(d)) {
+      hit = true;
+      break;
+    }
+  }
+
+  if (hit) {
+    // The coarse march only tells us which 0.6 m slice the surface is in.
+    // Stopping there quantises the aim point, and while the tank is moving
+    // that made the reported distance flick between neighbouring slices —
+    // which the turret faithfully chased as a vibration. Bisect down to a
+    // few millimetres so the aim point moves smoothly instead.
+    let lo = Math.max(2, far - STEP);
+    let hi = far;
+    for (let i = 0; i < 7; i++) {
+      const mid = (lo + hi) * 0.5;
+      if (blocked(mid)) hi = mid;
+      else lo = mid;
+    }
+    blocked(hi);
   }
   out.copy(_rayPt);
 }
