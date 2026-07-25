@@ -175,6 +175,14 @@ kbd {
   width: 100%;
   background: var(--olive-400);
   transform-origin: left;
+  transition: background 120ms linear;
+}
+
+/* Thunderbolt: filling toward a banked shot, then holding one */
+#reload.charging { background: #d8b23a; }
+#reload.charged {
+  background: #7a2f12;
+  box-shadow: 0 0 6px rgba(220, 108, 40, 0.85);
 }
 
 .hpwrap {

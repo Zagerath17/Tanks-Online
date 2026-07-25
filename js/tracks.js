@@ -126,7 +126,8 @@ void main() {
   float k = 1.0 - clamp((vAge - uHold) / uFade, 0.0, 1.0);
   if (k <= 0.001) discard;
   vec4 t = texture2D(uMap, vUv);
-  gl_FragColor = vec4(0.04, 0.035, 0.03, t.a * k * 0.85);
+  // 0.85 -> 0.6: the trail reads as pressed ground, not as paint
+  gl_FragColor = vec4(0.04, 0.035, 0.03, t.a * k * 0.6);
 }
 `;
 
@@ -198,60 +199,80 @@ export function createTreadMarks(scene) {
     // the tread's own pitch and consecutive stamps butt up
     const span = (tread.length / tread.linkCount) * BARS;
     const width = tread.linkW;
-    const px = model.root.position.x;
-    const pz = model.root.position.z;
+
+    // right vector for this heading, to find where each track actually is
+    const rx = Math.sin(heading);
+    const rz = Math.cos(heading);
 
     let e = emitters.get(key);
     if (!e) {
-      e = { x: px, z: pz, y: groundY };
+      e = { rails: [null, null] };
       emitters.set(key, e);
     }
 
-    // Airborne, or standing still: hold the anchor exactly where it is and
-    // wait. Distance keeps accruing across the dropout, which is what makes
-    // this survive the contact signal flickering.
+    // Airborne, or standing still: hold the anchors exactly where they are
+    // and wait. Distance keeps accruing across the dropout, which is what
+    // makes this survive the contact signal flickering.
     if (!onGround || moved <= 0) return;
 
-    const dx = px - e.x;
-    const dz = pz - e.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < span) return;
+    // EACH TRACK KEEPS ITS OWN ANCHOR.
+    //
+    // Spacing used to be measured from the hull's centre and then the pair of
+    // marks offset sideways to either track. That is only correct in a
+    // straight line. In a turn the inner track covers less ground than the
+    // centre and the outer covers more, but both were getting the same number
+    // of stamps at the same intervals — so the inside bunched up into an
+    // overlapping smear and the outside pulled apart into gaps, worse the
+    // tighter the turn. Measuring each track against the ground it personally
+    // covered lays fewer marks on the inside and more on the outside, exactly
+    // as real tracks do, and both rails stay butted up at any steering angle.
+    for (let i = 0; i < 2; i++) {
+      const oz = (i === 0 ? -1 : 1) * tread.z;
+      const tx = model.root.position.x + rx * oz;
+      const tz = model.root.position.z + rz * oz;
 
-    const ux = dx / dist;
-    const uz = dz / dist;
+      let a = e.rails[i];
+      if (!a) {
+        e.rails[i] = { x: tx, z: tz, y: groundY };
+        continue;
+      }
 
-    // A jump far larger than a few frames of driving means a respawn, a
-    // teleport, or a long flight — resume a span behind the tank rather than
-    // painting a stripe across everything in between.
-    if (dist > span * 5) {
-      e.x = px - ux * span;
-      e.z = pz - uz * span;
-      e.y = groundY;
-    }
+      const dx = tx - a.x;
+      const dz = tz - a.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < span) continue;
 
-    const rx = Math.sin(heading);
-    const rz = Math.cos(heading);
-    const total = Math.hypot(px - e.x, pz - e.z);
-    let walked = 0;
-    while (total - walked >= span) {
-      walked += span;
-      const t = walked / total;
-      for (const side of [-1, 1]) {
-        const oz = side * tread.z;
+      const ux = dx / dist;
+      const uz = dz / dist;
+
+      // A jump far larger than a few frames of driving means a respawn, a
+      // teleport, or a long flight — resume a span behind the tank rather
+      // than painting a stripe across everything in between.
+      if (dist > span * 5) {
+        a.x = tx - ux * span;
+        a.z = tz - uz * span;
+        a.y = groundY;
+      }
+
+      const total = Math.hypot(tx - a.x, tz - a.z);
+      let walked = 0;
+      while (total - walked >= span) {
+        walked += span;
+        const t = walked / total;
         stamp(
-          e.x + ux * walked + rx * oz,
-          e.y + (groundY - e.y) * t + 0.015,
-          e.z + uz * walked + rz * oz,
+          a.x + ux * walked,
+          a.y + (groundY - a.y) * t + 0.015,
+          a.z + uz * walked,
           heading,
           width,
           span * 1.06 // slight overlap, so there is never a seam
         );
       }
+      // carry the remainder, so the next mark lands exactly one span on
+      a.y += (groundY - a.y) * (walked / total);
+      a.x += ux * walked;
+      a.z += uz * walked;
     }
-    // carry the remainder, so the next mark lands exactly one span on
-    e.y += (groundY - e.y) * (walked / total);
-    e.x += ux * walked;
-    e.z += uz * walked;
   }
 
   function forget(key) {

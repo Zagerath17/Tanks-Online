@@ -11,6 +11,14 @@ export const PROJECTILES = {
     damage: 200,
     trail: 'smoke',
   },
+  bolt: {
+    // The Thunderbolt's round: 35% quicker off the muzzle than a shell, so it
+    // leads less at range and closes the gap on a moving target.
+    speed: 232,   // 172 * 1.35
+    range: 310,
+    damage: 350,
+    trail: 'smoke',
+  },
   plasma: {
     speed: 86, // half the shell's muzzle velocity
     range: 70, // expires at 70 m
@@ -114,7 +122,9 @@ export function createBullets(scene, fx) {
   }
 
   // kind: 'shell' | 'plasma'
-  function fire(owner, pos, dir, kind = 'shell') {
+  // damageOverride lets a turret spend a charged shot without needing a whole
+  // separate projectile kind for it
+  function fire(owner, pos, dir, kind = 'shell', damageOverride) {
     const spec = PROJECTILES[kind] || PROJECTILES.shell;
     const m = getMesh(spec === PROJECTILES.plasma ? 'plasma' : 'shell');
     m.position.copy(pos);
@@ -124,9 +134,9 @@ export function createBullets(scene, fx) {
       m,
       kind: spec === PROJECTILES.plasma ? 'plasma' : 'shell',
       vel: dir.clone().multiplyScalar(spec.speed),
+      damage: damageOverride !== undefined ? damageOverride : spec.damage,
       travelled: 0,
       range: spec.range,
-      damage: spec.damage,
       trail: spec.trail,
       age: 0,
       owner,

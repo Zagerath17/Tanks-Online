@@ -23,7 +23,7 @@ const FACING = -Math.PI / 2;
 // the plate — a heavy gun used to drive it most of a metre down, through the
 // platform and out the bottom.
 const SQUAT_LIMIT = 0.07;
-const PITCH_LIMIT = 0.075; // radians, about 4.3 degrees
+const PITCH_LIMIT = 0.055; // radians, about 3.2 degrees
 const FIRE_INTERVAL = 2.5;
 const CAM = { dist: 12.5, height: 4.6, look: 1.9 };
 
@@ -46,11 +46,29 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     }),
     roughness: 0.96,
   });
-  const painted = new THREE.MeshStandardMaterial({ color: '#3d444c', roughness: 0.85, metalness: 0.1 });
-  const steel = new THREE.MeshStandardMaterial({ color: '#4a5159', roughness: 0.5, metalness: 0.75 });
-  const darkSteel = new THREE.MeshStandardMaterial({ color: '#23272c', roughness: 0.6, metalness: 0.6 });
+  // Painted blockwork: coursed, so the walls read as built rather than as
+  // flat panels standing behind the tank.
+  const painted = new THREE.MeshStandardMaterial({
+    map: makeGridTexture({
+      cells: 3, base: '#3d444c', line: '#353b43', lineWidth: 2,
+      major: 6, majorLine: '#2f353c', majorWidth: 4,
+      repeat: [10, 4], anisotropy: 16,
+    }),
+    roughness: 0.85, metalness: 0.1,
+  });
+  const steel = new THREE.MeshStandardMaterial({
+    map: makeMetalTexture({ base: '#4a5159', shade: '#3e444b', grain: 1.4, wear: 1.2, repeat: [2, 2] }),
+    roughness: 0.5, metalness: 0.75,
+  });
+  const darkSteel = new THREE.MeshStandardMaterial({
+    map: makeMetalTexture({ base: '#23272c', shade: '#1c2024', grain: 1.1, wear: 1.6, repeat: [2, 2] }),
+    roughness: 0.6, metalness: 0.6,
+  });
   const rubber = new THREE.MeshStandardMaterial({ color: '#1d2024', roughness: 0.9 });
-  const hazard = new THREE.MeshStandardMaterial({ color: '#b9962c', roughness: 0.8 });
+  const hazard = new THREE.MeshStandardMaterial({
+    map: makeMetalTexture({ base: '#b9962c', shade: '#96771f', grain: 0.8, wear: 2.4, repeat: [3, 1] }),
+    roughness: 0.8,
+  });
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), concrete);
   floor.rotation.x = -Math.PI / 2;
@@ -78,11 +96,26 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     const HALF_W = BAY.w / 2 - 0.22;
     const HALF_D = BAY.d / 2 - 0.22;
 
-    const rib = new THREE.MeshStandardMaterial({ color: '#454c55', roughness: 0.8, metalness: 0.2 });
-    const pipeMat = new THREE.MeshStandardMaterial({ color: '#5a626b', roughness: 0.45, metalness: 0.7 });
-    const ductMat = new THREE.MeshStandardMaterial({ color: '#6a7078', roughness: 0.6, metalness: 0.4 });
-    const boxMat = new THREE.MeshStandardMaterial({ color: '#3a4048', roughness: 0.7, metalness: 0.35 });
-    const redMat = new THREE.MeshStandardMaterial({ color: '#8e2f26', roughness: 0.6, metalness: 0.2 });
+    const rib = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#454c55', shade: '#3b414a', grain: 1.3, wear: 1.1, repeat: [1, 3] }),
+      roughness: 0.8, metalness: 0.2,
+    });
+    const pipeMat = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#5a626b', shade: '#4b525a', grain: 2.0, wear: 0.9, repeat: [1, 6] }),
+      roughness: 0.45, metalness: 0.7,
+    });
+    const ductMat = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#6a7078', shade: '#5b6169', grain: 2.4, wear: 0.8, repeat: [1, 8] }),
+      roughness: 0.6, metalness: 0.4,
+    });
+    const boxMat = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#3a4048', shade: '#31363d', grain: 1.2, wear: 1.4, repeat: [2, 2] }),
+      roughness: 0.7, metalness: 0.35,
+    });
+    const redMat = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#8e2f26', shade: '#762720', grain: 1.0, wear: 1.8, repeat: [2, 2] }),
+      roughness: 0.6, metalness: 0.2,
+    });
     const signMat = new THREE.MeshStandardMaterial({
       color: '#c8b34a', emissive: '#4a4020', emissiveIntensity: 0.4, roughness: 0.7,
     });
@@ -542,6 +575,124 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     }
   }
 
+  // ---- ceiling ------------------------------------------------------------
+  // Painted deck panels between the beams, with the services that would run
+  // up there: trunking, conduit, a sprinkler main, and a big slow extractor
+  // fan turning over the middle of the bay.
+  const fanBlades = [];
+  {
+    const ceilMat = new THREE.MeshStandardMaterial({
+      map: makeGridTexture({
+        cells: 2, base: '#5a6169', line: '#4b525a', lineWidth: 3,
+        major: 4, majorLine: '#414850', majorWidth: 5,
+        repeat: [BAY_TILES_X, BAY_TILES_Z], anisotropy: 16,
+      }),
+      roughness: 0.9, metalness: 0.12, side: THREE.DoubleSide,
+    });
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), ceilMat);
+    ceil.rotation.x = Math.PI / 2;
+    ceil.position.y = BAY.h - 0.02;
+    group.add(ceil);
+
+    // stained panels, so it is not one flat sheet of colour
+    const stainMat = new THREE.MeshBasicMaterial({
+      color: '#2a2f36', transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide,
+    });
+    for (const [sx, sz, w, d] of [[-8, -9, 5, 4], [7, 4, 6, 5], [-3, 11, 4, 3], [10, -12, 4, 4]]) {
+      const patch = new THREE.Mesh(new THREE.PlaneGeometry(w, d), stainMat);
+      patch.rotation.x = Math.PI / 2;
+      patch.position.set(sx, BAY.h - 0.05, sz);
+      group.add(patch);
+    }
+
+    // cable trunking and a sprinkler main running the length of the bay
+    const trunkMat = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#6b7079', shade: '#585d65', grain: 2.2, wear: 0.7, repeat: [1, 10] }),
+      roughness: 0.55, metalness: 0.6,
+    });
+    for (const sx of [-5.5, 5.5]) {
+      const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, BAY.d - 2), trunkMat);
+      trunk.position.set(sx, BAY.h - 0.42, 0);
+      group.add(trunk);
+      for (let i = -6; i <= 6; i++) {
+        const hanger = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.34, 0.05), darkSteel);
+        hanger.position.set(sx, BAY.h - 0.2, i * 2.5);
+        group.add(hanger);
+      }
+    }
+    const pipeRed = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#8e2f26', shade: '#762720', grain: 1.0, wear: 1.5, repeat: [1, 8] }),
+      roughness: 0.6, metalness: 0.25,
+    });
+    const main = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, BAY.d - 1.5, 12), pipeRed);
+    main.rotation.x = Math.PI / 2;
+    main.position.set(0.9, BAY.h - 0.55, 0);
+    group.add(main);
+    for (let i = -5; i <= 5; i++) {
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 8), steel);
+      head.position.set(0.9, BAY.h - 0.72, i * 3);
+      head.rotation.x = Math.PI;
+      group.add(head);
+    }
+
+    // ---- the extractor fan ------------------------------------------------
+    const fan = new THREE.Group();
+    fan.position.set(-1.2, BAY.h - 1.15, -1.5);
+    group.add(fan);
+
+    const drop = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.95, 10), darkSteel);
+    drop.position.y = 0.55;
+    fan.add(drop);
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.07, 16), steel);
+    plate.position.y = 1.03;
+    fan.add(plate);
+
+    const spinner = new THREE.Group();
+    spinner.name = 'ceiling-fan';
+    fan.add(spinner);
+    fanBlades.push(spinner);
+
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 0.26, 18), steel);
+    spinner.add(hub);
+    const capNut = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), darkSteel);
+    capNut.position.y = -0.16;
+    spinner.add(capNut);
+
+    const bladeMat = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#6a7078', shade: '#575d64', grain: 2.0, wear: 1.1, repeat: [4, 1] }),
+      roughness: 0.55, metalness: 0.5,
+    });
+
+    // five long blades, pitched so they read as moving air
+    const bladeGeo = new THREE.BoxGeometry(3.1, 0.05, 0.62);
+    for (let i = 0; i < 5; i++) {
+      const arm = new THREE.Group();
+      arm.rotation.y = (i / 5) * Math.PI * 2;
+      spinner.add(arm);
+      const blade = new THREE.Mesh(bladeGeo, bladeMat);
+      blade.position.set(1.72, -0.03, 0);
+      blade.rotation.x = 0.22; // pitch
+      arm.add(blade);
+      const root = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.2), steel);
+      root.position.set(0.42, -0.03, 0);
+      arm.add(root);
+    }
+
+    // a guard cage under it, so it reads as industrial rather than domestic
+    for (const r of [1.0, 1.9]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.028, 6, 32), darkSteel);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = -0.3;
+      fan.add(ring);
+    }
+    for (let i = 0; i < 6; i++) {
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.03, 0.03), darkSteel);
+      spoke.rotation.y = (i / 6) * Math.PI;
+      spoke.position.y = -0.3;
+      fan.add(spoke);
+    }
+  }
+
   // ---- the workshop platform ----------------------------------------------
   // A welded steel service deck rather than a display plinth: plated top,
   // channel-section edge beams, legs, hazard-striped nosing, and a ramp off
@@ -749,7 +900,10 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       const px = uz;
       const pz = -ux;
       for (const side of [-1, 1]) {
-        const geo = new THREE.PlaneGeometry(WIDE, len + 0.3);
+        // No overhang on sloped runs: the +0.3 that hides seams on the flat
+        // carries a tilted quad straight off the end of the ramp and leaves
+        // it hanging in the air above the deck.
+        const geo = new THREE.PlaneGeometry(WIDE, len + (Math.abs(tilt) > 0.01 ? -0.06 : 0.3));
         const m = new THREE.Mesh(geo, mat);
         m.rotation.order = 'YXZ';
         m.rotation.y = heading;
@@ -771,7 +925,21 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     const zRampBase = STAND.halfZ + RAMP.len;
     lane(0, zApron, 0, zRampBase, 0, 0, 0.85);
     lane(0, zRampBase, 0, STAND.halfZ, 0, STAND.y, 0.85);
-    lane(0, STAND.halfZ, 0, -STAND.halfZ + 1.4, STAND.y, STAND.y, 0.85);
+    lane(0, STAND.halfZ - 0.05, 0, -STAND.halfZ + 1.4, STAND.y, STAND.y, 0.85);
+
+    // more traffic across the deck itself: shunted about, turned around, and
+    // reversed off the back at some point
+    const deckLanes = [
+      [-2.6, STAND.halfZ - 0.4, 3.4, -STAND.halfZ + 0.6, 0.42],
+      [3.8, STAND.halfZ - 0.6, -3.2, -STAND.halfZ + 1.0, 0.36],
+      [-5.2, 2.4, 5.4, 0.6, 0.30],
+      [5.0, -3.2, -5.0, -1.4, 0.28],
+      [0.8, -STAND.halfZ + 0.3, -1.2, STAND.halfZ - 0.3, 0.32],
+    ];
+    for (const [ax, az, bx, bz, op] of deckLanes) {
+      lane(ax, az, bx, bz, STAND.y, STAND.y, op, GAUGE * (0.9 + Math.random() * 0.25));
+    }
+    pivotArc(0.4, -1.0, 2.3, 0.4, 2.6, 0.26, STAND.y);
 
     // older lanes across the bay floor, criss-crossing at angles and fading
     // with age — machines have been in and out of here for years
@@ -790,7 +958,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     }
 
     // a couple of tight turning scuffs, laid as short chords round an arc
-    function pivotArc(cx, cz, radius, from, to, opacity) {
+    function pivotArc(cx, cz, radius, from, to, opacity, y = 0) {
       const steps = 7;
       for (let i = 0; i < steps; i++) {
         const a0 = from + (to - from) * (i / steps);
@@ -798,7 +966,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
         lane(
           cx + Math.cos(a0) * radius, cz + Math.sin(a0) * radius,
           cx + Math.cos(a1) * radius, cz + Math.sin(a1) * radius,
-          0, 0, opacity
+          y, y, opacity
         );
       }
     }
@@ -1022,6 +1190,12 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     return s && s.mode === 'railgun' ? s : null;
   }
 
+  // a gun that goes off on the release rather than the press
+  function boltSpec() {
+    const g = gunSpec();
+    return g && g.releaseFire ? g : null;
+  }
+
   function beamSpec() {
     const s = TURRET_SPECS[model.turretId];
     return s && s.mode === 'beam' ? s : null;
@@ -1043,6 +1217,10 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
 
   // ---- railgun and Aegis state --------------------------------------------
   const rail = { wind: 0, winding: false, trigger: false };
+  // Thunderbolt on the stand: same hold-to-bank behaviour as in a match.
+  const bolt = { held: 0, armed: false, suppress: false };
+  let releasing = false;
+  let lastInterval = 0;
   let aegisActive = false;
   let prongArc = null;
   let prongArcOwner = null;
@@ -1059,6 +1237,9 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       return true;
     }
     if (beamSpec()) return false; // the emitter runs while the trigger is held
+    // A release-fire gun is driven by setTrigger(false); the press does
+    // nothing, or a tap would shoot twice.
+    if (boltSpec() && !releasing) return false;
     if (cooldown > 0) return false;
     const spec = gunSpec();
     if (!spec) return false;
@@ -1067,14 +1248,20 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       fuel = Math.max(0, fuel - spec.fuelPerShot);
     }
     const plasma = spec.projectile === 'plasma';
+    const charged = !!(spec.releaseFire && bolt.armed);
+    if (charged) bolt.armed = false;
 
-    cooldown = spec.fireInterval;
+    cooldown = charged ? spec.chargedCooldown : spec.fireInterval;
+    lastInterval = cooldown;
     gunRecoil = spec.recoil !== undefined ? spec.recoil : 0.22;
     smokeLeft = spec.smokeTime !== undefined ? spec.smokeTime : 2;
 
     const node = spec.dual ? model.nextMuzzle() : model.muzzle;
     muzzle(_mp, _md, node);
-    bullets.fire({}, _mp.clone().addScaledVector(_md, 0.15), _md.clone(), spec.projectile);
+    bullets.fire(
+      {}, _mp.clone().addScaledVector(_md, 0.15), _md.clone(), spec.projectile,
+      charged ? spec.chargedDamage : spec.damage
+    );
     fx.muzzleFlash(_mp.clone(), _md.clone(), plasma ? 'plasma' : 'fire');
     audio.playAt(plasma ? 'plasma' : 'shot', _mp, {
       volume: plasma ? 0.62 : 0.9,
@@ -1083,7 +1270,9 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     // the whole hull bucks: nose lifts, suspension compresses, both settle.
     // Scaled off the same recoil figure the match uses, so a gun that shoves
     // the tank about out there shoves it about on the stand too.
-    const kick = (spec.recoilKick !== undefined ? spec.recoilKick : 1) / 2.4;
+    const kick = (charged && spec.chargedKick !== undefined
+      ? spec.chargedKick
+      : (spec.recoilKick !== undefined ? spec.recoilKick : 1)) / 2.4;
     pitchVel += 2.6 * kick;
     squatVel -= 1.1 * kick;
     return true;
@@ -1107,6 +1296,9 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     rail.wind = 0;
     rail.winding = false;
     rail.trigger = false;
+    bolt.held = 0;
+    bolt.armed = false;
+    bolt.suppress = false;
     aegisActive = false;
     model.setCharge(0);
     if (prongArc) prongArc.setVisible(false);
@@ -1131,14 +1323,61 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   let triggerHeld = false;
 
   function setTrigger(on) {
+    const wasHeld = triggerHeld;
     triggerHeld = on;
     if (model.hasStream()) setStream(on);
+    if (!on && wasHeld) releaseBolt();
   }
 
   // ---- railgun on the stand ------------------------------------------------
   const _rp = new THREE.Vector3();
   const _rd = new THREE.Vector3();
   const _rq = new THREE.Quaternion();
+
+  function updateBolt(dt) {
+    const spec = boltSpec();
+    if (!spec) {
+      bolt.held = 0;
+      bolt.armed = false;
+      bolt.suppress = false;
+      return;
+    }
+    if (triggerHeld) {
+      bolt.held += dt;
+      if (!bolt.armed && bolt.held >= spec.chargeTime && cooldown <= 0) {
+        bolt.armed = true;
+        bolt.suppress = true; // this pull was spent charging, not shooting
+        audio.playAt('rail', model.root.position, { volume: 0.5, rate: 1.5 });
+      }
+    } else {
+      bolt.held = 0;
+    }
+  }
+
+  // what the reload bar should show for a release-fire gun
+  function boltState() {
+    const spec = boltSpec();
+    if (!spec) return null;
+    const frac = bolt.armed
+      ? 1
+      : (cooldown > 0
+        ? 1 - Math.max(0, cooldown) / (lastInterval || spec.fireInterval)
+        : Math.min(1, bolt.held / spec.chargeTime));
+    return { frac, armed: bolt.armed, held: bolt.held };
+  }
+
+  function releaseBolt() {
+    const spec = boltSpec();
+    if (!spec) return;
+    const wasCharging = bolt.suppress;
+    bolt.suppress = false;
+    bolt.held = 0;
+    if (!wasCharging) {
+      releasing = true;
+      fire();
+      releasing = false;
+    }
+  }
 
   function updateRail(dt) {
     const spec = railSpec();
@@ -1254,6 +1493,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   function update(dt, camera) {
     if (cooldown > 0) cooldown -= dt;
     updateStream(dt);
+    updateBolt(dt);
     updateRail(dt);
     updateAegis(dt);
     if (railBeam) railBeam.update(dt);
@@ -1261,9 +1501,11 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     // ambience: the room hum, and the tank idling where it stands. The bay
     // tone is deliberately well down in the mix — it is background, not a
     // feature.
-    roomSound.update(0.136);
+    roomSound.update(0.109);
     idleSound.update(0, true);
     aimShafts(camera);
+    // the extractor turns over slowly all the time
+    for (const spinner of fanBlades) spinner.rotation.y += dt * 1.15;
 
     // exhaust haze drifting off the deck
     hazeAcc += dt;
@@ -1294,7 +1536,14 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     if (squat > SQUAT_LIMIT) { squat = SQUAT_LIMIT; if (squatVel > 0) squatVel = 0; }
     model.root.rotation.z = pitch;
     model.root.rotation.y = FACING; // the springs must never spin it off-axis
-    model.root.position.set(0, STAND.y + squat, 0);
+    // The deck is solid, so the tank pivots on whichever end is still down
+    // and lifts the other — it cannot rotate THROUGH the plate. Rotating
+    // about the model origin swings the far end below the deck by
+    // halfLength * sin(pitch), which at any useful rock is far more than the
+    // squat bump stop was ever going to catch on its own.
+    const halfLen = model.hull.hit.bodyX;
+    const sag = Math.abs(Math.sin(pitch)) * halfLen;
+    model.root.position.set(0, STAND.y + Math.max(squat, sag), 0);
 
     if (smokeLeft > 0) {
       smokeLeft -= dt;
@@ -1333,6 +1582,9 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     rail.wind = 0;
     rail.winding = false;
     rail.trigger = false;
+    bolt.held = 0;
+    bolt.armed = false;
+    bolt.suppress = false;
     aegisActive = false;
     model.setCharge(0);
     if (railBeam) railBeam.hide();
@@ -1361,7 +1613,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   }
 
   return {
-    enter, exit, update, fire, orbit, flingOrbit, applySkin, applyTurret, applyHull, setStream, setTrigger,
+    enter, exit, update, fire, orbit, boltState, flingOrbit, applySkin, applyTurret, applyHull, setStream, setTrigger,
     reloadFrac: () => 1 - Math.max(0, cooldown) / ((gunSpec() || { fireInterval: FIRE_INTERVAL }).fireInterval),
     fuelFrac: () => fuel / 100,
     isStreamWeapon: () => model.hasStream(),

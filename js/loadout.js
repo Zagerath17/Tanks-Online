@@ -6,7 +6,10 @@ import { SKINS } from './tank.js';
 export { SKINS };
 
 export const TURRETS = [
-  { id: 'cannon', name: 'Cannon', locked: false },
+  // The id stays 'cannon' on purpose: it is what saved loadouts and every
+  // network state message already carry. Only the label changed.
+  { id: 'cannon', name: 'Striker', locked: false },
+  { id: 'thunder', name: 'Thunderbolt', locked: false },
   { id: 'arctic', name: 'Arctic Snap', locked: false },
   { id: 'inferno', name: 'Torrential Inferno', locked: false },
   { id: 'plasma', name: 'Dual Plasma', locked: false },

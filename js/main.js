@@ -13,6 +13,7 @@ import { createPhysics } from './physics.js';
 import { createTreadMarks } from './tracks.js';
 import { createArcBeam, createRailBeam, createProngArc } from './arc.js';
 import { createEditor } from './editor.js';
+import { createDummies } from './dummies.js';
 import { createColorWheel } from './colorwheel.js';
 import { createGarage } from './garage.js';
 import { TURRETS, HULLS, SKINS, selection, loadSelection, saveSelection, currentSkin, currentTurret, currentHull } from './loadout.js';
@@ -91,6 +92,7 @@ const tracks = createTreadMarks(scene);
 const arcBeam = createArcBeam(scene);
 const railBeam = createRailBeam(scene);
 const editor = createEditor({ scene, physics });
+const dummies = createDummies({ scene, physics, fx, audio, bullets });
 loadSelection();
 const garage = createGarage({ scene, fx, audio, bullets, railBeam });
 
@@ -616,6 +618,7 @@ function enterEditor() {
 
 function leaveEditor() {
   stopStreaming();
+  dummies.clear();
   refreshTouchUi();
   tracks.clear();
   editor.exit();
@@ -836,6 +839,22 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'Digit3') editor.setTool('slope');
   else if (e.code === 'Digit4') editor.setTool('spawn');
   else if (e.code === 'Digit5') editor.setTool('decal');
+  // Practice targets. 6 drops a hostile that tracks you and shoots back, 7 a
+  // friendly that just stands there, both 18 m ahead of wherever you are; 8
+  // clears the lot.
+  else if (e.code === 'Digit6' || e.code === 'Digit7') {
+    const hostile = e.code === 'Digit6';
+    const h = player.state.heading;
+    dummies.add(
+      playerModel.root.position.x + Math.cos(h) * 18,
+      playerModel.root.position.z - Math.sin(h) * 18,
+      h + Math.PI,
+      !hostile
+    );
+
+  } else if (e.code === 'Digit8') {
+    dummies.clear();
+  }
   else if (e.code === 'KeyR') editor.rotateGhost();
   else if (e.code === 'KeyX') editor.deleteAtCursor();
 });
@@ -991,10 +1010,11 @@ const touch = createTouchControls({
     if (phase !== 'playing' && phase !== 'editor') return;
     firingHeld = true;
     rail.trigger = true;
-    if (!playerModel.hasStream()) tryPlayerFire();
+    if (!playerModel.hasStream() && !boltSpec(playerModel.turretId)) tryPlayerFire();
   },
   onFireUp: () => {
     firingHeld = false;
+    releaseBolt();
   },
 });
 
@@ -1056,7 +1076,7 @@ canvas.addEventListener('mousedown', (e) => {
   }
   firingHeld = true;
   rail.trigger = true;
-  if (!playerModel.hasStream()) tryPlayerFire();
+  if (!playerModel.hasStream() && !boltSpec(playerModel.turretId)) tryPlayerFire();
 });
 
 // automatic guns keep firing for as long as the trigger is down
@@ -1066,8 +1086,13 @@ function updateAutoFire() {
   if (spec && spec.auto) tryPlayerFire();
 }
 
-window.addEventListener('mouseup', () => { firingHeld = false; });
-window.addEventListener('blur', () => { firingHeld = false; });
+window.addEventListener('mouseup', () => { firingHeld = false; releaseBolt(); });
+window.addEventListener('blur', () => {
+  // losing focus mid-pull should not throw a round downrange
+  firingHeld = false;
+  bolt.held = 0;
+  bolt.suppress = false;
+});
 
 document.addEventListener('pointerlockchange', () => {
   elHint.style.display = (touchMode || document.pointerLockElement === canvas) ? 'none' : '';
@@ -1586,6 +1611,51 @@ function muzzleWorld(unit, outPos, outDir, node) {
   outDir.set(1, 0, 0).applyQuaternion(_fq);
 }
 
+// ---------------------------------------------------------------------------
+// Thunderbolt hold-to-charge
+// ---------------------------------------------------------------------------
+// Unlike every other gun this one goes off when you LET GO. Hold it down long
+// enough and the round is banked instead of thrown: the trigger release does
+// nothing, and the shot AFTER that is the heavy one.
+const bolt = { held: 0, armed: false, suppress: false };
+
+function boltSpec(turretId) {
+  const s = gunSpecOf(turretId);
+  return s && s.releaseFire ? s : null;
+}
+
+function updateBolt(dt) {
+  const spec = boltSpec(playerModel.turretId);
+  if (!spec) {
+    bolt.held = 0;
+    bolt.armed = false;
+    bolt.suppress = false;
+    return;
+  }
+  if (firingHeld && local.alive) {
+    bolt.held += dt;
+    // crossing the threshold banks the shot and cancels this trigger pull
+    if (!bolt.armed && bolt.held >= spec.chargeTime && local.cooldown <= 0) {
+      bolt.armed = true;
+      bolt.suppress = true;
+      audio.playAt('rail', playerModel.root.position, { volume: 0.5, rate: 1.5 });
+    }
+  } else {
+    bolt.held = 0;
+  }
+}
+
+// called on trigger release
+function releaseBolt() {
+  const spec = boltSpec(playerModel.turretId);
+  if (!spec) return;
+  const wasSuppressed = bolt.suppress;
+  bolt.suppress = false;
+  bolt.held = 0;
+  if (wasSuppressed) return; // that pull was spent charging, not shooting
+  tryPlayerFire();
+}
+
 function tryPlayerFire() {
   if (!local.alive || local.cooldown > 0) return;
   const spec = gunSpecOf(playerModel.turretId);
@@ -1603,7 +1673,11 @@ function tryPlayerFire() {
   }
 
   const plasma = spec.projectile === 'plasma';
-  local.cooldown = spec.fireInterval;
+  // a banked Thunderbolt round hits far harder and takes longer to recover
+  const charged = !!(spec.releaseFire && bolt.armed);
+  if (charged) bolt.armed = false;
+  local.cooldown = charged ? spec.chargedCooldown : spec.fireInterval;
+  local.lastInterval = local.cooldown;
   local.fireSmoke = spec.smokeTime !== undefined ? spec.smokeTime : 2;
   local.recoil = spec.recoil !== undefined ? spec.recoil : 0.22;
 
@@ -1614,7 +1688,10 @@ function tryPlayerFire() {
     : -1;
 
   muzzleWorld(local, _fpos, _fdir, node);
-  bullets.fire(local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone(), spec.projectile);
+  bullets.fire(
+    local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone(), spec.projectile,
+    charged ? spec.chargedDamage : spec.damage
+  );
   fx.muzzleFlash(_fpos.clone(), _fdir.clone(), plasma ? 'plasma' : 'fire');
   audio.playAt(plasma ? 'plasma' : 'shot', _fpos, {
     volume: plasma ? 0.62 : 0.9,
@@ -1622,7 +1699,9 @@ function tryPlayerFire() {
   });
   player.applyRecoil(
     _fdir,
-    spec.recoilKick !== undefined ? spec.recoilKick : (plasma ? 0.35 : 1),
+    charged && spec.chargedKick !== undefined
+      ? spec.chargedKick
+      : (spec.recoilKick !== undefined ? spec.recoilKick : (plasma ? 0.35 : 1)),
     _fpos
   );
   if (phase === 'playing') {
@@ -1928,17 +2007,24 @@ renderer.setAnimationLoop(() => {
     updateAegis(dt);
     updateRailgun(dt);
     railBeam.update(dt);
+    updateBolt(dt);
+    if (phase === 'editor') {
+      dummies.update(dt, local.alive ? playerModel.root.position : null, local.alive);
+    }
     receiveAegis(dt);
     resolveStreams(dt);
 
     bullets.update(
       dt,
-      phase === 'playing' ? [local, ...remote.targets()] : [local],
+      phase === 'playing' ? [local, ...remote.targets()] : [local, ...dummies.targets()],
       (unit, pos, damage, kind) => {
         if (kind === 'plasma') fx.plasmaImpact(pos.clone());
         else fx.impact(pos.clone());
         if (unit === local) localDamage(damage, pos);
-        else audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
+        else if (unit.model && unit.hp !== undefined && dummies.list.includes(unit)) {
+          dummies.damage(unit, damage);
+          audio.playAt('hit', pos, { volume: 0.6, rate: 0.92 + Math.random() * 0.16 });
+        } else audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
       },
       (pos, kind) => {
         if (kind === 'plasma') fx.plasmaImpact(pos.clone());
@@ -1969,7 +2055,23 @@ renderer.setAnimationLoop(() => {
     }
 
     elSpeed.textContent = String(Math.round(Math.abs(player.state.v) * 8));
-    elReload.style.transform = `scaleX(${1 - Math.max(0, local.cooldown) / fireIntervalOf(playerModel.turretId)})`;
+    // The Thunderbolt shares the reload bar: while you hold the trigger it
+    // fills toward the banked shot, and once banked the whole bar goes a
+    // deeper colour so you can see the heavy round is loaded.
+    const bSpec = boltSpec(playerModel.turretId);
+    if (bSpec) {
+      const frac = bolt.armed
+        ? 1
+        : (local.cooldown > 0
+          ? 1 - Math.max(0, local.cooldown) / (local.lastInterval || bSpec.fireInterval)
+          : Math.min(1, bolt.held / bSpec.chargeTime));
+      elReload.style.transform = `scaleX(${frac})`;
+      elReload.classList.toggle('charged', bolt.armed);
+      elReload.classList.toggle('charging', !bolt.armed && bolt.held > 0 && local.cooldown <= 0);
+    } else {
+      elReload.style.transform = `scaleX(${1 - Math.max(0, local.cooldown) / fireIntervalOf(playerModel.turretId)})`;
+      elReload.classList.remove('charged', 'charging');
+    }
     if (!local.alive) {
       elDeath.textContent = `destroyed \u00b7 respawning in ${Math.max(1, Math.ceil(local.deadT))}`;
     }
@@ -1982,7 +2084,12 @@ renderer.setAnimationLoop(() => {
     sun.position.set(18, 30, 14);
     sun.target.position.set(0, 0, 0);
     sun.intensity = 0.25;
-    elGarageReload.style.transform = `scaleX(${garage.usesCharge() ? garage.fuelFrac() : garage.reloadFrac()})`;
+    const gBolt = garage.boltState();
+    elGarageReload.style.transform = `scaleX(${
+      gBolt ? gBolt.frac : (garage.usesCharge() ? garage.fuelFrac() : garage.reloadFrac())
+    })`;
+    elGarageReload.classList.toggle('charged', !!(gBolt && gBolt.armed));
+    elGarageReload.classList.toggle('charging', !!(gBolt && !gBolt.armed && gBolt.held > 0));
   } else {
     updateIdleCamera(dt);
     fx.update(dt);

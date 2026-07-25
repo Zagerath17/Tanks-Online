@@ -341,6 +341,24 @@ export const TURRET_SPECS = {
     // A 200 mm gun shoves its own tank hard; this is deliberately heavy.
     recoilKick: 4.5,   // the main gun really shoves
   },
+  // Thunderbolt: a heavy assault gun that fires when you LET GO, and that
+  // will trade a shot for a much bigger one if you are willing to stand still
+  // and hold the trigger down for it.
+  thunder: {
+    mode: 'projectile',
+    projectile: 'bolt',
+    fireInterval: 2,
+    damage: 350,
+    releaseFire: true,      // the round leaves on the release, not the press
+    chargeTime: 3,          // hold this long and the shot is banked instead
+    chargedDamage: 600,
+    chargedCooldown: 3,     // and the gun needs longer to recover afterwards
+    // The banked round kicks exactly twice as hard as a normal one, and is
+    // deliberately pitched just under the railgun (5.6) — heavier than
+    // anything else on the roster, but still not the heaviest thing there is.
+    recoilKick: 2.5,
+    chargedKick: 5.0,
+  },
   plasma: {
     mode: 'projectile',
     projectile: 'plasma',
@@ -382,8 +400,8 @@ export const TURRET_SPECS = {
     // The heaviest thing on any hull by a wide margin: it visibly throws the
     // tank backwards and stands it up on its rear idlers.
     recoilKick: 5.6,
-    rechargeTime: 5,
-    fuelRecharge: 20,   // 100 / 5 s
+    rechargeTime: 7,
+    fuelRecharge: 100 / 7,
   },
   aegis: {
     mode: 'beam',
@@ -909,12 +927,6 @@ function buildPlasmaTurret(M) {
       t.add(cap);
     }
   }
-
-  // busbar tying the bank together
-  const bus = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.05, 0.06), M.plasma);
-  bus.position.set(-0.37, 0.93, 0);
-  t.add(bus);
-
   // heat sink fins along the flanks
   const finGeo = new THREE.BoxGeometry(0.6, 0.18, 0.035);
   for (const side of [-1, 1]) {
@@ -1249,12 +1261,93 @@ function buildRailgunTurret(M) {
   return { turret: t, pitchGroup, gun, muzzle, chargeParts: charge, chargeGlow };
 }
 
+// Thunderbolt: a squat, heavily braced gun with an induction coil stack
+// wrapped round the breech. Short barrel, big muzzle brake — it is built to
+// throw one very large round rather than many small ones.
+function buildThunderTurret(M) {
+  const t = new THREE.Group();
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.74, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.66, 0.5, 1.22), M.turret);
+  body.position.set(0.02, 0.35, 0);
+  t.add(body);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.22, 0.98), M.turret);
+  roof.position.set(-0.06, 0.68, 0);
+  t.add(roof);
+
+  // bracing ribs down each flank
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.44, 0.08), M.metal);
+      rib.position.set(-0.42 + i * 0.42, 0.36, side * 0.63);
+      t.add(rib);
+    }
+  }
+
+  // induction coils round the breech, banded in brass
+  const coilGeo = new THREE.TorusGeometry(0.3, 0.055, 8, 20);
+  for (let i = 0; i < 3; i++) {
+    const coil = new THREE.Mesh(coilGeo, M.brass);
+    coil.rotation.y = Math.PI / 2;
+    coil.position.set(0.42 + i * 0.2, 0.38, 0);
+    t.add(coil);
+  }
+
+  // spent-case hatch on the rear deck
+  const hatch = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.06, 0.34), M.metal);
+  hatch.position.set(-0.5, 0.8, 0.18);
+  t.add(hatch);
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.72, 0.38, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.54, 0.78), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16), M.barrel);
+  barrel.rotation.z = -Math.PI / 2;
+  barrel.position.set(0.9, 0.02, 0);
+  gun.add(barrel);
+
+  // heavy muzzle brake: a cuff with two vents cut either side
+  const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.34, 16), M.metal);
+  brake.rotation.z = -Math.PI / 2;
+  brake.position.set(1.82, 0.02, 0);
+  gun.add(brake);
+  for (const side of [-1, 1]) {
+    const vent = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.1), M.barrel);
+    vent.position.set(1.82, 0.02, side * 0.19);
+    gun.add(vent);
+  }
+
+  // a collar partway along, where the recuperator sits
+  const collar2 = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.16, 16), M.metal);
+  collar2.rotation.z = -Math.PI / 2;
+  collar2.position.set(0.42, 0.02, 0);
+  gun.add(collar2);
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(2.02, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle };
+}
+
 function buildTurret(M, kind) {
   if (kind === 'arctic') return buildArcticTurret(M);
   if (kind === 'inferno') return buildInfernoTurret(M);
   if (kind === 'plasma') return buildPlasmaTurret(M);
   if (kind === 'aegis') return buildAegisTurret(M);
   if (kind === 'railgun') return buildRailgunTurret(M);
+  if (kind === 'thunder') return buildThunderTurret(M);
   return buildCannonTurret(M);
 }
 
