@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.33
+# Tank Remake — prototype 0.35
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -8,7 +8,7 @@ Play holds the future modes (TDM / FFA / CTF — placeholders for now), Settings
 
 ## Garage
 
-A working tank bay with the roller door standing open at the far end. Daylight pours through the opening, throws a pool across the concrete and rim-lights the tank from the front, and the shutter's curtain is coiled on its drum overhead. The shafts of light are soft-edged all round and roll about the sun's own axis to face you as you orbit, so they never flatten into cards or leave a seam where they cross the floor. Inside: a gantry crane on rails with the hook slung over the stand, strip lights under exposed roof beams, benches with pegboards and tools, parts racks, oil drums, stacked spare track links, a barrel up on trestles and toolbox trolleys. The room hums quietly under everything — extractor fans, a compressor line and the odd distant clank of tools, all of it tuneless by design: no mains-hum chord, and the clanks are noise driven through inharmonic resonances so they land as struck metal rather than as notes. Your tank sits there idling with exhaust haze drifting off the deck.
+A working tank bay with the roller door standing open at the far end. Daylight pours through the opening, throws a pool across the concrete and rim-lights the tank from the front, and the shutter's curtain is coiled on its drum overhead. The shafts of light are soft-edged all round and roll about the sun's own axis to face you as you orbit, so they never flatten into cards or leave a seam where they cross the floor. Inside: a gantry crane on rails with the hook slung over the stand, strip lights under exposed roof beams, benches with pegboards and tools, parts racks, oil drums, stacked spare track links, a barrel up on trestles and toolbox trolleys. The bay floor is laid in worn two-metre concrete slabs and the platform is chequer plate, with the tank's own tracks worn into the floor where it drove in off the apron and up the ramp. The room hums quietly under everything — extractor fans, a compressor line and the odd distant clank of tools, all of it tuneless by design: no mains-hum chord, and the clanks are noise driven through inharmonic resonances so they land as struck metal rather than as notes. Your tank sits there idling with exhaust haze drifting off the deck.
 
 The tank stands on a welded steel service platform: plated deck, channel edge beams, corner legs, hazard nosing, and a ramp at each end — one out the back of the bay, one toward the door — so it can be driven straight in off the apron, up onto the deck and out the other side. It faces the open door, nose out, ready to roll. Drag anywhere to spin the camera around it, and click (or hit space) to actually fire — full muzzle flash, smoke, sound, a live shell downrange, and the hull rearing back on its suspension. The recoil is spring-driven, so the tank rocks hard and settles back to exactly where it stood; it never drifts off the deck.
 
@@ -48,7 +48,7 @@ The bolts are layered — an unlit blazing core inside a pulsing plasma shell, a
 
 ## Tracks and dust
 
-Tanks throw up grey dust behind their tracks as they drive — concrete grit, not soil, and sized so it reads as dust rather than as fog over the ground — and press tread marks into the ground behind them. Each mark is one imprint three links long, with the grouser bars lying **across** the track the way real links land, laid under both tracks and spaced by distance covered rather than by frame, so the trail is continuous at any frame rate and at any hull's top speed. The imprint is drawn dark and wide on purpose: bars that lie across the track repeat along the axis a chase camera foreshortens most, so what survives on screen is closer to the texture's average than to its peaks. They hold for twenty seconds before fading away.
+Tanks throw up grey dust behind their tracks as they drive — concrete grit, not soil, and sized so it reads as dust rather than as fog over the ground — and press tread marks into the ground behind them. Firing broadside leans the tank on its tracks rather than rolling it like a boat: most of the roll a rigid box would take from an off-centre impulse is absorbed, while the nose-up from firing forward is left alone. Each mark is one imprint three links long, with the grouser bars lying **across** the track the way real links land, laid under both tracks and spaced by distance covered rather than by frame, so the trail is continuous at any frame rate and at any hull's top speed. They hold for twenty seconds before fading away.
 
 ## Aegis Emitter
 
@@ -60,7 +60,7 @@ Because it needs to tell friend from foe, players in a Custom lobby are now alte
 
 ## Railgun
 
-A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Tap the trigger and it spins up for a second — you don't need to keep holding — the accelerator rings turn and the capacitor bands, the tower caps and the muzzle core all brighten, glowing harder the closer it gets to letting go; nothing swells or changes size, the energy shows as light. Then it releases an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
+A tall mount carrying a very long twin-rail barrel, flanked by capacitor towers. Tap the trigger and it spins up for a second — you don't need to keep holding — the accelerator rings turn and the capacitor bands, the tower caps and the muzzle core all brighten — seventeen times over, and a translucent shell blooms in the air around each of them. They get brighter, never whiter: the blue holds all the way up. Nothing swells or changes size; the energy shows as light. Then it releases an instant blue lance 120 m long. The shot **pierces**: the first tank takes 650, the next 500, then 350, 200, 50. Then five seconds on the bar before it will fire again.
 
 ## Editor
 
@@ -136,6 +136,12 @@ Your garage loadout is saved to your account and follows you to any machine you 
 ## Controls
 
 W / S drive and reverse, A / D pivot the hull. Click the canvas to take aim: the crosshair sits fixed at the center of the screen and the camera is locked to it — the view swings anywhere, vertically included. The game finds the exact point under the crosshair (ground, wall, or enemy armor) and the turret converges on it as best it can within its barrel limits, at a limited traverse speed. Left click fires — one shot every 2.5 seconds. Esc releases the mouse.
+
+### On a phone or tablet
+
+Touch controls appear automatically on a touchscreen: a stick on the left for the hull (push forward to drive, sideways to pivot), a stick on the right for the turret, and a fire button. Both sticks centre themselves wherever your thumb lands rather than making you find a fixed circle, and the two sticks and the button all work at once. In the editor's build cam the sticks fly the camera and the button becomes PLACE.
+
+Add `?touch=1` to the URL to force the on-screen controls on a desktop for testing.
 
 ## The match
 

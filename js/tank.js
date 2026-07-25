@@ -523,6 +523,18 @@ function buildMaterials(p) {
       color: '#8fd0ff', emissive: '#2a7bff', emissiveIntensity: 1.15,
       roughness: 0.3, metalness: 0.15,
     }),
+    // ...a soft shell that sits around the charged parts and blooms as the
+    // railgun winds up, so the glow spills into the air instead of stopping
+    // dead at the surface of each ring
+    plasmaGlow: new THREE.MeshBasicMaterial({
+      color: '#5aa8ff',
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide,
+      toneMapped: false,
+    }),
     // ...and the Aegis's brass emitter gear, which stays brass on every skin.
     // Textured like the rest of the steel so it reads as a cast, worked
     // component rather than a flat gold-coloured primitive.
@@ -1221,7 +1233,20 @@ function buildRailgunTurret(M) {
   muzzle.position.set(3.6, 0.02, 0);
   gun.add(muzzle);
 
-  return { turret: t, pitchGroup, gun, muzzle, chargeParts: charge };
+  // A translucent shell around each charged part: the same geometry blown up
+  // a little and drawn back-face-first with additive blending, so the glow
+  // reads as light in the air around the hardware rather than as a bigger
+  // solid object.
+  const chargeGlow = [];
+  for (const part of charge) {
+    const halo = new THREE.Mesh(part.geometry, M.plasmaGlow);
+    halo.scale.setScalar(1.35);
+    halo.renderOrder = 3;
+    part.add(halo);
+    chargeGlow.push(halo);
+  }
+
+  return { turret: t, pitchGroup, gun, muzzle, chargeParts: charge, chargeGlow };
 }
 
 function buildTurret(M, kind) {
@@ -1387,7 +1412,10 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
   }
 
   let parts = attachTurret(turretId);
-  const parts_ = { get chargeParts() { return parts.chargeParts; } };
+  const parts_ = {
+    get chargeParts() { return parts.chargeParts; },
+    get chargeGlow() { return parts.chargeGlow; },
+  };
   const { turret, pitchGroup, gun, muzzle } = parts;
   let nextMuzzle = 0;
 
@@ -1399,7 +1427,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
       [M.hull, 'hull'], [M.turret, 'turret'], [M.barrel, 'barrel'],
       [M.track, 'track'], [M.metal, 'metal'], [M.tyre, 'tyre'],
       [M.hub, 'hub'], [M.cryo, 'cryo'], [M.ember, 'ember'], [M.plasma, 'plasma'],
-      [M.brass, 'brass'],
+      [M.brass, 'brass'], [M.plasmaGlow, 'plasmaGlow'],
     ]);
     meshes.length = 0;
     root.traverse((o) => {
@@ -1426,8 +1454,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
   let chill = 0;
   let burn = 0;
 
-  const WHITE_HOT = new THREE.Color('#eaf4ff');
-  const ICE = new THREE.Color('#7fc4ff');
+    const ICE = new THREE.Color('#7fc4ff');
   const ICE_GLOW = new THREE.Color('#2f79c8');
   const FIRE = new THREE.Color('#ff5436');
   const FIRE_GLOW = new THREE.Color('#c22006');
@@ -1556,13 +1583,18 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
         const base = mat.userData.baseEmissiveIntensity;
         if (base !== undefined) {
           // ramps hard at the top so the last quarter second really lights up
-          // ramps hard and goes white-hot at the top of the wind-up
-          mat.emissiveIntensity = base * (1 + 11 * f * f);
-          const bc = mat.userData.baseColor;
-          const be = mat.userData.baseEmissive;
-          if (bc) mat.color.copy(bc).lerp(WHITE_HOT, 0.85 * f);
-          if (be) mat.emissive.copy(be).lerp(WHITE_HOT, 0.6 * f * f);
+          // Brighter, not whiter: the emissive COLOUR is left alone so the
+          // accents keep their blue all the way up, and only the intensity
+          // climbs. Washing them toward white read as the parts turning grey.
+          mat.emissiveIntensity = base * (1 + 16 * f * f);
         }
+      }
+      // the halo blooms with the charge
+      const glow = parts_.chargeGlow;
+      if (glow) {
+        const gm = M.plasmaGlow;
+        if (gm) gm.opacity = 0.62 * f * f;
+        for (let i = 0; i < glow.length; i++) glow[i].scale.setScalar(1.35 + 0.55 * f);
       }
       if (!parts) return;
       // the rings still turn as it winds; only the swelling is gone

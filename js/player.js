@@ -45,10 +45,13 @@ export function createPlayerController(model, physics) {
   const _imp = new CANNON.Vec3();
   const _rel = new CANNON.Vec3();
   const _cn = new THREE.Vector3();
+  const _fwdAxis = new THREE.Vector3();
 
   // seconds after a shot during which the drive controller keeps its hands
   // off the forward velocity, so recoil is something you feel
   const RECOIL_FREE = 0.42;
+  // how much of a broadside shot's roll the suspension eats
+  const ROLL_ABSORB = 0.82;
   let recoilT = 0;
 
 
@@ -109,6 +112,21 @@ export function createPlayerController(model, physics) {
     } else {
       body.applyImpulse(_imp);
     }
+    // A tank fired broadside leans on its suspension and settles; it does not
+    // roll like a boat. The physical impulse produces far more roll than that
+    // because the hull is a rigid box with no springs in it, so the component
+    // of the kick that spins the tank about its own FORWARD axis is mostly
+    // taken back out. Pitch (nose-up) is left alone — that part should read.
+    _fwdAxis.set(1, 0, 0).applyQuaternion(
+      _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w)
+    );
+    const av = body.angularVelocity;
+    const roll = av.x * _fwdAxis.x + av.y * _fwdAxis.y + av.z * _fwdAxis.z;
+    const shed = roll * ROLL_ABSORB;
+    av.x -= _fwdAxis.x * shed;
+    av.y -= _fwdAxis.y * shed;
+    av.z -= _fwdAxis.z * shed;
+
     // let the shove actually land: the drive controller is suppressed for a
     // moment so it does not immediately cancel the recoil velocity
     recoilT = RECOIL_FREE;

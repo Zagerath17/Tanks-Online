@@ -21,17 +21,37 @@ window.addEventListener('keyup', (e) => {
 // Don't leave keys stuck when the tab loses focus mid-press
 window.addEventListener('blur', () => down.clear());
 
-export function readInput() {
+// An on-screen stick can stand in for the keys. Whichever is pushed further
+// wins, so a controller and the keyboard can both be live without fighting.
+let stick = null;
+
+export function setMoveStick(fn) {
+  stick = fn;
+}
+
+function blend(keys, pad) {
+  if (!pad) return keys;
   return {
-    throttle: (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0),
-    turn: (down.has('KeyA') ? 1 : 0) - (down.has('KeyD') ? 1 : 0),
+    throttle: Math.abs(pad.throttle) > Math.abs(keys.throttle) ? pad.throttle : keys.throttle,
+    turn: Math.abs(pad.turn) > Math.abs(keys.turn) ? pad.turn : keys.turn,
   };
 }
 
+export function readInput() {
+  const keys = {
+    throttle: (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0),
+    turn: (down.has('KeyA') ? 1 : 0) - (down.has('KeyD') ? 1 : 0),
+  };
+  return blend(keys, stick ? stick() : null);
+}
+
 export function readFly() {
+  const pad = stick ? stick() : null;
+  const fwd = (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0);
+  const strafe = (down.has('KeyD') ? 1 : 0) - (down.has('KeyA') ? 1 : 0);
   return {
-    fwd: (down.has('KeyW') ? 1 : 0) - (down.has('KeyS') ? 1 : 0),
-    strafe: (down.has('KeyD') ? 1 : 0) - (down.has('KeyA') ? 1 : 0),
+    fwd: pad && Math.abs(pad.throttle) > Math.abs(fwd) ? pad.throttle : fwd,
+    strafe: pad && Math.abs(pad.turn) > Math.abs(strafe) ? -pad.turn : strafe,
     up: (down.has('Space') ? 1 : 0) - (down.has('ShiftLeft') || down.has('ShiftRight') ? 1 : 0),
   };
 }

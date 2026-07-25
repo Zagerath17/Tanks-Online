@@ -5,7 +5,8 @@ import { createPlayerController } from './player.js';
 import { createBullets, BULLET } from './bullets.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
-import { readInput, readFly } from './controls.js';
+import { readInput, readFly, setMoveStick } from './controls.js';
+import { createTouchControls, touchDeviceLikely } from './touch.js';
 import { createMenu } from './menu.js';
 import { createRemoteManager } from './remote.js';
 import { createPhysics } from './physics.js';
@@ -413,6 +414,7 @@ function stopStreaming() {
 
 function leaveToMenu() {
   stopStreaming();
+  refreshTouchUi();
   tracks.clear();
   net.leaveLobby();
   remote.clear();
@@ -518,6 +520,7 @@ document.getElementById('garage-exit').addEventListener('click', () => {
 
 function enterGarage() {
   phase = 'garage';
+  refreshTouchUi();
   document.body.classList.add('garage');
   menu.hideAll();
   arenaGroup.visible = false;
@@ -533,6 +536,7 @@ function enterGarage() {
 
 function leaveGarage() {
   garage.exit();
+  refreshTouchUi();
   bullets.clear();
   arenaGroup.visible = true;
   physics.setArenaActive(true);
@@ -548,14 +552,14 @@ function leaveGarage() {
 // drag to spin the view; a click without dragging pulls the trigger
 let gDrag = null;
 
-renderer.domElement.addEventListener('mousedown', (e) => {
-  if (phase !== 'garage' || e.button !== 0) return;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (phase !== 'garage' || (e.pointerType === 'mouse' && e.button !== 0)) return;
   gDrag = { lastX: e.clientX, moved: 0, vx: 0, streaming: false };
   garage.setTrigger(true);
   if (garage.isStreamWeapon()) gDrag.streaming = true;
 });
 
-window.addEventListener('mousemove', (e) => {
+window.addEventListener('pointermove', (e) => {
   if (!gDrag) return;
   const dx = e.clientX - gDrag.lastX;
   gDrag.lastX = e.clientX;
@@ -570,13 +574,16 @@ window.addEventListener('mousemove', (e) => {
   garage.orbit(dx);
 });
 
-window.addEventListener('mouseup', () => {
+function endGarageDrag() {
   if (!gDrag) return;
   garage.setTrigger(false);
   if (gDrag.moved < 5) garage.fire();
   else garage.flingOrbit(gDrag.vx);
   gDrag = null;
-});
+}
+
+window.addEventListener('pointerup', endGarageDrag);
+window.addEventListener('pointercancel', endGarageDrag);
 
 window.addEventListener('keydown', (e) => {
   if (phase !== 'garage' || e.code !== 'Space') return;
@@ -596,6 +603,7 @@ window.addEventListener('keyup', (e) => {
 // ---------------------------------------------------------------------------
 function enterEditor() {
   phase = 'editor';
+  refreshTouchUi();
   playerModel.root.visible = true;
   editorMode = 'drive';
   document.body.classList.add('editor');
@@ -608,6 +616,7 @@ function enterEditor() {
 
 function leaveEditor() {
   stopStreaming();
+  refreshTouchUi();
   tracks.clear();
   editor.exit();
   arenaGroup.visible = true;
@@ -779,6 +788,7 @@ const flyPos = new THREE.Vector3();
 const _flyDir = new THREE.Vector3();
 
 function toggleFly() {
+  setTimeout(refreshTouchUi, 0);
   if (editorMode === 'drive') {
     editorMode = 'fly';
     flyPos.copy(camera.position);
@@ -916,6 +926,7 @@ function spawnLocal(slot) {
 
 function beginMatch() {
   phase = 'playing';
+  refreshTouchUi();
   menu.hideAll();
   spawnLocal(startSlot());
 }
@@ -962,9 +973,78 @@ let lastAimPitch = 0;
 
 const canvas = renderer.domElement;
 
+// ---------------------------------------------------------------------------
+// Touch controls. The left stick drives the hull, the right one swings the
+// turret, and the button pulls the trigger — the same three inputs the
+// keyboard and mouse provide, so everything downstream is unchanged.
+// ---------------------------------------------------------------------------
+const TOUCH_YAW_RATE = 2.6;   // radians a second at full deflection
+const TOUCH_PITCH_RATE = 1.5;
+
+const touch = createTouchControls({
+  onFireDown: () => {
+    if (phase === 'editor' && editorMode === 'fly') {
+      editor.place();
+      return;
+    }
+    if (phase !== 'playing' && phase !== 'editor') return;
+    firingHeld = true;
+    rail.trigger = true;
+    if (!playerModel.hasStream()) tryPlayerFire();
+  },
+  onFireUp: () => {
+    firingHeld = false;
+  },
+});
+
+setMoveStick(() => touch.readMove());
+
+// Touch mode is on by default on a phone or tablet, and can be forced on a
+// desktop with ?touch=1 for testing.
+const params = new URLSearchParams(location.search);
+const touchForced = params.get('touch') === '1';
+let touchMode = touchForced || touchDeviceLikely();
+
+function refreshTouchUi() {
+  // the sticks only belong on screen while you're actually driving
+  const inWorld = phase === 'playing' || phase === 'editor';
+  touch.setEnabled(touchMode && inWorld);
+  document.body.classList.toggle('touchmode', touchMode);
+  if (touchMode) {
+    touch.setFireLabel(phase === 'editor' && editorMode === 'fly' ? 'PLACE' : 'FIRE');
+  }
+}
+
+// A stylus or a mouse arriving means this probably isn't a touch-only device
+window.addEventListener('pointerdown', (e) => {
+  if (touchForced) return;
+  if (e.pointerType === 'touch' && !touchMode) {
+    touchMode = true;
+    refreshTouchUi();
+  }
+}, true);
+
+// Apply the aim stick as a rate. Called once a frame from the loop.
+function applyTouchAim(dt) {
+  const aim = touch.readAim();
+  if (!aim || (aim.x === 0 && aim.y === 0)) return;
+  if (phase === 'editor' && editorMode === 'fly') {
+    flyYaw -= aim.x * TOUCH_YAW_RATE * dt;
+    flyPitch = THREE.MathUtils.clamp(flyPitch - aim.y * TOUCH_PITCH_RATE * dt, -1.5, 1.5);
+    return;
+  }
+  if (!local.alive) return;
+  viewYaw -= aim.x * TOUCH_YAW_RATE * dt;
+  viewPitch = THREE.MathUtils.clamp(
+    viewPitch - aim.y * TOUCH_PITCH_RATE * dt, -CAM_PITCH_LIM, CAM_PITCH_LIM
+  );
+}
+
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   if (phase !== 'playing' && phase !== 'editor') return;
+  // on touch there is nothing to capture, and the on-screen button fires
+  if (touchMode) return;
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
     return;
@@ -989,7 +1069,7 @@ window.addEventListener('mouseup', () => { firingHeld = false; });
 window.addEventListener('blur', () => { firingHeld = false; });
 
 document.addEventListener('pointerlockchange', () => {
-  elHint.style.display = document.pointerLockElement === canvas ? 'none' : '';
+  elHint.style.display = (touchMode || document.pointerLockElement === canvas) ? 'none' : '';
   if (document.pointerLockElement !== canvas) firingHeld = false;
 });
 
@@ -1739,6 +1819,7 @@ renderer.setAnimationLoop(() => {
   const inGame = phase === 'playing' || phase === 'editor';
 
   if (inGame) {
+    applyTouchAim(dt);
     const input = readInput();
     const flying = phase === 'editor' && editorMode === 'fly';
 

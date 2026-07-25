@@ -846,3 +846,96 @@ body.railweapon #cryofill {
 
 /* the garage has its own HUD; the driving one has no business showing there */
 body.garage #gamehud { display: none; }
+
+
+/* ---- touch controls (v0.35) ------------------------------------------- */
+
+#touchui {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  display: none;
+  pointer-events: none;
+  touch-action: none;
+}
+
+#touchui.on { display: block; }
+
+/* nothing in the page should pan or zoom under a thumb while driving */
+body.touchmode { touch-action: none; overscroll-behavior: none; }
+body.touchmode canvas { touch-action: none; }
+
+.tstick {
+  position: absolute;
+  width: 128px;
+  height: 128px;
+  margin: -64px 0 0 -64px;
+  border-radius: 50%;
+  border: 2px solid rgba(200, 217, 174, 0.30);
+  background: rgba(20, 23, 27, 0.28);
+  opacity: 0.45;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+
+.tstick.on { opacity: 0.9; }
+
+/* resting positions, clear of the HP and charge bars */
+.tstick.left { left: 108px; top: auto; bottom: 116px; margin-bottom: -64px; }
+.tstick.right { left: auto; right: 108px; top: auto; bottom: 116px; margin: 0 -64px -64px 0; }
+
+.tknob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: rgba(200, 217, 174, 0.42);
+  border: 2px solid rgba(232, 228, 216, 0.65);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+#tfire {
+  position: absolute;
+  right: 34px;
+  bottom: 262px;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: rgba(120, 52, 44, 0.82);
+  border: 2px solid rgba(232, 170, 160, 0.7);
+  color: var(--sand-100);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#tfire.on {
+  background: rgba(190, 78, 62, 0.95);
+  transform: scale(0.94);
+}
+
+/* the driving HUD needs to sit clear of a thumb on a small screen */
+@media (max-width: 900px) {
+  body.touchmode .controls { display: none; }
+  body.touchmode .brand p { display: none; }
+  body.touchmode .hpwrap { width: 200px; bottom: 10px; }
+  body.touchmode #cryowrap { bottom: 38px; }
+  body.touchmode #editorbar { top: 6px; gap: 4px; flex-wrap: wrap; max-width: 94vw; }
+  body.touchmode #garage-items .gitem { width: 92px; }
+}
+
+/* short landscape phones: pull everything in tighter */
+@media (max-height: 480px) {
+  .tstick { width: 104px; height: 104px; margin: -52px 0 0 -52px; }
+  .tstick.left { left: 84px; bottom: 84px; margin-bottom: -52px; }
+  .tstick.right { right: 84px; bottom: 84px; margin: 0 -52px -52px 0; }
+  .tknob { width: 48px; height: 48px; }
+  #tfire { width: 80px; height: 80px; bottom: 196px; right: 24px; }
+}

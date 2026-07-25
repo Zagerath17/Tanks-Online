@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createTankModel } from './tank.js';
 import { TURRET_SPECS } from './tank.js';
 import { createProngArc } from './arc.js';
+import { makeGridTexture, makeMetalTexture } from './grid-texture.js';
 import { currentSkin, currentTurret, currentHull } from './loadout.js';
 
 // The garage: your tank on a workshop platform at the back of a bay whose
@@ -12,9 +13,17 @@ import { currentSkin, currentTurret, currentHull } from './loadout.js';
 const STAND = { y: 1.3, halfX: 6.5, halfZ: 5.5 };
 const RAMP = { len: 4.2, halfW: 2.6 }; // off the back of the deck to the floor
 const DOOR = { w: 9, h: 6.4 };
+// one concrete slab per 2 m of floor
+const BAY_TILES_X = 15;
+const BAY_TILES_Z = 17;
 // the tank sits nose-on to the door, which is in the +Z wall
 const FACING = -Math.PI / 2;
-const SQUAT_LIMIT = 0.11; // bump stop: the hull never sinks into the deck
+// Hard stops on the display rig. The tank is a model standing on a solid
+// deck, so neither the drop nor the rock may ever carry a corner of it below
+// the plate — a heavy gun used to drive it most of a metre down, through the
+// platform and out the bottom.
+const SQUAT_LIMIT = 0.07;
+const PITCH_LIMIT = 0.075; // radians, about 4.3 degrees
 const FIRE_INTERVAL = 2.5;
 const CAM = { dist: 12.5, height: 4.6, look: 1.9 };
 
@@ -26,7 +35,17 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // ---- the bay -------------------------------------------------------------
   const BAY = { w: 30, d: 34, h: 11 };
 
-  const concrete = new THREE.MeshStandardMaterial({ color: '#33383f', roughness: 0.96 });
+  // Worn bay concrete, laid out in 2 m slabs, and a chequer-plate deck. The
+  // floor and the platform were both flat colour before, which made the room
+  // read as cardboard next to the tank standing on it.
+  const concrete = new THREE.MeshStandardMaterial({
+    map: makeGridTexture({
+      cells: 2, base: '#33383f', line: '#2b3037', lineWidth: 3,
+      major: 4, majorLine: '#262b31', majorWidth: 5,
+      repeat: [BAY_TILES_X, BAY_TILES_Z], anisotropy: 16,
+    }),
+    roughness: 0.96,
+  });
   const painted = new THREE.MeshStandardMaterial({ color: '#3d444c', roughness: 0.85, metalness: 0.1 });
   const steel = new THREE.MeshStandardMaterial({ color: '#4a5159', roughness: 0.5, metalness: 0.75 });
   const darkSteel = new THREE.MeshStandardMaterial({ color: '#23272c', roughness: 0.6, metalness: 0.6 });
@@ -268,10 +287,17 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // channel-section edge beams, legs, hazard-striped nosing, and a ramp off
   // the back the tank could actually have driven up.
   const deckMat = new THREE.MeshStandardMaterial({
-    color: '#59616b', roughness: 0.62, metalness: 0.55,
+    map: makeMetalTexture({
+      base: '#59616b', shade: '#474e57', grain: 1.6, wear: 1.5,
+      repeat: [STAND.halfX, STAND.halfZ], anisotropy: 16,
+    }),
+    roughness: 0.62, metalness: 0.55,
   });
   const plinthMat = new THREE.MeshStandardMaterial({
-    color: '#3b424b', roughness: 0.9, metalness: 0.12,
+    map: makeMetalTexture({
+      base: '#3b424b', shade: '#333944', grain: 1.2, wear: 1.9, repeat: [3, 2],
+    }),
+    roughness: 0.9, metalness: 0.12,
   });
 
   const deck = new THREE.Mesh(
@@ -381,6 +407,63 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
 
   buildRamp(-1);
   buildRamp(1);
+
+  // ---- tread marks the tank left getting here -----------------------------
+  // It drove in off the apron, up the door-side ramp and onto the deck, so
+  // there is a pair of tracks worn into the floor showing the way it came.
+  {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 64;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 128, 64);
+    g.fillStyle = 'rgba(18,17,16,0.34)';
+    g.fillRect(0, 3, 128, 58);
+    // grousers across the track
+    for (let i = 0; i < 8; i++) {
+      g.fillStyle = `rgba(14,13,12,${0.5 + Math.random() * 0.28})`;
+      g.fillRect(i * 16 + 2, 2, 9, 60);
+    }
+    // feather the two long edges
+    const fade = g.createLinearGradient(0, 0, 0, 64);
+    fade.addColorStop(0, 'rgba(0,0,0,1)');
+    fade.addColorStop(0.16, 'rgba(0,0,0,0)');
+    fade.addColorStop(0.84, 'rgba(0,0,0,0)');
+    fade.addColorStop(1, 'rgba(0,0,0,1)');
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = fade;
+    g.fillRect(0, 0, 128, 64);
+    const markTex = new THREE.CanvasTexture(c);
+    markTex.colorSpace = THREE.SRGBColorSpace;
+    markTex.wrapS = THREE.RepeatWrapping;
+    markTex.wrapT = THREE.ClampToEdgeWrapping;
+    markTex.anisotropy = 16;
+
+    const markMat = new THREE.MeshBasicMaterial({
+      map: markTex, transparent: true, opacity: 0.85, depthWrite: false,
+      side: THREE.DoubleSide, polygonOffset: true,
+      polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    });
+
+    const GAUGE = 2.36;   // centre-to-centre of the two tracks
+    const WIDE = 0.62;    // track width
+    // z0 -> z1 along the bay, at height y, optionally on the ramp slope
+    function laneRun(z0, z1, y0, y1, tilt) {
+      const len = Math.hypot(z1 - z0, y1 - y0);
+      for (const side of [-1, 1]) {
+        const geo = new THREE.PlaneGeometry(WIDE, len);
+        const m = new THREE.Mesh(geo, markMat);
+        m.rotation.x = -Math.PI / 2 + tilt;
+        m.position.set(side * GAUGE / 2, (y0 + y1) / 2 + 0.012, (z0 + z1) / 2);
+        m.renderOrder = 1;
+        markTex.repeat.set(1, Math.max(1, Math.round(len / 1.6)));
+        group.add(m);
+      }
+    }
+    const rise = Math.atan2(STAND.y, RAMP.len);
+    laneRun(BAY.d / 2 - 0.6, STAND.halfZ + RAMP.len, 0, 0, 0);          // apron
+    laneRun(STAND.halfZ + RAMP.len, STAND.halfZ, 0, STAND.y, rise);      // ramp
+    laneRun(STAND.halfZ, -STAND.halfZ + 1.2, STAND.y, STAND.y, 0);       // deck
+  }
 
   // hazard stripe painted on the floor around the working area
   {
@@ -660,8 +743,8 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     // Scaled off the same recoil figure the match uses, so a gun that shoves
     // the tank about out there shoves it about on the stand too.
     const kick = (spec.recoilKick !== undefined ? spec.recoilKick : 1) / 2.4;
-    pitchVel += 5.6 * kick;
-    squatVel -= 2.4 * kick;
+    pitchVel += 2.6 * kick;
+    squatVel -= 1.1 * kick;
     return true;
   }
 
@@ -739,8 +822,8 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
         audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
         // it kicks the stand very hard indeed
         const rk = (spec.recoilKick !== undefined ? spec.recoilKick : 7) / 2.4;
-        pitchVel += 5.6 * rk;
-        squatVel -= 2.4 * rk;
+        pitchVel += 2.6 * rk;
+        squatVel -= 1.1 * rk;
         fuel = 0;
         rail.wind = 0;
         rail.winding = false;
