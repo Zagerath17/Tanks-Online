@@ -1,84 +1,88 @@
 import * as THREE from 'three';
 
-// Tread marks pressed into the ground. Each segment is one instanced quad
-// carrying its own age, so hundreds of them cost a single draw call. They
-// hold at full strength for HOLD seconds, then fade out over FADE.
-// Sized so one tank at the fastest hull's top speed can lay a full-length
-// trail without recycling (Falcon needs ~1330). With several tanks moving at
-// once the oldest marks are reused early, which just shortens trails rather
-// than breaking them.
-const MAX = 2000;
-const HOLD = 20;
-const FADE = 6;
-// stamp length is set per hull from its own link pitch (see trail below)
+// Tread marks pressed into the ground.
+//
+// REBUILT FROM SCRATCH. The previous version was an InstancedMesh driven by a
+// custom ShaderMaterial with a per-instance age attribute. Every piece of that
+// checked out in isolation — transforms, UVs, texture alpha, winding — and it
+// still would not show on screen, which says the machinery was at fault rather
+// than the maths. So none of that machinery is here any more. This is the
+// dullest thing that can possibly work:
+//
+//   * ONE ordinary THREE.Mesh, no instancing;
+//   * ONE ordinary MeshBasicMaterial with a map — no custom shader, no custom
+//     attributes, nothing depending on USE_INSTANCING or a varying;
+//   * quads written straight into a plain position buffer in WORLD space, so
+//     no per-object matrix is involved at all;
+//   * per-corner RGBA vertex colours for the fade, which is stock three.js.
+//
+// If it can be drawn at all, this will draw.
 
-// One track imprint, three grousers long. The canvas u axis runs ALONG the
-// direction of travel, so the bars sit across the track exactly the way the
-// real links do, and BARS here is matched to the stamp length so the bar
-// pitch equals the tread's own link pitch. See createTreadMarks for the
-// geometry that actually holds that promise — it used to break it.
-const BARS = 3;
+const MAX = 1400;   // quads (two per stamp, so ~700 stamps of trail)
+const HOLD = 20;    // seconds at full strength
+const FADE = 6;     // then fades out over this long
+const BARS = 3;     // grousers per stamp; a stamp is BARS link-pitches long
 
+// The imprint. Canvas u runs ALONG the direction of travel, so the bars lie
+// across the track the way real links land; v runs across the track width.
 function makeTreadTexture() {
-  const w = 192; // 64 px per grouser, along the direction of travel
-  const h = 128; // across the track; 1.5 is close to the real stamp aspect
+  const w = 192; // 64 px per grouser, along travel
+  const h = 128; // across the track
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, w, h);
 
+  // Near-black but not pure black: with no shader in the path the texture
+  // carries the colour as well as the alpha.
+  const INK = '14, 13, 12';
+
   // ground scuffed up between the bars
-  ctx.fillStyle = 'rgba(0,0,0,0.22)';
-  ctx.fillRect(0, 3, w, h - 6);
-  for (let i = 0; i < 1100; i++) {
-    ctx.fillStyle = `rgba(0,0,0,${0.03 + Math.random() * 0.09})`;
-    ctx.fillRect(Math.random() * w, 3 + Math.random() * (h - 6), 1 + Math.random() * 2, 1 + Math.random() * 2);
+  ctx.fillStyle = `rgba(${INK}, 0.24)`;
+  ctx.fillRect(0, 2, w, h - 4);
+  for (let i = 0; i < 1200; i++) {
+    ctx.fillStyle = `rgba(${INK}, ${0.03 + Math.random() * 0.1})`;
+    ctx.fillRect(Math.random() * w, 2 + Math.random() * (h - 4), 1 + Math.random() * 2, 1 + Math.random() * 2);
   }
 
-  // The grousers: one bar per link, spanning the full width of the track.
-  //
-  // These run ACROSS the direction of travel, which means that from a chase
-  // camera they repeat along the axis of maximum foreshortening — the mip
-  // chain averages them together and what survives on screen is close to the
-  // texture's MEAN alpha rather than its peaks. So the bars are wide and the
-  // scuff between them is dark: the average is what has to read, not the
-  // contrast between them.
+  // the grousers, one per link, spanning the full width of the track
   const pitch = w / BARS;
   for (let i = 0; i < BARS; i++) {
     const x = i * pitch;
-    const barW = pitch * 0.52; // the raised ridge is about this much of a link
+    const barW = pitch * 0.54;
     const g = ctx.createLinearGradient(x, 0, x + barW, 0);
-    g.addColorStop(0, 'rgba(0,0,0,0.46)');
-    g.addColorStop(0.45, 'rgba(0,0,0,0.80)');
-    g.addColorStop(1, 'rgba(0,0,0,0.42)');
+    g.addColorStop(0, `rgba(${INK}, 0.48)`);
+    g.addColorStop(0.45, `rgba(${INK}, 0.86)`);
+    g.addColorStop(1, `rgba(${INK}, 0.44)`);
     ctx.fillStyle = g;
-    ctx.fillRect(x, 4, barW, h - 8);
+    ctx.fillRect(x, 3, barW, h - 6);
 
-    // the fine detail lines: each link's cleats, running across the bar
-    ctx.fillStyle = 'rgba(0,0,0,0.26)';
+    // cleat detail along each bar
+    ctx.fillStyle = `rgba(${INK}, 0.3)`;
     for (let k = 0; k < 7; k++) {
       const y = 6 + k * ((h - 12) / 6.4);
-      ctx.fillRect(x - pitch * 0.05, y, barW + pitch * 0.10, 1.5);
+      ctx.fillRect(x - pitch * 0.05, y, barW + pitch * 0.1, 1.5);
     }
     // worn ends, so no two imprints read identically
-    ctx.clearRect(x + Math.random() * barW * 0.6, 4, 2, 3 + Math.random() * 5);
+    ctx.clearRect(x + Math.random() * barW * 0.6, 3, 2, 3 + Math.random() * 5);
     ctx.clearRect(x + Math.random() * barW * 0.6, h - 8, 2, 3 + Math.random() * 5);
   }
 
-  // darker down the centre where the road wheels press hardest
+  // pressed hardest down the centre, where the road wheels ride
   const centre = ctx.createLinearGradient(0, 0, 0, h);
-  centre.addColorStop(0, 'rgba(0,0,0,0)');
-  centre.addColorStop(0.5, 'rgba(0,0,0,0.18)');
-  centre.addColorStop(1, 'rgba(0,0,0,0)');
+  centre.addColorStop(0, `rgba(${INK}, 0)`);
+  centre.addColorStop(0.5, `rgba(${INK}, 0.2)`);
+  centre.addColorStop(1, `rgba(${INK}, 0)`);
   ctx.fillStyle = centre;
   ctx.fillRect(0, 0, w, h);
 
-  // soften the outer edges of the track
+  // feather the two SIDES of the track (v), never the ends (u) — the ends
+  // have to meet the next stamp cleanly
   const edge = ctx.createLinearGradient(0, 0, 0, h);
   edge.addColorStop(0, 'rgba(0,0,0,1)');
-  edge.addColorStop(0.10, 'rgba(0,0,0,0)');
-  edge.addColorStop(0.90, 'rgba(0,0,0,0)');
+  edge.addColorStop(0.09, 'rgba(0,0,0,0)');
+  edge.addColorStop(0.91, 'rgba(0,0,0,0)');
   edge.addColorStop(1, 'rgba(0,0,0,1)');
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillStyle = edge;
@@ -86,129 +90,116 @@ function makeTreadTexture() {
   ctx.globalCompositeOperation = 'source-over';
 
   const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
   tex.wrapT = THREE.ClampToEdgeWrapping;
-  // Bars that lie across the track repeat along the direction the chase
-  // camera is most foreshortened in, which is precisely the case trilinear
-  // mipmapping smears worst. Anisotropic filtering is the fix for that, so
-  // ask for as much of it as the GPU has (three clamps this to the hardware
-  // maximum on upload).
+  // the bars repeat along the axis a chase camera foreshortens most, which is
+  // exactly where trilinear mipmapping smears worst
   tex.anisotropy = 16;
   return tex;
 }
 
-const VERT = `
-attribute float aAge;
-varying vec2 vUv;
-varying float vAge;
-void main() {
-  vUv = uv;
-  vAge = aAge;
-  gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
-}
-`;
-
-const FRAG = `
-uniform sampler2D uMap;
-uniform float uHold;
-uniform float uFade;
-varying vec2 vUv;
-varying float vAge;
-void main() {
-  if (vAge < 0.0) discard;
-  float k = 1.0 - clamp((vAge - uHold) / uFade, 0.0, 1.0);
-  if (k <= 0.001) discard;
-  vec4 t = texture2D(uMap, vUv);
-  gl_FragColor = vec4(0.035, 0.031, 0.027, t.a * k * 0.95);
-}
-`;
-
 export function createTreadMarks(scene) {
   const tex = makeTreadTexture();
-  // Lie the quad flat with its LENGTH along local X — the axis a heading
-  // rotation maps forward onto — and its width across local Z.
-  //
-  // rotateX(-90) alone does exactly that AND carries the UVs with it: +u ends
-  // up along local +X (travel) and +v along local -Z (across the track),
-  // which is what makeTreadTexture is drawn for. There used to be a second
-  // rotateY(90) here, which spun the texture 90 degrees against the quad and
-  // caused both of the visible faults at once:
-  //   * the grouser bars, meant to lie across the track, ran ALONG it;
-  //   * the edge-softening gradient, meant to feather the track's two SIDES,
-  //     instead ate 10% off each END of every stamp — so consecutive marks
-  //     could never meet and the trail came out as dashes.
-  const geo = new THREE.PlaneGeometry(1, 1);
-  geo.rotateX(-Math.PI / 2);
 
-  const ages = new Float32Array(MAX).fill(-1);
-  geo.setAttribute('aAge', new THREE.InstancedBufferAttribute(ages, 1));
+  // ---- one plain mesh, quads written in world space ------------------------
+  const geo = new THREE.BufferGeometry();
+  const position = new Float32Array(MAX * 4 * 3);
+  const uv = new Float32Array(MAX * 4 * 2);
+  const color = new Float32Array(MAX * 4 * 4); // RGBA; alpha carries the fade
+  const index = new Uint32Array(MAX * 6);
 
-  const mat = new THREE.ShaderMaterial({
-    vertexShader: VERT,
-    fragmentShader: FRAG,
-    uniforms: {
-      uMap: { value: tex },
-      uHold: { value: HOLD },
-      uFade: { value: FADE },
-    },
+  for (let q = 0; q < MAX; q++) {
+    const v = q * 4;
+    // corner order: (u0,v0) (u1,v0) (u1,v1) (u0,v1)
+    uv[(v + 0) * 2] = 0; uv[(v + 0) * 2 + 1] = 0;
+    uv[(v + 1) * 2] = 1; uv[(v + 1) * 2 + 1] = 0;
+    uv[(v + 2) * 2] = 1; uv[(v + 2) * 2 + 1] = 1;
+    uv[(v + 3) * 2] = 0; uv[(v + 3) * 2 + 1] = 1;
+    for (let k = 0; k < 4; k++) {
+      color[(v + k) * 4] = 1;
+      color[(v + k) * 4 + 1] = 1;
+      color[(v + k) * 4 + 2] = 1;
+      color[(v + k) * 4 + 3] = 0; // invisible until the quad is used
+    }
+    const o = q * 6;
+    index[o] = v; index[o + 1] = v + 1; index[o + 2] = v + 2;
+    index[o + 3] = v; index[o + 4] = v + 2; index[o + 5] = v + 3;
+  }
+
+  const posAttr = new THREE.BufferAttribute(position, 3).setUsage(THREE.DynamicDrawUsage);
+  const colAttr = new THREE.BufferAttribute(color, 4).setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', posAttr);
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('color', colAttr);
+  geo.setIndex(new THREE.BufferAttribute(index, 1));
+  geo.setDrawRange(0, 0);
+
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
     transparent: true,
+    vertexColors: true,   // itemSize 4 -> three enables USE_COLOR_ALPHA
     depthWrite: false,
-    // Flat decals on the floor: which way the winding happens to face should
-    // never be able to hide them, and an instance matrix with an unexpected
-    // sign would do exactly that under the default FrontSide.
     side: THREE.DoubleSide,
     polygonOffset: true,
     polygonOffsetFactor: -4,
     polygonOffsetUnits: -4,
+    toneMapped: false,
   });
 
-  const mesh = new THREE.InstancedMesh(geo, mat, MAX);
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  mesh.frustumCulled = false;
-  mesh.renderOrder = 1;
-  // Untouched instances start with an all-zero matrix, which is degenerate
-  // rather than merely invisible. Only ever submit the ones actually written.
-  mesh.count = 0;
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false; // the buffer is world space; the mesh never moves
+  mesh.renderOrder = 2;
   scene.add(mesh);
 
+  const ages = new Float32Array(MAX).fill(-1);
   let next = 0;
-  const emitters = new Map(); // per tank, per side: distance since last mark
+  let live = 0; // high-water mark, so drawRange only covers written quads
+  const emitters = new Map();
 
-  const _m = new THREE.Matrix4();
-  const _pos = new THREE.Vector3();
-  const _quat = new THREE.Quaternion();
-  const _scale = new THREE.Vector3();
-  const _yAxis = new THREE.Vector3(0, 1, 0);
-
-  function stamp(x, y, z, heading, width, length) {
-    const i = next % MAX;
-    next++;
-    _pos.set(x, y, z);
-    _quat.setFromAxisAngle(_yAxis, heading);
-    _scale.set(length, 1, width);
-    _m.compose(_pos, _quat, _scale);
-    mesh.setMatrixAt(i, _m);
-    if (next > mesh.count) mesh.count = Math.min(next, MAX);
-    ages[i] = 0;
-    mesh.instanceMatrix.needsUpdate = true;
-    geo.attributes.aAge.needsUpdate = true;
+  function setAlpha(q, a) {
+    const v = q * 4;
+    color[v * 4 + 3] = a;
+    color[(v + 1) * 4 + 3] = a;
+    color[(v + 2) * 4 + 3] = a;
+    color[(v + 3) * 4 + 3] = a;
   }
 
-  // Lay marks under both tracks of a tank that's actually on the ground.
-  // key identifies the tank so each one keeps its own trail anchor.
-  //
-  // Spacing is measured from where the LAST pair of marks actually went down,
-  // not from a counter that gets zeroed. The old code did `e.d += moved; if
-  // (e.d < span) return; e.d = 0;`, which threw away however far past the
-  // span that frame had carried — so the real gap between stamps was
-  // ceil(span / moved) * moved, up to a whole frame's travel too long. At
-  // 30 fps in a Pioneer that is a 0.33 m hole in a 0.79 m stamp.
+  // One imprint, laid flat, written straight into world space.
+  function stamp(x, y, z, heading, width, length) {
+    const q = next % MAX;
+    next++;
+    if (next > live) live = Math.min(next, MAX);
+
+    // heading maps local +X onto forward = (cos h, 0, -sin h)
+    const ch = Math.cos(heading);
+    const sh = Math.sin(heading);
+    const hl = length / 2;
+    const hw = width / 2;
+    const fx = ch * hl, fz = -sh * hl;   // half a stamp along travel
+    const rx = sh * hw, rz = ch * hw;    // half a stamp across the track
+
+    const v = q * 4;
+    const p = position;
+    // u runs along travel, v across the width — matching the texture
+    p[(v + 0) * 3] = x - fx - rx; p[(v + 0) * 3 + 1] = y; p[(v + 0) * 3 + 2] = z - fz - rz;
+    p[(v + 1) * 3] = x + fx - rx; p[(v + 1) * 3 + 1] = y; p[(v + 1) * 3 + 2] = z + fz - rz;
+    p[(v + 2) * 3] = x + fx + rx; p[(v + 2) * 3 + 1] = y; p[(v + 2) * 3 + 2] = z + fz + rz;
+    p[(v + 3) * 3] = x - fx + rx; p[(v + 3) * 3 + 1] = y; p[(v + 3) * 3 + 2] = z - fz + rz;
+
+    ages[q] = 0;
+    setAlpha(q, 1);
+    posAttr.needsUpdate = true;
+    colAttr.needsUpdate = true;
+    geo.setDrawRange(0, live * 6);
+  }
+
+  // Lay marks under both tracks of a tank that's on the ground. Spacing is
+  // measured from where the last pair actually went down, so the trail is
+  // continuous at any frame rate and any speed.
   function trail(key, model, groundY, heading, moved, onGround) {
     const tread = model.hull.tread;
-    // One stamp covers exactly BARS links, so consecutive stamps butt up and
-    // the printed grousers land at the tread's own pitch.
-    const linkPitch = tread.length / tread.linkCount;
-    const span = linkPitch * BARS;
+    const span = (tread.length / tread.linkCount) * BARS;
 
     const px = model.root.position.x;
     const pz = model.root.position.z;
@@ -218,41 +209,24 @@ export function createTreadMarks(scene) {
       e = { x: px, z: pz, primed: false };
       emitters.set(key, e);
     }
-    // Off the ground (or standing still) the anchor just follows the tank, so
-    // landing again starts a fresh trail instead of drawing a line across the
-    // arena from wherever it took off.
     if (!onGround || moved <= 0) {
-      e.x = px;
-      e.z = pz;
-      e.primed = onGround;
+      e.x = px; e.z = pz; e.primed = onGround;
       return;
     }
     if (!e.primed) {
-      e.x = px;
-      e.z = pz;
-      e.primed = true;
+      e.x = px; e.z = pz; e.primed = true;
       return;
     }
 
-    let dx = px - e.x;
-    let dz = pz - e.z;
-    let gap = Math.hypot(dx, dz);
+    const dx = px - e.x;
+    const dz = pz - e.z;
+    const gap = Math.hypot(dx, dz);
     if (gap < span) return;
-    // a respawn or a fall through the world teleports the tank: re-anchor
-    // rather than paving the whole way there
-    if (gap > span * 24) {
-      e.x = px;
-      e.z = pz;
-      return;
-    }
+    if (gap > span * 24) { e.x = px; e.z = pz; return; } // respawned elsewhere
 
     const width = tread.linkW;
-    // right vector for this heading, to sit each mark under its own track
     const rx = Math.sin(heading);
     const rz = Math.cos(heading);
-    // Drop every stamp the distance covers, evenly along the way — one frame
-    // at top speed can be worth more than one mark, and at low frame rates it
-    // regularly is.
     const n = Math.floor(gap / span);
     const ux = dx / gap;
     const uz = dz / gap;
@@ -263,15 +237,11 @@ export function createTreadMarks(scene) {
         const oz = side * tread.z;
         stamp(
           sx + rx * oz,
-          groundY + 0.015,
+          groundY + 0.02,
           sz + rz * oz,
           heading,
           width,
-          // Overlap along travel. Consecutive marks are laid exactly `span`
-          // apart, so this is pure insurance: on a turn the rectangles pivot
-          // about their own centres and would otherwise open a wedge on the
-          // outside of the corner.
-          span * 1.12
+          span * 1.12 // overlap, so a turn cannot open a wedge on the outside
         );
       }
     }
@@ -285,22 +255,32 @@ export function createTreadMarks(scene) {
 
   function update(dt) {
     let dirty = false;
-    for (let i = 0; i < MAX; i++) {
-      if (ages[i] < 0) continue;
-      ages[i] += dt;
-      if (ages[i] > HOLD + FADE) ages[i] = -1;
-      dirty = true;
+    for (let q = 0; q < live; q++) {
+      const a = ages[q];
+      if (a < 0) continue;
+      const t = a + dt;
+      ages[q] = t;
+      if (t > HOLD + FADE) {
+        ages[q] = -1;
+        setAlpha(q, 0);
+        dirty = true;
+      } else if (t > HOLD) {
+        setAlpha(q, 1 - (t - HOLD) / FADE);
+        dirty = true;
+      }
     }
-    if (dirty) geo.attributes.aAge.needsUpdate = true;
+    if (dirty) colAttr.needsUpdate = true;
   }
 
   function clear() {
     ages.fill(-1);
-    mesh.count = 0;
-    next = 0;
+    for (let q = 0; q < MAX; q++) setAlpha(q, 0);
+    colAttr.needsUpdate = true;
     emitters.clear();
-    geo.attributes.aAge.needsUpdate = true;
+    next = 0;
+    live = 0;
+    geo.setDrawRange(0, 0);
   }
 
-  return { trail, update, clear, forget, mesh };
+  return { trail, update, clear, forget, mesh, geometry: geo, material: mat };
 }

@@ -1764,7 +1764,7 @@ renderer.setAnimationLoop(() => {
     }
 
     physics.step(dt);
-    player.postStep(dt);
+    player.postStep();
 
     // stuck upside down long enough -> the crew bails and it cooks off
     if (local.alive && player.state.flipT > 4) {

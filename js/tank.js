@@ -339,7 +339,7 @@ export const TURRET_SPECS = {
     mode: 'projectile', fireInterval: 2.5, damage: 200, projectile: 'shell',
     // Backward impulse at the muzzle, in metres per second of hull velocity.
     // A 200 mm gun shoves its own tank hard; this is deliberately heavy.
-    recoilKick: 4.5,
+    recoilKick: 4.5,   // the main gun really shoves
   },
   plasma: {
     mode: 'projectile',
@@ -349,7 +349,7 @@ export const TURRET_SPECS = {
     dual: true,        // barrels take it in turns
     auto: true,        // hold the trigger and it keeps firing
     recoil: 0.1,       // a plasma bolt barely nudges the tank
-    recoilKick: 0.12,  // ...and barely shifts it
+    recoilKick: 0.5,   // a light but real nudge
     smokeTime: 0,      // no propellant, so no barrel smoke
     // charge bar, same 0-100 scale the stream weapons use, but spent per
     // bolt rather than per second
@@ -360,6 +360,7 @@ export const TURRET_SPECS = {
   arctic: {
     mode: 'stream',
     element: 'cryo',
+    recoilKick: 0,     // a poured stream has nothing to recoil against
     range: 9.0,        // matches the beam geometry exactly (see cryo.js)
     coneR: 2.2,        // spray half-width at maximum range
     tickDamage: 10,    // 100 dps, applied in tenth-second bites
@@ -380,13 +381,14 @@ export const TURRET_SPECS = {
     falloff: 150,       // each tank it punches through takes 150 less
     // The heaviest thing on any hull by a wide margin: it visibly throws the
     // tank backwards and stands it up on its rear idlers.
-    recoilKick: 7.0,
+    recoilKick: 5.6,
     rechargeTime: 5,
     fuelRecharge: 20,   // 100 / 5 s
   },
   aegis: {
     mode: 'beam',
     range: 26,
+    recoilKick: 0,       // an energy tether does not kick
     lockAngle: 0.42,     // ~24 degrees either side of where you're aiming
     tickInterval: 0.1,
     damageTick: 7.5,     // 75 a second to an enemy
@@ -399,6 +401,7 @@ export const TURRET_SPECS = {
   inferno: {
     mode: 'stream',
     element: 'flame',
+    recoilKick: 0,     // a poured stream has nothing to recoil against
     range: 9.0,        // matches the beam geometry exactly
     coneR: 2.2,
     tickDamage: 6,     // 60 dps, applied in tenth-second bites
@@ -1339,12 +1342,6 @@ function updateTread(tread, dt, speed) {
 export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId = DEFAULT_HULL) {
   let M = rememberBaseColors(buildMaterials(palette));
   const root = new THREE.Group();
-  // Everything above the running gear rides on the suspension. The tracks
-  // stay pinned to the root (and so to the ground); the hull and turret sit
-  // on `sprung`, which bobs and pitches a few centimetres under load.
-  const sprung = new THREE.Group();
-  root.add(sprung);
-
   let hull = hullSpec(hullId);
   let hullMesh = null;
   let treadL = null;
@@ -1354,8 +1351,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
     hullMesh = buildHull(M, hull);
     treadL = buildTread(M, -1, hull);
     treadR = buildTread(M, 1, hull);
-    sprung.add(hullMesh);
-    root.add(treadL.group, treadR.group);
+    root.add(hullMesh, treadL.group, treadR.group);
     // Lay the link chains out immediately — a tank that never drives would
     // otherwise render its wheels with no tracks
     updateTread(treadL, 0, 0);
@@ -1364,8 +1360,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
 
   function disposeChassis() {
     for (const part of [hullMesh, treadL.group, treadR.group]) {
-      // the hull hangs off the sprung mass, the tracks off the root
-      (part.parent || root).remove(part);
+      root.remove(part);
       part.traverse((o) => {
         if (o.isMesh && !o.userData.fx) o.geometry.dispose();
       });
@@ -1380,7 +1375,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
   function attachTurret(kind) {
     const built = buildTurret(M, kind);
     built.turret.position.set(hull.turretX, hull.deckY, 0);
-    sprung.add(built.turret);
+    root.add(built.turret);
     const spec = TURRET_SPECS[kind];
     if (spec && spec.mode === 'stream') {
       beam = createStreamBeam(spec.element);
@@ -1431,6 +1426,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
   let chill = 0;
   let burn = 0;
 
+  const WHITE_HOT = new THREE.Color('#eaf4ff');
   const ICE = new THREE.Color('#7fc4ff');
   const ICE_GLOW = new THREE.Color('#2f79c8');
   const FIRE = new THREE.Color('#ff5436');
@@ -1465,7 +1461,6 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
 
   return {
     root,
-    sprung,
     turret,
     pitchGroup,
     gun,
@@ -1523,7 +1518,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
         beam.dispose();
         beam = null;
       }
-      sprung.remove(this.turret);
+      root.remove(this.turret);
       this.turret.traverse((o) => {
         if (o.isMesh && !o.userData.fx) o.geometry.dispose();
       });
@@ -1561,7 +1556,12 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
         const base = mat.userData.baseEmissiveIntensity;
         if (base !== undefined) {
           // ramps hard at the top so the last quarter second really lights up
-          mat.emissiveIntensity = base * (1 + 4.2 * f * f);
+          // ramps hard and goes white-hot at the top of the wind-up
+          mat.emissiveIntensity = base * (1 + 11 * f * f);
+          const bc = mat.userData.baseColor;
+          const be = mat.userData.baseEmissive;
+          if (bc) mat.color.copy(bc).lerp(WHITE_HOT, 0.85 * f);
+          if (be) mat.emissive.copy(be).lerp(WHITE_HOT, 0.6 * f * f);
         }
       }
       if (!parts) return;

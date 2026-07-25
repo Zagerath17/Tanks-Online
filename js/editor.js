@@ -7,6 +7,12 @@ import { makeGridTexture } from './grid-texture.js';
 // and surface-conforming decals. All solid pieces carry corner-origin UVs in
 // world units so every surface shares the same aligned 1-unit grid.
 const GROUND_HALF = 120;
+// The ground lays one 4-unit texture tile with 4 cells in it, and a heavier
+// line every 8 cells. Every placed piece uses exactly the same numbers, so
+// walls, platforms and slopes all carry the same grid as the floor.
+const GRID_TILE = 4;
+const GRID_CELLS = 4;
+const GRID_MAJOR = 8;
 export const MAP_FORMAT = 'tank-remake-map';
 
 const LIMITS = {
@@ -59,9 +65,11 @@ function worldAlignUVs(mesh) {
     const ay = Math.abs(_wn.y);
     const az = Math.abs(_wn.z);
     // project along whichever world axis the face points down most
-    if (ay >= ax && ay >= az) uv.setXY(i, _wp.x, _wp.z);
-    else if (ax >= az) uv.setXY(i, _wp.z, _wp.y);
-    else uv.setXY(i, _wp.x, _wp.y);
+    // One texture tile is GRID_TILE world units, exactly as on the ground, so
+    // cells are the same size and land on the same world lines everywhere.
+    if (ay >= ax && ay >= az) uv.setXY(i, _wp.x / GRID_TILE, _wp.z / GRID_TILE);
+    else if (ax >= az) uv.setXY(i, _wp.z / GRID_TILE, _wp.y / GRID_TILE);
+    else uv.setXY(i, _wp.x / GRID_TILE, _wp.y / GRID_TILE);
   }
   uv.needsUpdate = true;
 }
@@ -141,14 +149,14 @@ export function createEditor({ scene, physics }) {
 
   // ---- flat build ground (1-unit minor cells, 4-unit majors) ---------------
   const groundTex = makeGridTexture({
-    cells: 4,
+    cells: GRID_CELLS,
     base: '#98a0a8',
     line: '#87909a',
     lineWidth: 2,
-    major: 8,
+    major: GRID_MAJOR,
     majorLine: '#747e88',
     majorWidth: 6,
-    repeat: [GROUND_HALF / 2, GROUND_HALF / 2],
+    repeat: [GROUND_HALF * 2 / GRID_TILE, GROUND_HALF * 2 / GRID_TILE],
     anisotropy: 16,
   });
   const ground = new THREE.Mesh(
@@ -166,11 +174,15 @@ export function createEditor({ scene, physics }) {
     if (!solidMats[type]) {
       solidMats[type] = new THREE.MeshStandardMaterial({
         map: makeGridTexture({
-          cells: 1,
+          cells: GRID_CELLS,
           base: COLORS[type][0],
           line: COLORS[type][1],
-          lineWidth: 3,
+          lineWidth: 2,
+          major: GRID_MAJOR,
+          majorLine: COLORS[type][1],
+          majorWidth: 6,
           repeat: [1, 1],
+          anisotropy: 16,
         }),
         roughness: 0.92,
       });

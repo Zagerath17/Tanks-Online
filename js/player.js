@@ -51,17 +51,7 @@ export function createPlayerController(model, physics) {
   const RECOIL_FREE = 0.42;
   let recoilT = 0;
 
-  // --- suspension -----------------------------------------------------------
-  // A small sprung mass: the hull and turret ride a few centimetres above the
-  // tracks and settle on a damped spring. Just enough to read as suspension.
-  const SUS_K = 150;      // spring
-  const SUS_D = 15;       // damping
-  const SUS_LIMIT = 0.045;
-  let susY = 0;
-  let susVel = 0;
-  let susPitch = 0;
-  let susPitchVel = 0;
-  let lastFwdSpeed = 0;
+
 
   function syncModel() {
     _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
@@ -89,8 +79,6 @@ export function createPlayerController(model, physics) {
     state.flipT = 0;
     airborne = 0;
     recoilT = 0;
-    susY = 0; susVel = 0; susPitch = 0; susPitchVel = 0; lastFwdSpeed = 0;
-    if (model.sprung) { model.sprung.position.y = 0; model.sprung.rotation.z = 0; }
     drive = 0;
     slowMul = 1;
     model.gun.position.x = 0;
@@ -124,7 +112,6 @@ export function createPlayerController(model, physics) {
     // let the shove actually land: the drive controller is suppressed for a
     // moment so it does not immediately cancel the recoil velocity
     recoilT = RECOIL_FREE;
-    susVel -= 2.0 * scale; // and the hull drops onto its springs
   }
 
   // Ground drag for a hull nobody is driving — a dead husk or a tank lying on
@@ -243,7 +230,10 @@ export function createPlayerController(model, physics) {
     if (Math.hypot(_fwd.x, _fwd.z) > 0.15) {
       state.heading = Math.atan2(-_fwd.z, _fwd.x);
     }
-    if (state.upright) {
+    // The turret traverses whatever attitude the hull is in. On your roof the
+    // gun still slews and elevates, so a weapon with real recoil can be fired
+    // into the ground to flip yourself back over.
+    {
       const relTarget = aimWorldYaw - state.heading;
       const yawErr = Math.atan2(
         Math.sin(relTarget - state.turretYaw),
@@ -286,8 +276,15 @@ export function createPlayerController(model, physics) {
   // tank in the floor for long enough to see. This checks the four bottom
   // corners of the chassis box against the surface underneath and lifts the
   // body out. It can only ever push UP, so it cannot cause sinking itself.
-  const CLAMP_TOL = 0.015;  // ignore contact-solver noise
-  const CLAMP_MAX = 0.25;   // never teleport further than this in one step
+  // Only SHALLOW penetration counts. The probe starts a few centimetres above
+  // each corner and reaches barely further than that, so a corner buried in
+  // the FLANK of a slope finds no surface within range and is left for the
+  // solver to push out sideways. Probing from high above instead found the
+  // slope's top face and lifted the whole tank onto it — which is exactly the
+  // "clips in, then teleports above it" behaviour.
+  const CLAMP_TOL = 0.012;  // ignore contact-solver noise
+  const CLAMP_MAX = 0.10;   // deepest lift accepted as ground penetration
+  const CLAMP_UP = 0.06;    // how far above the corner the probe starts
   function clampToGround() {
     _q.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
     const c = model.chassis;
@@ -299,7 +296,7 @@ export function createPlayerController(model, physics) {
         const wx = body.position.x + _cn.x;
         const wy = body.position.y + _cn.y;
         const wz = body.position.z + _cn.z;
-        const gy = physics.surfaceY(wx, wy + 1.2, wz, 1.2 + CLAMP_MAX);
+        const gy = physics.surfaceY(wx, wy + CLAMP_UP, wz, CLAMP_UP + CLAMP_MAX);
         if (gy !== null && wy < gy - CLAMP_TOL) worst = Math.max(worst, gy - wy);
       }
     }
@@ -310,28 +307,11 @@ export function createPlayerController(model, physics) {
   }
 
   // Post-physics: pull the solved transform onto the visual model
-  function postStep(dt = 0) {
+  function postStep() {
     clampToGround();
-    updateSuspension(dt);
     syncModel();
   }
 
-  function updateSuspension(dt) {
-    if (!model.sprung || dt <= 0) return;
-    // longitudinal acceleration squats the back / dives the nose
-    const accel = (state.v - lastFwdSpeed) / Math.max(dt, 1e-4);
-    lastFwdSpeed = state.v;
-    susPitchVel += THREE.MathUtils.clamp(accel, -40, 40) * 0.004;
-    susVel += -body.velocity.y * 0.9 * dt;
-
-    susVel += (-SUS_K * susY - SUS_D * susVel) * dt;
-    susY = THREE.MathUtils.clamp(susY + susVel * dt, -SUS_LIMIT, SUS_LIMIT * 0.5);
-    susPitchVel += (-SUS_K * 0.75 * susPitch - SUS_D * 1.1 * susPitchVel) * dt;
-    susPitch = THREE.MathUtils.clamp(susPitch + susPitchVel * dt, -0.05, 0.05);
-
-    model.sprung.position.y = susY;
-    model.sprung.rotation.z = susPitch;
-  }
 
   return {
     state, body, update, coast, postStep, reset, applyRecoil, syncHull,

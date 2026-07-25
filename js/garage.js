@@ -14,6 +14,7 @@ const RAMP = { len: 4.2, halfW: 2.6 }; // off the back of the deck to the floor
 const DOOR = { w: 9, h: 6.4 };
 // the tank sits nose-on to the door, which is in the +Z wall
 const FACING = -Math.PI / 2;
+const SQUAT_LIMIT = 0.11; // bump stop: the hull never sinks into the deck
 const FIRE_INTERVAL = 2.5;
 const CAM = { dist: 12.5, height: 4.6, look: 1.9 };
 
@@ -862,6 +863,11 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     pitch += pitchVel * dt;
     squatVel += (-90 * squat - 11 * squatVel) * dt;
     squat += squatVel * dt;
+    // The deck is solid. A heavy gun's kick used to drive the hull most of a
+    // metre down, straight through the platform; the suspension has a bump
+    // stop now and the tank simply cannot go below it.
+    if (squat < -SQUAT_LIMIT) { squat = -SQUAT_LIMIT; if (squatVel < 0) squatVel = 0; }
+    if (squat > SQUAT_LIMIT) { squat = SQUAT_LIMIT; if (squatVel > 0) squatVel = 0; }
     model.root.rotation.z = pitch;
     model.root.rotation.y = FACING; // the springs must never spin it off-axis
     model.root.position.set(0, STAND.y + squat, 0);
