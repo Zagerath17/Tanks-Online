@@ -22,15 +22,18 @@ const FADE = 6;
 // being right and invisible. Do not "fix" the rotateY below without checking
 // on a real GPU first: it is load-bearing.
 //
-// One track imprint, three grousers long. The canvas u axis runs ALONG the
-// direction of travel, so the bars sit across the track exactly the way the
-// real links do, and BARS here is matched to the stamp length so the bar
-// pitch equals the tread's own link pitch.
+// One track imprint, three grousers long.
+//
+// The quad's baked rotations mean texture **v** runs along the direction of
+// travel and **u** runs across the track. So the grouser bars are horizontal
+// bands stacked up the canvas (repeating along v), each spanning the full
+// width — that prints them across the track the way real links do. Getting
+// this the other way round prints lengthwise stripes instead.
 const BARS = 3;
 
 function makeTreadTexture() {
-  const w = 192; // 64 px per grouser
-  const h = 96;
+  const w = 96;   // across the track
+  const h = 192;  // along travel: 64 px per grouser
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -39,45 +42,46 @@ function makeTreadTexture() {
 
   // ground scuffed up between the bars
   ctx.fillStyle = 'rgba(0,0,0,0.13)';
-  ctx.fillRect(0, 3, w, h - 6);
+  ctx.fillRect(3, 0, w - 6, h);
   for (let i = 0; i < 1100; i++) {
     ctx.fillStyle = `rgba(0,0,0,${0.02 + Math.random() * 0.06})`;
-    ctx.fillRect(Math.random() * w, 3 + Math.random() * (h - 6), 1 + Math.random() * 2, 1 + Math.random() * 2);
+    ctx.fillRect(3 + Math.random() * (w - 6), Math.random() * h, 1 + Math.random() * 2, 1 + Math.random() * 2);
   }
 
-  // the grousers: one bar per link, spanning the full width of the track
-  const pitch = w / BARS;
+  // the grousers: one band per link, across the full width of the track
+  const pitch = h / BARS;
   for (let i = 0; i < BARS; i++) {
-    const x = i * pitch;
-    const barW = pitch * 0.42; // the raised ridge is about this much of a link
-    const g = ctx.createLinearGradient(x, 0, x + barW, 0);
+    const y = i * pitch;
+    const barH = pitch * 0.42; // the raised ridge is about this much of a link
+    const g = ctx.createLinearGradient(0, y, 0, y + barH);
     g.addColorStop(0, 'rgba(0,0,0,0.34)');
     g.addColorStop(0.45, 'rgba(0,0,0,0.66)');
     g.addColorStop(1, 'rgba(0,0,0,0.30)');
     ctx.fillStyle = g;
-    ctx.fillRect(x, 4, barW, h - 8);
+    ctx.fillRect(4, y, w - 8, barH);
 
-    // the fine detail lines: each link's cleats, running across the bar
+    // the fine detail: each link's cleats, running across the track with the
+    // bar rather than along it
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
     for (let k = 0; k < 7; k++) {
-      const y = 6 + k * ((h - 12) / 6.4);
-      ctx.fillRect(x - pitch * 0.05, y, barW + pitch * 0.10, 1.5);
+      const x = 6 + k * ((w - 12) / 6.4);
+      ctx.fillRect(x, y - pitch * 0.04, 1.5, barH + pitch * 0.08);
     }
-    // worn ends, so no two imprints read identically
-    ctx.clearRect(x + Math.random() * barW * 0.6, 4, 2, 3 + Math.random() * 5);
-    ctx.clearRect(x + Math.random() * barW * 0.6, h - 8, 2, 3 + Math.random() * 5);
+    // worn ends of the bar, so no two imprints read identically
+    ctx.clearRect(4, y + Math.random() * barH * 0.6, 3 + Math.random() * 5, 2);
+    ctx.clearRect(w - 8, y + Math.random() * barH * 0.6, 3 + Math.random() * 5, 2);
   }
 
-  // darker down the centre where the road wheels press hardest
-  const centre = ctx.createLinearGradient(0, 0, 0, h);
+  // darker down the centre line, where the road wheels press hardest
+  const centre = ctx.createLinearGradient(0, 0, w, 0);
   centre.addColorStop(0, 'rgba(0,0,0,0)');
   centre.addColorStop(0.5, 'rgba(0,0,0,0.18)');
   centre.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = centre;
   ctx.fillRect(0, 0, w, h);
 
-  // soften the outer edges of the track
-  const edge = ctx.createLinearGradient(0, 0, 0, h);
+  // soften the outer edges of the track (the u extremes)
+  const edge = ctx.createLinearGradient(0, 0, w, 0);
   edge.addColorStop(0, 'rgba(0,0,0,1)');
   edge.addColorStop(0.10, 'rgba(0,0,0,0)');
   edge.addColorStop(0.90, 'rgba(0,0,0,0)');
@@ -88,8 +92,8 @@ function makeTreadTexture() {
   ctx.globalCompositeOperation = 'source-over';
 
   const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.wrapS = THREE.ClampToEdgeWrapping; // across: one track, no repeat
+  tex.wrapT = THREE.RepeatWrapping;      // along travel: tiles link to link
   tex.anisotropy = 8;
   return tex;
 }
@@ -176,38 +180,75 @@ export function createTreadMarks(scene) {
 
   // Lay marks under both tracks of a tank that's actually on the ground.
   // key identifies the tank so each one keeps its own spacing counter.
+  // Lay marks at exact intervals along the ground actually covered, rather
+  // than one per frame once enough distance has piled up. Stamping at the
+  // tank's current position meant the gap between stamps was the span PLUS
+  // however far the last frame moved — which is what broke the trail into
+  // dashes. Walking the path also means the spacing no longer depends on
+  // framerate at all.
   function trail(key, model, groundY, heading, moved, onGround) {
-    if (!onGround || moved <= 0) return;
     const tread = model.hull.tread;
-    // One stamp covers exactly BARS links, so consecutive stamps butt up and
-    // the printed grousers land at the tread's own pitch.
-    const linkPitch = tread.length / tread.linkCount;
-    const span = linkPitch * BARS;
+    // one stamp covers exactly BARS links, so the printed grousers land at
+    // the tread's own pitch and consecutive stamps butt up
+    const span = (tread.length / tread.linkCount) * BARS;
+    const width = tread.linkW;
+    const px = model.root.position.x;
+    const pz = model.root.position.z;
 
     let e = emitters.get(key);
     if (!e) {
-      e = { d: 0 };
+      e = { x: px, z: pz, y: groundY, started: false };
       emitters.set(key, e);
     }
-    e.d += moved;
-    if (e.d < span) return;
-    e.d = 0;
+    if (!onGround || moved <= 0) {
+      // keep the anchor with the tank so lifting off doesn't draw a streak
+      e.x = px;
+      e.z = pz;
+      e.y = groundY;
+      return;
+    }
 
-    const width = tread.linkW;
-    // right vector for this heading, to sit each mark under its own track
+    let dx = px - e.x;
+    let dz = pz - e.z;
+    let dist = Math.hypot(dx, dz);
+    if (dist < 1e-6) return;
+
+    // a big jump means a respawn or a teleport: reset rather than paint a line
+    if (dist > span * 12) {
+      e.x = px;
+      e.z = pz;
+      e.y = groundY;
+      return;
+    }
+    if (dist < span) return;
+
+    const ux = dx / dist;
+    const uz = dz / dist;
     const rx = Math.sin(heading);
     const rz = Math.cos(heading);
-    for (const side of [-1, 1]) {
-      const oz = side * tread.z;
-      stamp(
-        model.root.position.x + rx * oz,
-        groundY + 0.015,
-        model.root.position.z + rz * oz,
-        heading,
-        width,
-        span * 1.02 // a hair of overlap so there is no seam between stamps
-      );
+
+    let walked = 0;
+    while (dist - walked >= span) {
+      walked += span;
+      const cx = e.x + ux * walked;
+      const cz = e.z + uz * walked;
+      const cy = e.y + (groundY - e.y) * (walked / dist);
+      for (const side of [-1, 1]) {
+        const oz = side * tread.z;
+        stamp(
+          cx + rx * oz,
+          cy + 0.015,
+          cz + rz * oz,
+          heading,
+          width,
+          span * 1.06 // slight overlap, so there is never a seam
+        );
+      }
     }
+    // carry the leftover so the next stamp lands exactly one span on
+    e.x += ux * walked;
+    e.z += uz * walked;
+    e.y += (groundY - e.y) * (walked / dist);
   }
 
   function forget(key) {
