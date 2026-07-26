@@ -234,19 +234,31 @@ export function createTreadMarks(scene) {
     // GROUND ONLY, no grace period. There used to be a fraction of a second
     // of coyote time here to ride out the contact signal flickering over
     // seams and crests — but distance kept accruing across it, so a real jump
-    // banked its whole flight and painted it on landing. Losing contact now
-    // re-anchors immediately: the cost is the odd missed mark over a bump,
-    // which is invisible, instead of a stripe drawn through mid-air.
+    // banked its whole flight and painted it on landing.
+    //
+    // Contact is no longer the gate on its own, because bailing the instant it
+    // dropped is what cut the trail at a slope transition: the tracks lift
+    // clear for a few frames as the hull tips onto the ramp. The per-slice
+    // probe further down decides for itself whether there is ground close
+    // enough to press a mark onto, so the only thing worth bailing on here is
+    // a real flight — nothing within reach underneath at all.
     if (!onGround) {
-      for (let i = 0; i < 2; i++) {
-        const r = e.rails[i];
-        if (!r) continue;
-        const az = (i === 0 ? -1 : 1) * tread.z;
-        r.x = model.root.position.x + rx * az;
-        r.z = model.root.position.z + rz * az;
-        r.y = groundY;
+      const under = probe
+        ? probe(model.root.position.x, model.root.position.z)
+        : null;
+      const airborne = under === null || under === undefined
+        || model.root.position.y - under > 1.4;
+      if (airborne) {
+        for (let i = 0; i < 2; i++) {
+          const r = e.rails[i];
+          if (!r) continue;
+          const az = (i === 0 ? -1 : 1) * tread.z;
+          r.x = model.root.position.x + rx * az;
+          r.z = model.root.position.z + rz * az;
+          r.y = groundY;
+        }
+        return;
       }
-      return;
     }
     if (moved <= 0) return;
 
@@ -317,9 +329,15 @@ export function createTreadMarks(scene) {
 
   // How many slices across the track width get tested for ground support.
   const SLICES = 6;
-  // How far the ground may sit from the track before the mark is considered
-  // to be hanging in the air rather than pressed into anything.
+  // Within this much of the track, a mark is pressed on where it is.
   const CONTACT_TOL = 0.22;
+  // Beyond that but still within reach, the mark is PUSHED DOWN onto the
+  // surface rather than dropped. Crossing onto a slope the hull tips and the
+  // tracks lift clear for a few frames; those marks used to be discarded,
+  // leaving a gap exactly at the transition. Now they land on the floor, so
+  // the trail runs unbroken onto the ramp. Past this the tank really is in the
+  // air and nothing is drawn.
+  const SNAP_REACH = 1.1;
 
   // Lay a mark only where there is actually ground under it. The width is
   // sampled in slices: unsupported slices are skipped entirely, and runs of
@@ -333,28 +351,54 @@ export function createTreadMarks(scene) {
       return;
     }
     let runStart = -1;
+    let runY = 0;   // surface height the current run of slices rests on
+    let runN = 0;
+
+    const flush = (endSlice) => {
+      if (runStart < 0) return;
+      const uFrom = runStart / SLICES;
+      const uTo = endSlice / SLICES;
+      const mid = (uFrom + uTo) / 2 - 0.5;
+      // sit the mark on the surface the slices actually found — this is what
+      // presses a lifted track back down onto the floor
+      const y = runN > 0 ? runY / runN : cy;
+      stamp(
+        cx + rx * mid * width,
+        y + 0.015,
+        cz + rz * mid * width,
+        segHeading, width, length, tilt, uFrom, uTo
+      );
+      runStart = -1;
+      runY = 0;
+      runN = 0;
+    };
+
     for (let s = 0; s <= SLICES; s++) {
       let ok = false;
+      let surface = cy;
       if (s < SLICES) {
         // centre of this slice, measured out from the track's own centreline
         const f = (s + 0.5) / SLICES - 0.5;
         const sx = cx + rx * f * width;
         const sz = cz + rz * f * width;
         const g = probe(sx, sz);
-        ok = g !== null && g !== undefined && Math.abs(g - cy) <= CONTACT_TOL;
+        if (g !== null && g !== undefined) {
+          const gap = cy - g;
+          if (Math.abs(gap) <= CONTACT_TOL) {
+            ok = true;          // in contact: press it on where it is
+            surface = cy;
+          } else if (gap > 0 && gap <= SNAP_REACH) {
+            ok = true;          // lifted, but close: push it down onto the floor
+            surface = g;
+          }
+        }
       }
-      if (ok && runStart < 0) runStart = s;
-      if (!ok && runStart >= 0) {
-        const uFrom = runStart / SLICES;
-        const uTo = s / SLICES;
-        const mid = (uFrom + uTo) / 2 - 0.5;
-        stamp(
-          cx + rx * mid * width,
-          cy + 0.015,
-          cz + rz * mid * width,
-          segHeading, width, length, tilt, uFrom, uTo
-        );
-        runStart = -1;
+      if (ok) {
+        if (runStart < 0) runStart = s;
+        runY += surface;
+        runN++;
+      } else {
+        flush(s);
       }
     }
   }

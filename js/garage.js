@@ -92,6 +92,10 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     group.add(wall);
   }
 
+  // the two extractors set into the back wall, turning at half the pace of
+  // the big ceiling fan
+  const ductFans = [];
+
   // ---- wall furniture ------------------------------------------------------
   // Ribbed panelling low down, services run high, and the sort of fittings
   // that accumulate on the walls of somewhere tanks actually get worked on.
@@ -332,15 +336,21 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       hub.rotation.x = Math.PI / 2;
       hub.position.set(dx, BAY.h - 3.2, -HALF_D + 0.2);
       group.add(hub);
+      // The blades used to be dropped straight into the bay and never moved.
+      // Parent them to a spinner at the hub so they can actually turn.
+      const spin = new THREE.Group();
+      spin.position.set(dx, BAY.h - 3.2, -HALF_D + 0.22);
+      group.add(spin);
+      ductFans.push(spin);
       for (let b = 0; b < 4; b++) {
         const blade = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.04), pipeMat);
         blade.position.set(
-          dx + Math.cos(b * Math.PI / 2) * 0.34,
-          BAY.h - 3.2 + Math.sin(b * Math.PI / 2) * 0.34,
-          -HALF_D + 0.22
+          Math.cos(b * Math.PI / 2) * 0.34,
+          Math.sin(b * Math.PI / 2) * 0.34,
+          0
         );
         blade.rotation.z = b * Math.PI / 2 + 0.5;
-        group.add(blade);
+        spin.add(blade);
       }
       // louvres over the housing
       for (let i = 0; i < 5; i++) {
@@ -1219,6 +1229,57 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     }
   }
 
+  // ---- light haze ----------------------------------------------------------
+  // A workshop this size always has something in the air. Big soft additive
+  // billboards, very faint, drifting slowly: enough to catch the strip lights
+  // and give the bay some depth without fogging the tank itself.
+  const hazePuffs = [];
+  {
+    const s = 256;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    grad.addColorStop(0, 'rgba(255,244,224,0.20)');
+    grad.addColorStop(0.45, 'rgba(255,240,215,0.09)');
+    grad.addColorStop(1, 'rgba(255,236,205,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+    const hazeTex = new THREE.CanvasTexture(c);
+    hazeTex.colorSpace = THREE.SRGBColorSpace;
+
+    const hazeMat = new THREE.SpriteMaterial({
+      map: hazeTex,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+    });
+
+    for (let i = 0; i < 16; i++) {
+      const puff = new THREE.Sprite(hazeMat);
+      const scale = 7 + Math.random() * 7;
+      puff.scale.set(scale, scale * 0.7, 1);
+      puff.position.set(
+        (Math.random() - 0.5) * (BAY.w - 6),
+        2.4 + Math.random() * (BAY.h - 4.5),
+        (Math.random() - 0.5) * (BAY.d - 6)
+      );
+      puff.renderOrder = 2;
+      group.add(puff);
+      hazePuffs.push({
+        puff,
+        // each one drifts on its own slow path, so the haze never looks tiled
+        ox: puff.position.x,
+        oz: puff.position.z,
+        rate: 0.05 + Math.random() * 0.09,
+        phase: Math.random() * Math.PI * 2,
+        sway: 1.2 + Math.random() * 1.8,
+      });
+    }
+  }
+
   // ---- the tank ------------------------------------------------------------
   const model = createTankModel(currentSkin(), currentTurret(), currentHull());
   model.root.position.set(0, STAND.y, 0);
@@ -1249,6 +1310,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // ---- recoil springs (never translate the tank) ---------------------------
   let cooldown = 0;
   let hazeAcc = 0;
+  let hazeTime = 0;
   const _haze = new THREE.Vector3();
   const _hazeDir = new THREE.Vector3(-0.25, 1, 0).normalize();
   let gunRecoil = 0;
@@ -1600,6 +1662,15 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     aimShafts(camera);
     // the extractor turns over slowly all the time
     for (const spinner of fanBlades) spinner.rotation.y += dt * 5.75;
+    // the wall extractors run at half that, and about their own axis
+    for (const spinner of ductFans) spinner.rotation.z += dt * 2.875;
+
+    // haze drifts across the bay and breathes very slightly
+    hazeTime += dt;
+    for (const h of hazePuffs) {
+      h.puff.position.x = h.ox + Math.sin(hazeTime * h.rate + h.phase) * h.sway;
+      h.puff.position.z = h.oz + Math.cos(hazeTime * h.rate * 0.7 + h.phase) * h.sway * 0.6;
+    }
 
     // exhaust haze drifting off the deck
     hazeAcc += dt;

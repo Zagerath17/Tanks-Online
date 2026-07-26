@@ -292,8 +292,8 @@ export function createEditor({ scene, physics, onPlaceTarget }) {
       roughness: surf.roughness,
       metalness: dc.metalness !== undefined ? dc.metalness : surf.metalness,
       polygonOffset: true,
-      polygonOffsetFactor: -4,
-      polygonOffsetUnits: -4,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
   }
 
@@ -600,13 +600,22 @@ export function createEditor({ scene, physics, onPlaceTarget }) {
 
     const layer = ++decalSeq;
     const mat = decalMaterial(dc, false);
-    // each successive decal is pulled a hair further toward the camera and
-    // drawn later, so a stack of them reads cleanly from bottom to top
-    const bias = 4 + (layer % 96) * 0.5;
-    mat.polygonOffsetFactor = -bias;
-    mat.polygonOffsetUnits = -bias;
+    // Stacking order comes from renderOrder and a hair of physical lift along
+    // the surface normal — NOT from an ever-growing depth bias.
+    //
+    // It used to ramp polygonOffset up to -52 per layer. That factor is
+    // multiplied by the polygon's depth slope, so on a slope (where the slope
+    // term is large) the decal was pushed so far toward the camera that it
+    // beat walls standing in front of it — which is why a decal on a ramp
+    // could be seen straight through other objects.
+    mat.polygonOffsetFactor = -1;
+    mat.polygonOffsetUnits = -1;
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.renderOrder = 3 + layer;
+    mesh.renderOrder = 3 + (layer % 128);
+    // lift later decals a fraction further off the face they sit on, which is
+    // what separates a stack without touching depth bias at all
+    _projDir.set(0, 0, 1).applyQuaternion(quat).normalize();
+    mesh.position.addScaledVector(_projDir, 0.004 + (layer % 24) * 0.0015);
     group.add(mesh);
     const rec = {
       shape: dc.shape,

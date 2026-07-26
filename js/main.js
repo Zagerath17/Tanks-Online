@@ -228,7 +228,7 @@ function updateStreamBlock(dt) {
   if (!playerModel.hasStream()) return;
   const spec = streamSpecOf(playerModel.turretId);
   if (!spec) return;
-  if (!streaming || !local.alive) {
+  if (!cryo.streaming || !local.alive) {
     playerModel.setStreamReach(spec.range); // let it out again when not firing
     return;
   }
@@ -2266,10 +2266,22 @@ function frame(dt) {
           audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
         }
       },
-      (pos, kind) => {
-        // burn mark on whatever it hit — the surface normal comes from a
-        // short ray back along the flight path
-        const back = physics.rayHit(pos.x, pos.y + 0.6, pos.z, pos.x, pos.y - 0.6, pos.z);
+      (pos, kind, dir) => {
+        // Burn mark on whatever it hit. The normal has to come from a probe
+        // back along the FLIGHT PATH — this used to ray straight down from
+        // above the impact, so a shot into a wall was handed the floor's
+        // normal and the mark ended up lying flat instead of on the wall.
+        let back = null;
+        if (dir) {
+          back = physics.rayHit(
+            pos.x - dir.x * 0.7, pos.y - dir.y * 0.7, pos.z - dir.z * 0.7,
+            pos.x + dir.x * 0.5, pos.y + dir.y * 0.5, pos.z + dir.z * 0.5
+          );
+        }
+        if (!back) {
+          // nothing along the path (a grazing hit): fall back to straight down
+          back = physics.rayHit(pos.x, pos.y + 0.6, pos.z, pos.x, pos.y - 0.6, pos.z);
+        }
         scorch.add(back || { x: pos.x, y: pos.y + 0.02, z: pos.z, nx: 0, ny: 1, nz: 0 }, kind);
         if (kind === 'plasma') fx.plasmaImpact(pos.clone());
         else fx.impact(pos.clone());

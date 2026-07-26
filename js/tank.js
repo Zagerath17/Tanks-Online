@@ -18,6 +18,11 @@ export const SPEC = {
   halfTrack: 1.18,
   // --- traction model (the controller is the only source of ground grip) ---
   gripRate: 14,   // how fast sideways slide is scrubbed off, 1/s
+  // Sideways load (turn rate x speed) the tracks hold before they let go, and
+  // the fraction of grip left once they have. Scaled per hull below: a light
+  // scout breaks away early and slides a long way, a heavy hull just ploughs.
+  breakAway: 6.0,
+  slideGrip: 0.16,
   slipRate: 3,    // how fast the commanded speed gives up when blocked, 1/s
   stabilize: 3,   // bleeds pitch/roll rate while tracks are down, 1/s
   scrub: 3.5,     // ground drag on a hull nobody is driving (husk, flipped)
@@ -221,8 +226,13 @@ function deriveHull(id, def) {
   chassis.modelOffY = chassis.shapeOffY - hy - treadBottom;
   chassis.groundReach = hy - chassis.shapeOffY + 0.38;
 
+  // Lighter, faster hulls break away sooner and keep sliding for longer;
+  // heavy ones hold on. speedMul is already the light-to-heavy axis.
+  const nimble = def.speedMul;
   const move = {
     ...SPEC,
+    breakAway: SPEC.breakAway / Math.pow(nimble, 1.6),
+    slideGrip: Math.max(0.08, Math.min(0.4, SPEC.slideGrip / Math.pow(nimble, 1.3))),
     accel: SPEC.accel * def.speedMul,
     brakeAccel: SPEC.brakeAccel * def.speedMul,
     maxForward: SPEC.maxForward * def.speedMul,
@@ -1298,7 +1308,8 @@ function buildRailgunTurret(M) {
   }
 
   // the channel the slug rides down, open at the muzzle
-  borePipe(gun, M, { r: 0.088, len: 2.7, x: 2.0 });
+  // runs the whole way out through the brake, so you are looking down a hole
+  borePipe(gun, M, { r: 0.088, len: 3.05, x: 2.06 });
 
   // accelerator rings threaded along the rails
   for (let i = 0; i < 9; i++) {
@@ -1316,15 +1327,21 @@ function buildRailgunTurret(M) {
   shroud.position.set(1.1, 0.02, 0);
   gun.add(shroud);
 
-  // muzzle brake at the very end of a long barrel
-  const brakeGeo = new THREE.CylinderGeometry(0.17, 0.13, 0.3, 10);
+  // Muzzle brake at the very end of a long barrel. Open-ended: a closed
+  // cylinder here put a solid end cap across the bore, which is why the
+  // railgun never looked hollow however long the bore behind it was.
+  const brakeGeo = new THREE.CylinderGeometry(0.17, 0.13, 0.3, 10, 1, true);
   brakeGeo.rotateZ(Math.PI / 2);
-  const brake = new THREE.Mesh(brakeGeo, M.metal);
+  const brake = new THREE.Mesh(brakeGeo, M.metalOpen);
   brake.position.set(3.4, 0.02, 0);
   gun.add(brake);
 
-  const core = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), M.plasma);
-  core.position.set(3.4, 0.02, 0);
+  // ...and the charged core used to be a solid sphere sitting exactly in the
+  // muzzle, plugging the hole. Make it a ring around the bore instead, so it
+  // still glows as it winds up without filling the barrel in.
+  const core = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.028, 8, 16), M.plasma);
+  core.rotation.y = Math.PI / 2;
+  core.position.set(3.3, 0.02, 0);
   gun.add(core);
   charge.push(core);
 
@@ -1394,7 +1411,9 @@ function buildFlechetteTurret(M) {
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.56, 0.02, 0);
   gun.add(barrel);
-  borePipe(gun, M, { r: 0.155, len: 0.9, x: 0.62 });
+  // carried on through the choke ahead of it, which is open-ended — the bore
+  // used to stop short and you saw daylight through the choke's wall
+  borePipe(gun, M, { r: 0.155, len: 1.22, x: 0.72 });
 
   // a flared choke, slotted round the rim
   const choke = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.2, 16, 1, true), M.metalOpen);
@@ -1471,11 +1490,12 @@ function buildThunderTurret(M) {
   const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16, 1, true), M.barrelOpen);
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.9, 0.02, 0);
-  borePipe(gun, M, { r: 0.088, len: 1.55, x: 1.02 });
+  borePipe(gun, M, { r: 0.088, len: 2.0, x: 1.15 });
   gun.add(barrel);
 
-  // heavy muzzle brake: a cuff with two vents cut either side
-  const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.34, 16), M.metal);
+  // heavy muzzle brake: a cuff with two vents cut either side. Open-ended,
+  // or its end cap seals the bore that runs up to it.
+  const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.34, 16, 1, true), M.metalOpen);
   brake.rotation.z = -Math.PI / 2;
   brake.position.set(1.82, 0.02, 0);
   gun.add(brake);

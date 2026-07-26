@@ -125,6 +125,7 @@ export function createBullets(scene, fx) {
   const active = [];
 
   const _X = new THREE.Vector3(1, 0, 0);
+  const _envDir = new THREE.Vector3();
   const _q = new THREE.Quaternion();
 
   function getMesh(kind) {
@@ -216,7 +217,11 @@ export function createBullets(scene, fx) {
         p.y > 80 ||
         (env.solidAt && env.solidAt(p))
       )) {
-        onEnv(p, b.kind);
+        // hand over the flight direction too: the burn mark needs the real
+        // surface normal, which can only be found by probing back along the
+        // path the shot came in on
+        _envDir.copy(b.vel).normalize();
+        onEnv(p, b.kind, _envDir);
         done = true;
       }
 

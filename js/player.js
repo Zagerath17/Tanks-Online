@@ -30,6 +30,7 @@ export function createPlayerController(model, physics) {
     heading: 0, // hull yaw projected onto the ground plane
     turretYaw: 0,
     pitch: 0,
+    slip: 0,         // 0..1 how hard the tracks are sliding sideways
     grounded: false, // drive authority (survives brief contact dropouts)
     contact: false,  // tracks actually touching something this frame
     upright: true,
@@ -252,9 +253,29 @@ export function createPlayerController(model, physics) {
       vel.y += _fwd.y * dvF;
       vel.z += _fwd.z * dvF;
 
-      // treads don't slide sideways
+      // --- lateral grip, and losing it ---------------------------------
+      //
+      // Grip used to be a flat rate that scrubbed all sideways motion away in
+      // a fraction of a second, so a tank could never slide: there was no
+      // drift at any speed on any hull. Real tracks break away once the
+      // sideways load gets high enough, and a light hull breaks away sooner
+      // than a heavy one.
+      //
+      // Sideways demand is what the turn is asking of the tracks — turn rate
+      // times forward speed. Past the hull's break-away figure, grip falls
+      // off, the tank slides, and it keeps sliding until it slows or
+      // straightens up.
       const vLat = _vel.dot(_right);
-      const dvR = -(vLat * Math.min(1, hull.move.gripRate * dt) + gR * dt);
+      const avUpNow = body.angularVelocity.x * _up.x
+        + body.angularVelocity.y * _up.y
+        + body.angularVelocity.z * _up.z;
+      const demand = Math.abs(avUpNow * measured);
+      const breakAway = hull.move.breakAway;
+      const over = demand / breakAway;
+      // 1 while planted, falling toward the hull's minimum grip once it goes
+      const slide = over <= 1 ? 1 : Math.max(hull.move.slideGrip, 1 / (over * over));
+      state.slip = Math.min(1, Math.abs(vLat) / 3.2);
+      const dvR = -(vLat * Math.min(1, hull.move.gripRate * slide * dt) + gR * dt);
       vel.x += _right.x * dvR;
       vel.y += _right.y * dvR;
       vel.z += _right.z * dvR;

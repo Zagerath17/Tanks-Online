@@ -29,10 +29,11 @@ const WHITE = new THREE.Color(0xffffff);
 const SEGS = 26;
 // Radii, not half-widths: the lifeline is built from the same nested tubes
 // the prong arc uses, sized to sit alongside it rather than dwarf it.
+// Tighter than it was: a taut electrical line rather than a thrown rope.
 const LAYERS = [
-  { radius: 0.026, color: 0xffffff, opacity: 0.95 },
-  { radius: 0.062, color: 0x66ff9c, opacity: 0.55 },
-  { radius: 0.115, color: 0x2fbf60, opacity: 0.20 },
+  { radius: 0.012, color: 0xffffff, opacity: 0.95 },
+  { radius: 0.028, color: 0x66ff9c, opacity: 0.58 },
+  { radius: 0.052, color: 0x2fbf60, opacity: 0.20 },
 ];
 const BEAM_SIDES = 6;
 
@@ -346,7 +347,10 @@ export function createArcBeam(scene) {
     _side.copy(_dir).cross(_perp).normalize();
 
     // amplitude tapers to nothing at both ends so it stays pinned
-    const amp = Math.min(0.55, 0.10 + len * 0.035);
+    // Wander used to reach 0.55 m and grew with distance, which is what bowed
+    // a long beam right across the screen. Keep it small and nearly
+    // independent of length — jitter you read as electricity, not an arc.
+    const amp = Math.min(0.07, 0.018 + len * 0.0035);
 
     // one shared wandering path, so every layer sits concentric
     for (let i = 0; i <= SEGS; i++) {
