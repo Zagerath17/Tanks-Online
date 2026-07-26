@@ -161,7 +161,38 @@ function coneShell(range, r0, r1, rings = 22, seg = 26, curve = 1.35) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
+  // Kept so the shell can be re-cut to a shorter reach when a wall stops the
+  // stream. Rewriting positions is the only way to do this honestly: scaling
+  // the mesh along its axis would leave the FULL-range tip radius sitting at
+  // the wall, so a stream stopped at two metres would flare as wide as one
+  // reaching nine.
+  geo.userData.cone = { rings, seg, r0, r1, curve, range };
   return geo;
+}
+
+// Re-cut a cone shell to a new length, keeping its taper honest.
+function recutCone(geo, reach) {
+  const c = geo.userData.cone;
+  if (!c) return;
+  const pos = geo.attributes.position;
+  const full = c.range;
+  const cut = Math.max(0.15, Math.min(full, reach));
+  const frac = cut / full;
+  let v = 0;
+  for (let i = 0; i <= c.rings; i++) {
+    const t = i / c.rings;
+    const x = t * cut;
+    // the radius follows the ORIGINAL profile at this distance, so the cone
+    // keeps the same angle and simply stops early
+    const r = c.r0 + (c.r1 - c.r0) * Math.pow(t * frac, c.curve);
+    for (let j = 0; j <= c.seg; j++) {
+      const a = (j / c.seg) * Math.PI * 2;
+      pos.setXYZ(v, x, Math.cos(a) * r, Math.sin(a) * r);
+      v++;
+    }
+  }
+  pos.needsUpdate = true;
+  geo.computeBoundingSphere();
 }
 
 export function createStreamBeam(kind = 'cryo') {
@@ -283,10 +314,25 @@ export function createStreamBeam(kind = 'cryo') {
       const fadeIn = Math.min(1, t / 0.12);
       const fadeOut = 1 - Math.max(0, (t - 0.55) / 0.45);
       mAlpha[i] = intensity * fadeIn * fadeOut * 0.9;
-      if (mPos[i3] > CRYO.range) mAlpha[i] = 0;
+      // motes die at the wall, not at the weapon's nominal range
+      if (mPos[i3] > reach) mAlpha[i] = 0;
     }
     moteGeo.attributes.position.needsUpdate = true;
     moteGeo.attributes.aAlpha.needsUpdate = true;
+  }
+
+  // How far the stream is allowed to travel this frame. Called every frame
+  // by the game; the geometry is only rebuilt when the number has moved
+  // enough to see, so a stream pouring into open air costs nothing.
+  let reach = CRYO.range;
+  let cutAt = CRYO.range;
+  function setReach(d) {
+    reach = Math.max(0.15, Math.min(CRYO.range, d));
+    if (Math.abs(reach - cutAt) < 0.08) return;
+    cutAt = reach;
+    for (const mesh of group.children) {
+      if (mesh.geometry && mesh.geometry.userData.cone) recutCone(mesh.geometry, reach);
+    }
   }
 
   function dispose() {
@@ -296,6 +342,6 @@ export function createStreamBeam(kind = 'cryo') {
     }
   }
 
-  return { group, update, dispose };
+  return { group, update, setReach, dispose };
 }
 

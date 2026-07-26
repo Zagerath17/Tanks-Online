@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeMetalTexture, makeHubTexture } from './grid-texture.js';
+import { makeMetalTexture, makeHubTexture, makeArmourTexture } from './grid-texture.js';
 import { createStreamBeam } from './cryo.js';
 
 // ---------------------------------------------------------------------------
@@ -341,6 +341,18 @@ export const TURRET_SPECS = {
     // A 200 mm gun shoves its own tank hard; this is deliberately heavy.
     recoilKick: 1.75,  // 70% of the Thunderbolt's base kick (2.5)
   },
+  // Flechette: a shotgun. One pull throws a tight cone of 26 darts that are
+  // spent by 40 m — devastating in someone's face, useless across the arena.
+  flechette: {
+    mode: 'projectile',
+    projectile: 'pellet',
+    fireInterval: 1.6,
+    damage: 20,          // per dart; 520 if the whole cone lands
+    pellets: 26,
+    spread: 0.055,       // radians of cone half-angle: tight, not a wall
+    recoilKick: 3.0,
+  },
+
   // Thunderbolt: a heavy assault gun that fires when you LET GO, and that
   // will trade a shot for a much bigger one if you are willing to stand still
   // and hold the trigger down for it.
@@ -494,11 +506,13 @@ function buildMaterials(p) {
   const grain = Math.min(2, Math.max(0.5, (pat.cells || 6) / 6));
   const wear = Math.min(2, Math.max(0.5, (pat.lineWidth || 3) / 3));
 
-  const hullTex = makeMetalTexture({
-    base: p.hull[0], shade: p.hull[1], grain, wear, repeat: [1.6, 1.6],
+  // One designed sheet per surface at repeat [1, 1] — no tiling, so the same
+  // smudge never shows up in four places on the same plate.
+  const hullTex = makeArmourTexture({
+    base: p.hull[0], shade: p.hull[1], wear, seed: 3,
   });
-  const turretTex = makeMetalTexture({
-    base: p.turret[0], shade: p.turret[1], grain, wear, repeat: [1.8, 1.8],
+  const turretTex = makeArmourTexture({
+    base: p.turret[0], shade: p.turret[1], wear, seed: 11,
   });
   const barrelTex = makeMetalTexture({
     base: p.barrel[0], shade: p.barrel[1], grain: grain * 1.4, wear, repeat: [3, 1],
@@ -525,7 +539,18 @@ function buildMaterials(p) {
       clearcoat: 0.6, clearcoatRoughness: 0.35,
     }),
     hub: new THREE.MeshStandardMaterial({ map: hubTex, roughness: 0.65, metalness: 0.35 }),
-    metal: new THREE.MeshStandardMaterial({ color: '#2c3138', roughness: 0.55, metalness: 0.6 }),
+    // The parts a skin never colours: blackened steel, worked and polished.
+    // These were a flat mid-grey at half metalness and read as plastic.
+    metal: new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({
+        base: '#141619', shade: '#0d0f11', grain: 2.2, wear: 1.4, repeat: [2, 2],
+      }),
+      color: '#ffffff', roughness: 0.34, metalness: 0.95,
+    }),
+    // ...and the inside of a gun barrel, which is darker still
+    bore: new THREE.MeshStandardMaterial({
+      color: '#08090b', roughness: 0.42, metalness: 0.9, side: THREE.DoubleSide,
+    }),
     // cryo hardware keeps its own colour across every skin
     cryo: new THREE.MeshStandardMaterial({
       color: '#bfe6ff', emissive: '#4aa3e0', emissiveIntensity: 0.85,
@@ -621,6 +646,24 @@ function buildHull(M, hull) {
 // ---------------------------------------------------------------------------
 // Turret — base shape plus a pitching gun assembly
 // ---------------------------------------------------------------------------
+// Opens the end of a gun: the outer tube loses its end caps and a dark
+// sleeve is dropped inside it, so you are looking down an actual hole rather
+// than at a flat disc of barrel paint.
+function borePipe(gun, M, { r, len, x, y = 0.02 }) {
+  const bore = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r, len, 16, 1, true), M.bore
+  );
+  bore.rotation.z = -Math.PI / 2;
+  bore.position.set(x, y, 0);
+  gun.add(bore);
+  // a plug well down the tube, so it does not read straight through
+  const plug = new THREE.Mesh(new THREE.CircleGeometry(r, 16), M.bore);
+  plug.rotation.y = -Math.PI / 2;
+  plug.position.set(x - len / 2, y, 0);
+  gun.add(plug);
+  return bore;
+}
+
 function buildCannonTurret(M) {
   const t = new THREE.Group();
 
@@ -660,10 +703,11 @@ function buildCannonTurret(M) {
   sleeve.position.set(0.53, 0.02, 0);
   gun.add(sleeve);
 
-  const barrelGeo = new THREE.CylinderGeometry(0.09, 0.085, 1.9, 16);
+  const barrelGeo = new THREE.CylinderGeometry(0.09, 0.085, 1.9, 16, 1, true);
   barrelGeo.rotateZ(Math.PI / 2);
   const barrel = new THREE.Mesh(barrelGeo, M.barrel);
   barrel.position.set(1.83, 0.02, 0);
+  borePipe(gun, M, { r: 0.058, len: 1.6, x: 1.93 });
   gun.add(barrel);
 
   const muzzle = new THREE.Object3D();
@@ -963,10 +1007,11 @@ function buildPlasmaTurret(M) {
     const z = side * SEP;
 
     // barrel
-    const barrelGeo = new THREE.CylinderGeometry(0.088, 0.082, 1.26, 12);
+    const barrelGeo = new THREE.CylinderGeometry(0.088, 0.082, 1.26, 12, 1, true);
     barrelGeo.rotateZ(Math.PI / 2);
     const barrel = new THREE.Mesh(barrelGeo, M.barrel);
     barrel.position.set(0.68, 0.02, z);
+    borePipe(gun, M, { r: 0.052, len: 1.05, x: 0.78, y: 0.02 }).position.z = z;
     gun.add(barrel);
 
     // acceleration coils stepping down the barrel, glowing brighter forward
@@ -1213,6 +1258,9 @@ function buildRailgunTurret(M) {
     gun.add(rail);
   }
 
+  // the channel the slug rides down, open at the muzzle
+  borePipe(gun, M, { r: 0.088, len: 2.7, x: 2.0 });
+
   // accelerator rings threaded along the rails
   for (let i = 0; i < 9; i++) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.028, 8, 16), i % 2 ? M.plasma : M.metal);
@@ -1264,6 +1312,75 @@ function buildRailgunTurret(M) {
 // Thunderbolt: a squat, heavily braced gun with an induction coil stack
 // wrapped round the breech. Short barrel, big muzzle brake — it is built to
 // throw one very large round rather than many small ones.
+// Flechette: a short, very wide bore over a drum, built to dump a cone of
+// darts at close range rather than reach anything.
+function buildFlechetteTurret(M) {
+  const t = new THREE.Group();
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.72, 0.12, 24), M.metal);
+  collar.position.y = 0.06;
+  t.add(collar);
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.44, 0.46, 1.1), M.turret);
+  body.position.set(0.0, 0.34, 0);
+  t.add(body);
+
+  // the drum the darts feed from, lying on its side across the breech
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.52, 20), M.metal);
+  drum.rotation.x = Math.PI / 2;
+  drum.position.set(-0.34, 0.55, 0);
+  t.add(drum);
+  for (let i = 0; i < 8; i++) {
+    const lug = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.56), M.barrel);
+    const a = (i / 8) * Math.PI * 2;
+    lug.position.set(-0.34 + Math.cos(a) * 0.3, 0.55 + Math.sin(a) * 0.3, 0);
+    lug.rotation.z = a;
+    t.add(lug);
+  }
+
+  const pitchGroup = new THREE.Group();
+  pitchGroup.position.set(0.66, 0.36, 0);
+  t.add(pitchGroup);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.48, 0.66), M.turret);
+  pitchGroup.add(mantlet);
+
+  const gun = new THREE.Group();
+  pitchGroup.add(gun);
+
+  // short and fat, opening out toward the muzzle
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2, 0.15, 1.0, 16, 1, true), M.barrel
+  );
+  barrel.rotation.z = -Math.PI / 2;
+  barrel.position.set(0.56, 0.02, 0);
+  gun.add(barrel);
+  borePipe(gun, M, { r: 0.155, len: 0.9, x: 0.62 });
+
+  // a flared choke, slotted round the rim
+  const choke = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.2, 16, 1, true), M.metal);
+  choke.rotation.z = -Math.PI / 2;
+  choke.position.set(1.12, 0.02, 0);
+  gun.add(choke);
+  for (let i = 0; i < 6; i++) {
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.05), M.barrel);
+    const a = (i / 6) * Math.PI * 2;
+    slot.position.set(1.12, 0.02 + Math.sin(a) * 0.24, Math.cos(a) * 0.24);
+    gun.add(slot);
+  }
+
+  // heat shroud over the top of the tube
+  const shroud = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.07, 0.34), M.metal);
+  shroud.position.set(0.6, 0.22, 0);
+  gun.add(shroud);
+
+  const muzzle = new THREE.Object3D();
+  muzzle.position.set(1.3, 0.02, 0);
+  gun.add(muzzle);
+
+  return { turret: t, pitchGroup, gun, muzzle };
+}
+
 function buildThunderTurret(M) {
   const t = new THREE.Group();
 
@@ -1312,9 +1429,10 @@ function buildThunderTurret(M) {
   const gun = new THREE.Group();
   pitchGroup.add(gun);
 
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16), M.barrel);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16, 1, true), M.barrel);
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.9, 0.02, 0);
+  borePipe(gun, M, { r: 0.088, len: 1.55, x: 1.02 });
   gun.add(barrel);
 
   // heavy muzzle brake: a cuff with two vents cut either side
@@ -1348,6 +1466,7 @@ function buildTurret(M, kind) {
   if (kind === 'aegis') return buildAegisTurret(M);
   if (kind === 'railgun') return buildRailgunTurret(M);
   if (kind === 'thunder') return buildThunderTurret(M);
+  if (kind === 'flechette') return buildFlechetteTurret(M);
   return buildCannonTurret(M);
 }
 
@@ -1520,7 +1639,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
       [M.hull, 'hull'], [M.turret, 'turret'], [M.barrel, 'barrel'],
       [M.track, 'track'], [M.metal, 'metal'], [M.tyre, 'tyre'],
       [M.hub, 'hub'], [M.cryo, 'cryo'], [M.ember, 'ember'], [M.plasma, 'plasma'],
-      [M.brass, 'brass'], [M.plasmaGlow, 'plasmaGlow'],
+      [M.brass, 'brass'], [M.plasmaGlow, 'plasmaGlow'], [M.bore, 'bore'],
     ]);
     meshes.length = 0;
     root.traverse((o) => {
@@ -1712,6 +1831,11 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
     hasStream: () => !!beam,
     setStream(on) {
       streaming = !!on && !!beam;
+    },
+    // How far the stream may pour before something solid stops it. The game
+    // works this out with a ray each frame and hands it down.
+    setStreamReach(d) {
+      if (beam && beam.setReach) beam.setReach(d);
     },
     updateStream(dt) {
       if (beam) beam.update(dt, streaming && !charred);

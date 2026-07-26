@@ -413,15 +413,22 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     group.add(sill);
   }
 
-  // ceiling with exposed beams
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), painted);
-  ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.y = BAY.h;
-  group.add(ceiling);
-  for (let i = -2; i <= 2; i++) {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(BAY.w, 0.5, 0.42), darkSteel);
-    beam.position.set(0, BAY.h - 0.4, i * 6);
-    group.add(beam);
+  // (the ceiling surface itself is built with the rest of the roof services
+  // further down — there used to be a second, untextured plane here sitting
+  // 2 cm behind it, and the two flickered against each other)
+  // Roof beams, with a proper bottom flange rather than a bare rectangle —
+  // the old bare boxes caught the light along their lower edge and read as a
+  // row of spikes from underneath.
+  const BEAM_Z = [-12, -6, 0, 6, 12];
+  for (const bz of BEAM_Z) {
+    const web = new THREE.Mesh(new THREE.BoxGeometry(BAY.w, 0.5, 0.2), darkSteel);
+    web.position.set(0, BAY.h - 0.4, bz);
+    group.add(web);
+    for (const fy of [BAY.h - 0.15, BAY.h - 0.66]) {
+      const flange = new THREE.Mesh(new THREE.BoxGeometry(BAY.w, 0.09, 0.5), steel);
+      flange.position.set(0, fy, bz);
+      group.add(flange);
+    }
   }
 
   // (the overhead gantry used to live here; the extractor fan owns this
@@ -484,27 +491,69 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   group.add(bench(11, 2, -Math.PI / 2, 8));
 
   // parts racks
+  // Racking: slotted-angle uprights, a lipped deck on each shelf, and cross
+  // bracing at the back. The crates on them are painted parts bins with a
+  // label card, in a few colours, rather than plain grey blocks.
+  const shelfMat = new THREE.MeshStandardMaterial({
+    map: makeMetalTexture({ base: '#575f68', shade: '#474e56', grain: 2.4, wear: 1.7, repeat: [4, 1] }),
+    roughness: 0.5, metalness: 0.78,
+  });
+  const BIN_COLOURS = ['#7a3b2e', '#2f5568', '#5c6b33', '#6a5a2c', '#4a3f52'];
+  const binMats = BIN_COLOURS.map((c) => new THREE.MeshStandardMaterial({
+    map: makeMetalTexture({ base: c, shade: c, grain: 1.1, wear: 2.2, repeat: [1, 1] }),
+    roughness: 0.72, metalness: 0.22,
+  }));
+  const labelMat = new THREE.MeshStandardMaterial({ color: '#d9d3c2', roughness: 0.9 });
+
   function rack(x, z, ry) {
     const g = new THREE.Group();
     for (let s = 0; s < 4; s++) {
-      const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.09, 1.0), steel);
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.07, 1.0), shelfMat);
       shelf.position.y = 0.5 + s * 0.85;
       g.add(shelf);
-      for (let i = 0; i < 3; i++) {
-        const crate = new THREE.Mesh(
-          new THREE.BoxGeometry(0.7 + Math.random() * 0.3, 0.45, 0.7),
-          Math.random() < 0.4 ? hazard : darkSteel
-        );
-        crate.position.set(-1.2 + i * 1.1, 0.78 + s * 0.85, 0);
-        crate.rotation.y = (Math.random() - 0.5) * 0.3;
-        g.add(crate);
+      // front and back lip, so the deck reads as folded sheet
+      for (const lz of [-0.5, 0.5]) {
+        const lip = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.11, 0.05), shelfMat);
+        lip.position.set(0, 0.53 + s * 0.85, lz);
+        g.add(lip);
       }
+      for (let i = 0; i < 3; i++) {
+        const w = 0.7 + Math.random() * 0.3;
+        const bin = new THREE.Mesh(
+          new THREE.BoxGeometry(w, 0.45, 0.7),
+          binMats[Math.floor(Math.random() * binMats.length)]
+        );
+        const bx = -1.2 + i * 1.1;
+        bin.position.set(bx, 0.78 + s * 0.85, 0);
+        bin.rotation.y = (Math.random() - 0.5) * 0.24;
+        g.add(bin);
+        // label card on the front face
+        const card = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.42, 0.14), labelMat);
+        card.position.set(
+          bx + Math.sin(bin.rotation.y) * 0.36,
+          0.74 + s * 0.85,
+          Math.cos(bin.rotation.y) * 0.36
+        );
+        card.rotation.y = bin.rotation.y;
+        g.add(card);
+      }
+    }
+    // diagonal bracing across the back
+    for (const dsign of [-1, 1]) {
+      const brace = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.05, 0.05), shelfMat);
+      brace.position.set(0, 1.8, -0.45);
+      brace.rotation.z = dsign * 0.75;
+      g.add(brace);
     }
     for (const sx of [-1.7, 1.7]) {
       for (const sz of [-0.45, 0.45]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.6, 0.1), darkSteel);
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.6, 0.1), shelfMat);
         post.position.set(sx, 1.8, sz);
         g.add(post);
+        // foot plate
+        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.24), darkSteel);
+        foot.position.set(sx, 0.02, sz);
+        g.add(foot);
       }
     }
     g.position.set(x, 0, z);
@@ -575,10 +624,10 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   {
     const ceilMat = new THREE.MeshStandardMaterial({
       map: makeMetalTexture({
-        base: '#525a63', shade: '#454c55', grain: 2.6, wear: 1.3,
+        base: '#6d6a60', shade: '#585449', grain: 2.6, wear: 1.6,
         repeat: [8, 9], anisotropy: 16,
       }),
-      roughness: 0.7, metalness: 0.45, side: THREE.DoubleSide,
+      roughness: 0.74, metalness: 0.32, side: THREE.DoubleSide,
     });
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(BAY.w, BAY.d), ceilMat);
     ceil.rotation.x = Math.PI / 2;
@@ -617,13 +666,37 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     });
     const main = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, BAY.d - 1.5, 12), pipeRed);
     main.rotation.x = Math.PI / 2;
-    main.position.set(0.9, BAY.h - 0.55, 0);
+    // slung clear beneath the beams rather than buried in them
+    main.position.set(0.9, BAY.h - 1.0, 0);
     group.add(main);
+    // a bracket where the run passes under each beam, so the crossing looks
+    // hung rather than clipped
+    for (const bz of [-12, -6, 0, 6, 12]) {
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 0.07), steel);
+      strap.position.set(0.9, BAY.h - 0.72, bz);
+      group.add(strap);
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.035, 6, 14), steel);
+      collar.rotation.x = Math.PI / 2;
+      collar.position.set(0.9, BAY.h - 1.0, bz);
+      group.add(collar);
+    }
     for (let i = -5; i <= 5; i++) {
       const head = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 8), steel);
-      head.position.set(0.9, BAY.h - 0.72, i * 3);
+      head.position.set(0.9, BAY.h - 1.17, i * 3);
       head.rotation.x = Math.PI;
       group.add(head);
+    }
+
+    // a painted service strip down the centre of the roof, so the ceiling
+    // reads as a room and not one flat sheet
+    const stripMat = new THREE.MeshStandardMaterial({
+      color: '#3f4a52', roughness: 0.8, metalness: 0.25, side: THREE.DoubleSide,
+    });
+    for (const sx of [-9.5, 9.5]) {
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(2.2, BAY.d - 2), stripMat);
+      strip.rotation.x = Math.PI / 2;
+      strip.position.set(sx, BAY.h - 0.04, 0);
+      group.add(strip);
     }
 
     // ---- the extractor fan ------------------------------------------------
@@ -634,7 +707,11 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     const drop = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.95, 10), darkSteel);
     drop.position.y = 0.55;
     fan.add(drop);
-    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.07, 16), steel);
+    const fanPaint = new THREE.MeshStandardMaterial({
+      map: makeMetalTexture({ base: '#4f6a63', shade: '#3f5651', grain: 1.6, wear: 1.9, repeat: [2, 2] }),
+      roughness: 0.6, metalness: 0.55,
+    });
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.07, 16), fanPaint);
     plate.position.y = 1.03;
     fan.add(plate);
 
@@ -643,15 +720,20 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     fan.add(spinner);
     fanBlades.push(spinner);
 
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 0.26, 18), steel);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.4, 0.26, 18), fanPaint);
     spinner.add(hub);
     const capNut = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), darkSteel);
     capNut.position.y = -0.16;
     spinner.add(capNut);
 
     const bladeMat = new THREE.MeshStandardMaterial({
-      map: makeMetalTexture({ base: '#6a7078', shade: '#575d64', grain: 2.0, wear: 1.1, repeat: [4, 1] }),
-      roughness: 0.55, metalness: 0.5,
+      map: makeMetalTexture({ base: '#7e8a86', shade: '#67716e', grain: 2.0, wear: 1.4, repeat: [4, 1] }),
+      roughness: 0.5, metalness: 0.62,
+    });
+    // contrasting tips, the way a real extractor is painted so you can see
+    // at a glance that it is turning
+    const tipMat = new THREE.MeshStandardMaterial({
+      color: '#b8563a', roughness: 0.7, metalness: 0.3,
     });
 
     // five long blades, pitched so they read as moving air
@@ -664,7 +746,11 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       blade.position.set(1.72, -0.03, 0);
       blade.rotation.x = 0.22; // pitch
       arm.add(blade);
-      const root = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.2), steel);
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.055, 0.63), tipMat);
+      tip.position.set(3.02, -0.03, 0);
+      tip.rotation.x = 0.22;
+      arm.add(tip);
+      const root = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.2), fanPaint);
       root.position.set(0.42, -0.03, 0);
       arm.add(root);
     }
@@ -1249,8 +1335,8 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
 
     const node = spec.dual ? model.nextMuzzle() : model.muzzle;
     muzzle(_mp, _md, node);
-    bullets.fire(
-      {}, _mp.clone().addScaledVector(_md, 0.15), _md.clone(), spec.projectile,
+    bullets.fireSpread(
+      {}, _mp.clone().addScaledVector(_md, 0.15), _md.clone(), spec,
       charged ? spec.chargedDamage : spec.damage
     );
     fx.muzzleFlash(_mp.clone(), _md.clone(), plasma ? 'plasma' : 'fire');
@@ -1496,7 +1582,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
     idleSound.update(0, true);
     aimShafts(camera);
     // the extractor turns over slowly all the time
-    for (const spinner of fanBlades) spinner.rotation.y += dt * 1.15;
+    for (const spinner of fanBlades) spinner.rotation.y += dt * 5.75;
 
     // exhaust haze drifting off the deck
     hazeAcc += dt;

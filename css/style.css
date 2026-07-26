@@ -957,3 +957,75 @@ body.touchmode canvas { touch-action: none; }
   .tknob { width: 48px; height: 48px; }
   #tfire { width: 80px; height: 80px; bottom: 196px; right: 24px; }
 }
+
+
+/* running damage / healing tally, sat just off the crosshair */
+#hitnums {
+  position: fixed;
+  left: calc(50% + 34px);
+  top: calc(50% - 26px);
+  z-index: 3;
+  pointer-events: none;
+  font-family: inherit;
+  font-size: 20px;
+  letter-spacing: 1px;
+  line-height: 1.15;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+}
+#hitdmg { color: #ff5b45; }
+#hitheal { color: #67e08a; }
+#hitdmg, #hitheal { opacity: 0; transition: opacity 160ms linear; }
+#hitdmg.on, #hitheal.on { opacity: 1; }
+
+/* hull strength, bottom left */
+#hpcorner {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 2;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(200, 217, 174, 0.75);
+}
+#hpcornerbar {
+  width: 168px;
+  height: 12px;
+  background: rgba(20, 23, 27, 0.72);
+  border: 1px solid rgba(200, 217, 174, 0.35);
+}
+#hpcornerfill {
+  height: 100%;
+  width: 100%;
+  background: var(--olive-400);
+  transition: width 120ms linear, background 200ms linear;
+}
+#hpcornernum {
+  min-width: 42px;
+  color: #dfe6cf;
+  font-size: 13px;
+}
+body.menuopen #hpcorner, body.menuopen #hitnums { display: none; }
+
+
+/* decal surface preset + metalness */
+#decal-surface {
+  background: rgba(20, 23, 27, 0.9);
+  color: #cfe0b4;
+  border: 1px solid rgba(200, 217, 174, 0.35);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+#decal-metal-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: rgba(200, 217, 174, 0.7);
+}
+#decal-metal { width: 74px; accent-color: #9cc36e; }

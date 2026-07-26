@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createTankModel, TURRET_SPECS, SKINS } from './tank.js';
+import { createHealthBar } from './fx.js';
 
 // Practice targets for the editor: tanks you can place, shoot, and be shot by.
 //
@@ -11,7 +12,7 @@ const HOSTILE_SKIN = 'crimson';
 const FRIENDLY_SKIN = 'forest';
 
 const FIRE_EVERY = 3.2;    // seconds between shots
-const HEALTH = 400;
+const HEALTH = 1000; // same as a real hull, so they take a proper beating
 
 export function createDummies({ scene, physics, fx, audio, bullets }) {
   const list = [];
@@ -42,7 +43,12 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
     body.position.set(x, model.chassis.hy - model.chassis.shapeOffY, z);
     body.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
 
+    const bar = createHealthBar();
+    bar.sprite.position.set(0, 2.5, 0);
+    model.root.add(bar.sprite);
+
     const unit = {
+      bar,
       id: `dummy-${list.length}-${Math.random().toString(36).slice(2, 7)}`,
       friendly,
       // the Aegis picks its lock out of a list of units, so a dummy has to
@@ -92,6 +98,7 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
       const root = u.model.root;
 
       if (!u.alive) {
+        u.bar.sprite.visible = false;
         u.deadT += dt;
         // smoulder for a while, then get back up so the range stays useful
         if (u.deadT > 6) {
@@ -113,6 +120,8 @@ export function createDummies({ scene, physics, fx, audio, bullets }) {
       root.position.y -= u.model.chassis.hy - u.model.chassis.shapeOffY;
 
       u.pos.copy(root.position);
+      u.bar.set(u.hp / HEALTH);
+      u.bar.sprite.visible = true;
 
       // The turret is welded straight ahead. It does not track you: this is a
       // range target that puts a round down its own centreline on a timer, so

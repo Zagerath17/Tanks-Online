@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
-import { makeGridTexture } from './grid-texture.js';
+import { makeGridTexture, makeDecalTexture, DECAL_SURFACES } from './grid-texture.js';
 
 // Editor sandbox: flat ground, placeable walls / platforms / slopes / spawns,
 // and surface-conforming decals. All solid pieces carry corner-origin UVs in
@@ -28,12 +28,24 @@ const COLORS = {
   wall: ['#5a626c', '#4c545e'],
   platform: ['#7d8894', '#6d7884'],
   slope: ['#747f8b', '#65707c'],
+  // the practice targets get a ghost too, tinted by side
+  enemy: ['#8e3a30', '#75302a'],
+  ally: ['#3f7a52', '#356745'],
 };
 
 const clamp = THREE.MathUtils.clamp;
 
+// A slope is defined by its HEIGHT, not its angle — the angle falls out of
+// the run. Walls and platforms step their height by STEP.H, so defining a
+// ramp the same way is what lets its crest land exactly on a platform top
+// instead of somewhere near it.
 function slopeHeight(d) {
-  return Math.tan(d.angle) * d.L;
+  if (d.H !== undefined) return d.H;
+  return Math.tan(d.angle) * d.L; // older saves still carry an angle
+}
+
+function slopeAngle(d) {
+  return Math.atan2(slopeHeight(d), d.L);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +168,7 @@ function buildWedgeGridGeometry(L, W, angle) {
   });
 }
 
-export function createEditor({ scene, physics }) {
+export function createEditor({ scene, physics, onPlaceTarget }) {
   const group = new THREE.Group();
   group.visible = false;
   scene.add(group);
@@ -209,14 +221,20 @@ export function createEditor({ scene, physics }) {
   const dims = {
     wall: { L: 8, H: 3, W: 1 },
     platform: { L: 8, H: 2, W: 8 },
-    slope: { L: 8, W: 6, angle: (20 * Math.PI) / 180 },
+    slope: { L: 8, H: 3, W: 6 },
+    enemy: { L: 4, H: 1.6, W: 3 },
+    ally: { L: 4, H: 1.6, W: 3 },
     spawn: {},
     decal: {},
   };
   let ghostYaw = 0;
 
   // decal brush — steps sit on the same half/quarter-unit grid as placement
-  const decal = { shape: 'rect', w: 2, h: 2, r: 1, s: 2, spin: 0, color: '#e8563a' };
+  const decal = {
+    shape: 'rect', w: 2, h: 2, r: 1, s: 2, spin: 0, color: '#e8563a',
+    surface: 'matte',   // which preset sheet it is painted on
+    metalness: 0,       // ...and how much it catches the light, on a slider
+  };
   const DLIM = { w: [0.5, 24], h: [0.5, 24], r: [0.25, 14], s: [0.5, 16] };
   const DSTEP = { w: 0.5, h: 0.5, r: 0.25, s: 0.5 };
 
@@ -256,14 +274,23 @@ export function createEditor({ scene, physics }) {
     return new THREE.Vector3(dc.w, dc.h, 1.4);
   }
 
+  // Lit, not flat. These were MeshBasicMaterial, which ignores every light in
+  // the scene — so a decal could never look like concrete or plate, only like
+  // a sticker. Standard material means the surface preset and the metalness
+  // slider actually do something.
   function decalMaterial(dc, ghostly) {
-    return new THREE.MeshBasicMaterial({
+    const surf = DECAL_SURFACES[dc.surface] || DECAL_SURFACES.matte;
+    const map = makeDecalTexture(dc.surface || 'matte');
+    return new THREE.MeshStandardMaterial({
       color: dc.color,
+      map,
       alphaMap: dc.shape === 'rect' ? null : alphaTex[dc.shape],
       alphaTest: dc.shape === 'rect' ? 0 : 0.5,
       transparent: ghostly,
       opacity: ghostly ? 0.55 : 1,
       depthWrite: !ghostly,
+      roughness: surf.roughness,
+      metalness: dc.metalness !== undefined ? dc.metalness : surf.metalness,
       polygonOffset: true,
       polygonOffsetFactor: -4,
       polygonOffsetUnits: -4,
@@ -289,7 +316,17 @@ export function createEditor({ scene, physics }) {
       disc.translate(0, 0.04, 0);
       return [disc, spawnArrowGeometry()];
     }
-    if (type === 'slope') return [buildWedgeGridGeometry(d.L, d.W, d.angle)];
+    if (type === 'slope') return [buildWedgeGridGeometry(d.L, d.W, slopeAngle(d))];
+    if (type === 'enemy' || type === 'ally') {
+      // roughly tank shaped, so you can see how it will sit before placing
+      const hull = new THREE.BoxGeometry(d.L, d.H * 0.55, d.W);
+      hull.translate(0, d.H * 0.28, 0);
+      const turret = new THREE.BoxGeometry(d.L * 0.42, d.H * 0.34, d.W * 0.5);
+      turret.translate(-d.L * 0.05, d.H * 0.72, 0);
+      const gun = new THREE.BoxGeometry(d.L * 0.5, d.H * 0.1, d.H * 0.1);
+      gun.translate(d.L * 0.42, d.H * 0.72, 0);
+      return [hull, turret, gun];
+    }
     return [buildBoxGridGeometry(d.L, d.H, d.W)];
   }
 
@@ -361,6 +398,24 @@ export function createEditor({ scene, physics }) {
     refreshDecalGhostMaterial();
   }
 
+  function setDecalSurface(name) {
+    if (!DECAL_SURFACES[name] || name === decal.surface) return;
+    decal.surface = name;
+    // adopt the preset's own metalness, which the slider can then override
+    decal.metalness = DECAL_SURFACES[name].metalness;
+    decalGhost.material.dispose();
+    decalGhost.material = decalMaterial(decal, true);
+  }
+
+  function setDecalMetalness(v) {
+    decal.metalness = clamp(v, 0, 1);
+    decalGhost.material.metalness = decal.metalness;
+  }
+
+  function decalBrush() {
+    return { surface: decal.surface, metalness: decal.metalness, color: decal.color };
+  }
+
   function setDecalColor(hex) {
     decal.color = hex;
     decalGhost.material.color.set(hex);
@@ -378,7 +433,6 @@ export function createEditor({ scene, physics }) {
     const d = dims[tool];
     if (axis === 'l') d.L = clamp(d.L + dir * STEP.L, LIMITS.L[0], LIMITS.L[1]);
     else if (axis === 'w') d.W = clamp(d.W + dir * STEP.W, LIMITS.W[0], LIMITS.W[1]);
-    else if (tool === 'slope') d.angle = clamp(d.angle + dir * STEP.angle, LIMITS.angle[0], LIMITS.angle[1]);
     else d.H = clamp(d.H + dir * STEP.H, LIMITS.H[0], LIMITS.H[1]);
     rebuildGhost();
   }
@@ -559,6 +613,8 @@ export function createEditor({ scene, physics }) {
       dims: { w: dc.w, h: dc.h, r: dc.r, s: dc.s },
       spin: dc.spin,
       color: dc.color,
+      surface: dc.surface,
+      metalness: dc.metalness,
       mesh,
       owner,
       pos: pos.clone(),
@@ -602,36 +658,32 @@ export function createEditor({ scene, physics }) {
         qYaw
       ));
     } else if (type === 'slope') {
+      // One convex wedge, exactly the shape that is drawn. This used to be a
+      // tilted slab with a filler box under the tall end, and the filler's
+      // minimum height meant that on a shallow ramp it stood proud of the
+      // incline — an invisible hump you climbed before reaching the slope.
       const H = slopeHeight(d);
-      const theta = d.angle;
-      const hyp = Math.hypot(d.L, H);
-      // Asymmetric slab: the TOP corner lands exactly on the crest (an
-      // overshoot there is an invisible lip); only the bottom end extends,
-      // harmlessly into whatever is below.
-      const ext = 0.5;
-      const halfLen = (hyp + ext) / 2;
-      const halfT = 0.35;
-      const dX = Math.cos(theta);
-      const dY = -Math.sin(theta);
-      const nx2 = Math.sin(theta);
-      const ny2 = Math.cos(theta);
-      const cx = -d.L / 2 + dX * halfLen - nx2 * halfT;
-      const cy = H + dY * halfLen - ny2 * halfT;
+      const x = d.L / 2;
+      const z = d.W / 2;
+      const verts = [
+        [-x, 0, -z], [x, 0, -z], [x, 0, z], [-x, 0, z], // 0..3 base
+        [-x, H, -z], [-x, H, z],                        // 4,5 crest
+      ];
+      // Wound so every normal points OUT of the solid. cannon-es takes the
+      // winding at face value — get it backwards and the normals face inward,
+      // which makes every surface a backface: rays pass straight through and
+      // contacts resolve the wrong way.
+      const faces = [
+        [1, 2, 3, 0],   // bottom
+        [5, 2, 1, 4],   // the incline itself
+        [3, 5, 4, 0],   // tall back face
+        [4, 1, 0],      // -Z side
+        [2, 5, 3],      // +Z side
+      ];
       const qYaw = new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw);
-      const qTilt = new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 1), -theta);
-      bodies.push(physics.addStaticBox(
-        halfLen, halfT, d.W / 2,
-        new CANNON.Vec3(pos.x + Math.cos(yaw) * cx, pos.y + cy, pos.z - Math.sin(yaw) * cx),
-        qYaw.mult(qTilt)
-      ));
-      // fill under the tall face — its top held just below the incline so it
-      // can never poke through the sloped surface
-      const fx2 = 0.2;
-      const fTop = Math.max(0.4, H * (1 - (2 * fx2) / d.L) - 0.02);
-      const bx = -d.L / 2 + fx2;
-      bodies.push(physics.addStaticBox(
-        fx2, fTop / 2, d.W / 2,
-        new CANNON.Vec3(pos.x + Math.cos(yaw) * bx, pos.y + fTop / 2, pos.z - Math.sin(yaw) * bx),
+      bodies.push(physics.addStaticConvex(
+        verts, faces,
+        new CANNON.Vec3(pos.x, pos.y, pos.z),
         qYaw
       ));
     }
@@ -657,6 +709,11 @@ export function createEditor({ scene, physics }) {
       return;
     }
     if (!ghost.visible) return;
+    // the practice targets are live tanks, not scenery: hand them off
+    if (tool === 'enemy' || tool === 'ally') {
+      if (onPlaceTarget) onPlaceTarget(tool === 'ally', ghost.position.clone(), ghost.rotation.y);
+      return;
+    }
     placeAt(tool, { ...dims[tool] }, ghost.position.clone(), ghost.rotation.y);
   }
 
@@ -828,6 +885,7 @@ export function createEditor({ scene, physics }) {
   return {
     enter, exit,
     setTool, rotateGhost, adjust, setDecalShape, setDecalColor,
+    setDecalSurface, setDecalMetalness, decalBrush,
     // where the placement ghost is sitting, so other systems can drop things
     // at the spot the player is actually aiming at
     ghostPoint: () => (ghost.visible ? ghost.position.clone() : null),

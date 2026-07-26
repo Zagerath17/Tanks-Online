@@ -27,11 +27,14 @@ const WHITE = new THREE.Color(0xffffff);
 // a wide soft halo — so it reads as a bolt rather than a line.
 
 const SEGS = 26;
+// Radii, not half-widths: the lifeline is built from the same nested tubes
+// the prong arc uses, sized to sit alongside it rather than dwarf it.
 const LAYERS = [
-  { width: 0.055, color: 0xffffff, opacity: 0.95 },
-  { width: 0.16, color: 0x66ff9c, opacity: 0.6 },
-  { width: 0.42, color: 0x2fbf60, opacity: 0.22 },
+  { radius: 0.026, color: 0xffffff, opacity: 0.95 },
+  { radius: 0.062, color: 0x66ff9c, opacity: 0.55 },
+  { radius: 0.115, color: 0x2fbf60, opacity: 0.20 },
 ];
+const BEAM_SIDES = 6;
 
 // The railgun's discharge: a solid blue lance that appears instantly along
 // the shot line and burns out over a moment. Three nested cylinders — a
@@ -241,14 +244,21 @@ export function createArcBeam(scene) {
   group.visible = false;
   scene.add(group);
 
+  // Nested tubes, exactly as the prong arc is built. The old version was a
+  // pair of camera-facing ribbons — a flat sprite that swung about as you
+  // moved and never matched the bolt permanently crackling across the prongs.
   const ribbons = LAYERS.map((L) => {
     const geo = new THREE.BufferGeometry();
-    // two vertices per path point, stitched into a strip
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((SEGS + 1) * 2 * 3), 3));
+    geo.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array((SEGS + 1) * BEAM_SIDES * 3), 3
+    ));
     const idx = [];
     for (let i = 0; i < SEGS; i++) {
-      const a = i * 2;
-      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      for (let k = 0; k < BEAM_SIDES; k++) {
+        const a = i * BEAM_SIDES + k;
+        const b = i * BEAM_SIDES + ((k + 1) % BEAM_SIDES);
+        idx.push(a, a + BEAM_SIDES, b, b, a + BEAM_SIDES, b + BEAM_SIDES);
+      }
     }
     geo.setIndex(idx);
     const mat = new THREE.MeshBasicMaterial({
@@ -262,7 +272,7 @@ export function createArcBeam(scene) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     group.add(mesh);
-    return { mesh, geo, mat, width: L.width, baseOpacity: L.opacity };
+    return { mesh, geo, mat, radius: L.radius, baseOpacity: L.opacity };
   });
 
   // muzzle flare and a bloom where the arc lands
@@ -295,7 +305,12 @@ export function createArcBeam(scene) {
   const _perp = new THREE.Vector3();
   const _side = new THREE.Vector3();
   const _pt = new THREE.Vector3();
-  const _prev = new THREE.Vector3();
+  const _tan = new THREE.Vector3();
+  const _nrm = new THREE.Vector3();
+  const _bin = new THREE.Vector3();
+  const _ref = new THREE.Vector3();
+  const path = [];
+  for (let i = 0; i <= SEGS; i++) path.push(new THREE.Vector3());
   const _colour = new THREE.Color();
 
   let t = 0;
@@ -324,33 +339,52 @@ export function createArcBeam(scene) {
     _dir.copy(to).sub(from);
     const len = _dir.length() || 0.001;
     _dir.divideScalar(len);
-    _view.copy(camera.position).sub(from).normalize();
-    _perp.copy(_dir).cross(_view);
-    if (_perp.lengthSq() < 1e-6) _perp.set(0, 1, 0);
+    // a stable frame about the beam axis, no camera involved any more
+    _perp.set(0, 1, 0).cross(_dir);
+    if (_perp.lengthSq() < 1e-6) _perp.set(1, 0, 0);
     _perp.normalize();
     _side.copy(_dir).cross(_perp).normalize();
 
     // amplitude tapers to nothing at both ends so it stays pinned
     const amp = Math.min(0.55, 0.10 + len * 0.035);
 
+    // one shared wandering path, so every layer sits concentric
+    for (let i = 0; i <= SEGS; i++) {
+      const f = i / SEGS;
+      const taper = Math.sin(f * Math.PI);
+      const sd = seeds[i];
+      path[i].copy(from).addScaledVector(_dir, len * f)
+        .addScaledVector(_perp, Math.sin(t * sd.s1 + sd.a) * amp * taper)
+        .addScaledVector(_side, Math.cos(t * sd.s2 + sd.b) * amp * taper * 0.7);
+    }
+
     for (const r of ribbons) {
       const pos = r.geo.attributes.position;
       for (let i = 0; i <= SEGS; i++) {
+        _pt.copy(path[i]);
+        _tan.copy(path[Math.min(SEGS, i + 1)]).sub(path[Math.max(0, i - 1)]);
+        if (_tan.lengthSq() < 1e-9) _tan.copy(_dir);
+        _tan.normalize();
+        _ref.set(0, 1, 0);
+        if (Math.abs(_tan.y) > 0.9) _ref.set(1, 0, 0);
+        _nrm.crossVectors(_tan, _ref).normalize();
+        _bin.crossVectors(_tan, _nrm).normalize();
+
         const f = i / SEGS;
-        const taper = Math.sin(f * Math.PI); // 0 at the ends, 1 in the middle
-        const s = seeds[i];
-        const jx = Math.sin(t * s.s1 + s.a) * amp * taper;
-        const jy = Math.cos(t * s.s2 + s.b) * amp * taper * 0.7;
-
-        _pt.copy(from).addScaledVector(_dir, len * f);
-        _pt.addScaledVector(_perp, jx);
-        _pt.addScaledVector(_side, jy);
-
-        // ribbon width follows the local direction, so corners stay solid
-        if (i === 0) _prev.copy(_pt);
-        const w = r.width * (0.55 + 0.45 * taper);
-        pos.setXYZ(i * 2, _pt.x + _perp.x * w, _pt.y + _perp.y * w, _pt.z + _perp.z * w);
-        pos.setXYZ(i * 2 + 1, _pt.x - _perp.x * w, _pt.y - _perp.y * w, _pt.z - _perp.z * w);
+        // tapered to a point at each end, so it springs off the prongs and
+        // lands on the hull rather than stopping dead
+        const rad = r.radius * (0.3 + 0.7 * Math.sin(f * Math.PI) ** 0.5);
+        for (let k = 0; k < BEAM_SIDES; k++) {
+          const ang = (k / BEAM_SIDES) * Math.PI * 2;
+          const cx = Math.cos(ang) * rad;
+          const cy = Math.sin(ang) * rad;
+          pos.setXYZ(
+            i * BEAM_SIDES + k,
+            _pt.x + _nrm.x * cx + _bin.x * cy,
+            _pt.y + _nrm.y * cx + _bin.y * cy,
+            _pt.z + _nrm.z * cx + _bin.z * cy
+          );
+        }
       }
       pos.needsUpdate = true;
       r.geo.computeBoundingSphere();

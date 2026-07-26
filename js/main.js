@@ -14,6 +14,7 @@ import { createTreadMarks } from './tracks.js';
 import { createArcBeam, createRailBeam, createProngArc } from './arc.js';
 import { createEditor } from './editor.js';
 import { createDummies } from './dummies.js';
+import { createScorchMarks } from './scorch.js';
 import { createColorWheel } from './colorwheel.js';
 import { createGarage } from './garage.js';
 import { TURRETS, HULLS, SKINS, selection, loadSelection, saveSelection, currentSkin, currentTurret, currentHull } from './loadout.js';
@@ -89,9 +90,14 @@ const audio = createAudio(camera, scene);
 const bullets = createBullets(scene, fx);
 const remote = createRemoteManager({ scene, fx, audio, physics });
 const tracks = createTreadMarks(scene);
+const scorch = createScorchMarks(scene);
 const arcBeam = createArcBeam(scene);
 const railBeam = createRailBeam(scene);
-const editor = createEditor({ scene, physics });
+const editor = createEditor({
+  scene,
+  physics,
+  onPlaceTarget: (friendly, at, yaw) => dummies.add(at.x, at.z, yaw, friendly),
+});
 const dummies = createDummies({ scene, physics, fx, audio, bullets });
 loadSelection();
 const garage = createGarage({ scene, fx, audio, bullets, railBeam });
@@ -171,6 +177,79 @@ const elSpeed = document.getElementById('speed');
 const elFps = document.getElementById('fps');
 const elHpFill = document.getElementById('hpfill');
 const elHpNum = document.getElementById('hpnum');
+const elHpCornerFill = document.getElementById('hpcornerfill');
+const elHpCornerNum = document.getElementById('hpcornernum');
+const elHitDmg = document.getElementById('hitdmg');
+const elHitHeal = document.getElementById('hitheal');
+
+// A running tally by the crosshair: damage you are dealing in red, health you
+// are gaining or giving in green. Both accumulate while the hits keep landing
+// and clear a moment after they stop, so a burst reads as one number rather
+// than a flicker of separate ones.
+const tally = { dmg: 0, heal: 0, dmgT: 0, healT: 0 };
+const TALLY_HOLD = 1.1;
+
+function creditDamage(amount) {
+  if (!(amount > 0)) return;
+  tally.dmg += amount;
+  tally.dmgT = TALLY_HOLD;
+}
+
+function creditHeal(amount) {
+  if (!(amount > 0)) return;
+  tally.heal += amount;
+  tally.healT = TALLY_HOLD;
+}
+
+// When a stream is landing on a wall, throw particles off it so you can see
+// it is being stopped rather than quietly passing through.
+let streamSplash = 0;
+const _sbP = new THREE.Vector3();
+const _sbD = new THREE.Vector3();
+const _sbQ = new THREE.Quaternion();
+function updateStreamBlock(dt) {
+  if (!playerModel.hasStream()) return;
+  const spec = streamSpecOf(playerModel.turretId);
+  if (!spec) return;
+  if (!streaming || !local.alive) {
+    playerModel.setStreamReach(spec.range); // let it out again when not firing
+    return;
+  }
+  playerModel.muzzle.getWorldPosition(_sbP);
+  playerModel.muzzle.getWorldQuaternion(_sbQ);
+  _sbD.set(1, 0, 0).applyQuaternion(_sbQ);
+  const hit = physics.rayHit(
+    _sbP.x, _sbP.y, _sbP.z,
+    _sbP.x + _sbD.x * spec.range, _sbP.y + _sbD.y * spec.range, _sbP.z + _sbD.z * spec.range
+  );
+  playerModel.setStreamReach(hit ? hit.dist : spec.range);
+  if (!hit) return;
+  streamSplash -= dt;
+  if (streamSplash > 0) return;
+  streamSplash = 0.04;
+  _sbP.set(hit.x, hit.y, hit.z);
+  const cryoish = playerModel.turretId === 'arctic';
+  if (cryoish) fx.plasmaImpact(_sbP.clone());
+  else fx.impact(_sbP.clone());
+  fx.ember(_sbP.clone());
+}
+
+function updateTally(dt) {
+  if (tally.dmgT > 0) {
+    tally.dmgT -= dt;
+    if (tally.dmgT <= 0) tally.dmg = 0;
+  }
+  if (tally.healT > 0) {
+    tally.healT -= dt;
+    if (tally.healT <= 0) tally.heal = 0;
+  }
+  const d = Math.round(tally.dmg);
+  const h = Math.round(tally.heal);
+  elHitDmg.textContent = d > 0 ? `-${d}` : '';
+  elHitDmg.classList.toggle('on', tally.dmgT > 0 && d > 0);
+  elHitHeal.textContent = h > 0 ? `+${h}` : '';
+  elHitHeal.classList.toggle('on', tally.healT > 0 && h > 0);
+}
 const elReload = document.getElementById('reload');
 const elHint = document.getElementById('lockhint');
 const elDeath = document.getElementById('deathmsg');
@@ -187,6 +266,11 @@ function updateHpHud() {
       : f > 0.25 ? 'linear-gradient(90deg,#c9a24a,#dcb85e)'
         : 'linear-gradient(90deg,#b04a40,#d05a4e)';
   elHpNum.textContent = String(Math.max(0, Math.round(local.hp)));
+  if (elHpCornerFill) {
+    elHpCornerFill.style.width = `${f * 100}%`;
+    elHpCornerFill.style.background = elHpFill.style.background;
+    elHpCornerNum.textContent = String(Math.max(0, Math.round(local.hp)));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -382,7 +466,7 @@ function enterLobby() {
         const rspec = TURRET_SPECS.railgun;
         const rp = new THREE.Vector3(s.x, s.y, s.z);
         const rd = new THREE.Vector3(s.dx, s.dy, s.dz).normalize();
-        railBeam.fire(rp, rd, rspec.range);
+        railBeam.fire(rp, rd, clearRange(rp, rd, rspec.range).range);
         fx.muzzleFlash(rp.clone(), rd.clone(), 'plasma');
         audio.playAt('rail', rp, { volume: 0.85, rate: 0.97 + Math.random() * 0.07 });
         resolveRailShot(rp, rd, remote.shotFrom(pid, 'rail'), rspec);
@@ -418,6 +502,7 @@ function leaveToMenu() {
   stopStreaming();
   refreshTouchUi();
   tracks.clear();
+  scorch.clear();
   net.leaveLobby();
   remote.clear();
   bullets.clear();
@@ -621,6 +706,7 @@ function leaveEditor() {
   dummies.clear();
   refreshTouchUi();
   tracks.clear();
+  scorch.clear();
   editor.exit();
   arenaGroup.visible = true;
   physics.setArenaActive(true);
@@ -764,6 +850,22 @@ for (const [shape, btn] of Object.entries(decalShapeBtns)) {
 }
 selectDecalShape('rect');
 
+// decal surface preset + metalness slider
+const decalSurfaceSel = document.getElementById('decal-surface');
+const decalMetalRange = document.getElementById('decal-metal');
+if (decalSurfaceSel) {
+  decalSurfaceSel.addEventListener('change', () => {
+    editor.setDecalSurface(decalSurfaceSel.value);
+    // each preset carries its own sensible metalness; show it on the slider
+    decalMetalRange.value = String(Math.round(editor.decalBrush().metalness * 100));
+  });
+}
+if (decalMetalRange) {
+  decalMetalRange.addEventListener('input', () => {
+    editor.setDecalMetalness(Number(decalMetalRange.value) / 100);
+  });
+}
+
 const wheelPop = document.getElementById('wheel-pop');
 const decalSwatch = document.getElementById('decal-swatch');
 createColorWheel(
@@ -839,29 +941,11 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'Digit3') editor.setTool('slope');
   else if (e.code === 'Digit4') editor.setTool('spawn');
   else if (e.code === 'Digit5') editor.setTool('decal');
-  // Practice targets. 6 drops a hostile that tracks you and shoots back, 7 a
-  // friendly that just stands there, both 18 m ahead of wherever you are; 8
-  // clears the lot.
-  else if (e.code === 'Digit6' || e.code === 'Digit7') {
-    const hostile = e.code === 'Digit6';
-    // dropped where the placement ghost is, exactly like a wall or a slope;
-    // if there is no ghost (not aiming at anything) it goes out in front
-    const at = editor.ghostPoint();
-    const h = player.state.heading;
-    if (at) {
-      dummies.add(at.x, at.z, editor.ghostYaw(), !hostile);
-    } else {
-      dummies.add(
-        playerModel.root.position.x + Math.cos(h) * 18,
-        playerModel.root.position.z - Math.sin(h) * 18,
-        h + Math.PI,
-        !hostile
-      );
-    }
-
-  } else if (e.code === 'Digit8') {
-    dummies.clear();
-  }
+  // Practice targets pick a tool like any other object, so the ghost shows
+  // where the tank will land before you commit; left click places it.
+  else if (e.code === 'Digit6') editor.setTool('enemy');
+  else if (e.code === 'Digit7') editor.setTool('ally');
+  else if (e.code === 'Digit8') dummies.clear();
   else if (e.code === 'KeyR') editor.rotateGhost();
   else if (e.code === 'KeyX') editor.deleteAtCursor();
 });
@@ -1203,7 +1287,31 @@ const SAMPLES = [
   [0.3, 0.5, 0.6], [0.3, 0.5, -0.6], [-0.3, 0.5, 0.6], [-0.3, 0.5, -0.6],
 ];
 
+// How far a stream can pour before a wall stops it, and where that is.
+const _strOrigin = new THREE.Vector3();
+const _strDir = new THREE.Vector3();
+const _strQ = new THREE.Quaternion();
+const _strHit = new THREE.Vector3();
+function streamReach(sourceModel, spec) {
+  sourceModel.muzzle.getWorldPosition(_strOrigin);
+  sourceModel.muzzle.getWorldQuaternion(_strQ);
+  _strDir.set(1, 0, 0).applyQuaternion(_strQ);
+  const hit = physics.rayHit(
+    _strOrigin.x, _strOrigin.y, _strOrigin.z,
+    _strOrigin.x + _strDir.x * spec.range,
+    _strOrigin.y + _strDir.y * spec.range,
+    _strOrigin.z + _strDir.z * spec.range
+  );
+  return hit ? hit.dist : spec.range;
+}
+
 function streamHitsBody(sourceModel, targetModel, targetPos, targetQuat, spec) {
+  // nothing downstream of a wall gets wet
+  const reach = streamReach(sourceModel, spec);
+  if (reach < spec.range) {
+    sourceModel.muzzle.getWorldPosition(_strOrigin);
+    if (_strOrigin.distanceTo(targetPos) > reach + 1.2) return false;
+  }
   const H = targetModel.hull.hit;
   _sampQ.copy(targetQuat);
   for (const [fx_, fy_, fz_] of SAMPLES) {
@@ -1335,9 +1443,26 @@ function raycastTanks(origin, dir, range, units) {
 
 // Resolve a rail shot: only the local tank's own health is applied here,
 // since every tank owns its own hit points.
+// How far a shot can actually travel before something solid stops it.
+function clearRange(origin, dir, maxRange) {
+  const hit = physics.rayHit(
+    origin.x, origin.y, origin.z,
+    origin.x + dir.x * maxRange, origin.y + dir.y * maxRange, origin.z + dir.z * maxRange
+  );
+  return hit ? { range: hit.dist, hit } : { range: maxRange, hit: null };
+}
+
 function resolveRailShot(origin, dir, shooter, spec) {
   const units = [local, ...remote.targets()].filter((u) => u !== shooter);
-  const hits = raycastTanks(origin, dir, spec.range, units);
+  // The lance is stopped by the first wall in the way, and only tanks in
+  // front of that wall are on the receiving end of it.
+  const { range: reach, hit: wall } = clearRange(origin, dir, spec.range);
+  if (wall) {
+    _rs.set(wall.x, wall.y, wall.z);
+    fx.plasmaImpact(_rs.clone());
+    scorch.add(wall, 'rail');
+  }
+  const hits = raycastTanks(origin, dir, reach, units);
   hits.forEach((h, i) => {
     const dmg = Math.max(0, spec.damage - spec.falloff * i);
     if (dmg <= 0) return;
@@ -1372,7 +1497,7 @@ function updateRailgun(dt) {
       playerModel.muzzle.getWorldPosition(_rp);
       playerModel.muzzle.getWorldQuaternion(_rq);
       _rd.set(1, 0, 0).applyQuaternion(_rq);
-      railBeam.fire(_rp, _rd, spec.range);
+      railBeam.fire(_rp, _rd, clearRange(_rp, _rd, spec.range).range);
       fx.muzzleFlash(_rp.clone(), _rd.clone(), 'plasma');
       audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
       player.applyRecoil(_rd, spec.recoilKick !== undefined ? spec.recoilKick : 2.2, _rp);
@@ -1405,6 +1530,8 @@ const aegis = { lock: null, tick: 0, active: false };
 const _amz = new THREE.Vector3();
 const _adir = new THREE.Vector3();
 const _atv = new THREE.Vector3();
+const _aegisEnd = new THREE.Vector3();
+let aegisWasFiring = false;
 const _aq = new THREE.Quaternion();
 const AEGIS_GREEN = 0x53e07a;
 const AEGIS_RED = 0xff4a3d;
@@ -1456,6 +1583,11 @@ function pickAegisTarget(spec) {
     if (dist < 0.5 || dist > spec.range) continue;
     _atv.divideScalar(dist);
     const angle = Math.acos(THREE.MathUtils.clamp(_atv.dot(_adir), -1, 1));
+    // the emitter needs to SEE it: no reaching through a wall
+    if (physics.blocked(
+      _amz.x, _amz.y, _amz.z,
+      _amz.x + _atv.x * dist, _amz.y + _atv.y * dist, _amz.z + _atv.z * dist
+    )) continue;
     if (angle < bestAngle) {
       bestAngle = angle;
       best = ru;
@@ -1514,10 +1646,14 @@ function updateAegis(dt) {
         // In a match the tank on the other end applies its own heal. A
         // practice target has no other end, so do it here.
         if (onDummy) dummies.heal(aegis.lock, spec.healTick);
+        creditHeal(spec.healTick); // health given to a team mate
       } else {
         // the victim applies the damage themselves; we take the lifesteal
         if (onDummy) dummies.damage(aegis.lock, spec.damageTick);
-        localHeal(spec.damageTick * spec.lifestealFrac);
+        creditDamage(spec.damageTick);
+        const steal = spec.damageTick * spec.lifestealFrac;
+        localHeal(steal);
+        creditHeal(steal); // ...and health taken back off them
       }
     }
   } else {
@@ -1529,7 +1665,15 @@ function updateAegis(dt) {
     _atv.copy(aegis.lock.pos);
     _atv.y += 1.0;
   }
-  arcBeam.update(dt, camera, _amz, _atv, firing, friendly ? AEGIS_GREEN : AEGIS_RED);
+  // The endpoint gets its own vector, updated only while the beam is
+  // actually connected. It used to be handed _atv, which pickAegisTarget
+  // reuses as a scratch DIRECTION — so the instant a lock dropped, the beam
+  // whipped out to a normalised vector sitting a metre from the world origin
+  // for the frame or two it spent fading out.
+  if (firing) _aegisEnd.copy(_atv);
+  else if (!aegisWasFiring) _aegisEnd.copy(_amz);
+  aegisWasFiring = firing;
+  arcBeam.update(dt, camera, _amz, _aegisEnd, firing, friendly ? AEGIS_GREEN : AEGIS_RED);
 
   // the arc across the prong tips: yellow idle, and it takes the beam's
   // colour once the emitter has hold of somebody
@@ -1707,8 +1851,8 @@ function tryPlayerFire() {
     : -1;
 
   muzzleWorld(local, _fpos, _fdir, node);
-  bullets.fire(
-    local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone(), spec.projectile,
+  bullets.fireSpread(
+    local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone(), spec,
     charged ? spec.chargedDamage : spec.damage
   );
   fx.muzzleFlash(_fpos.clone(), _fdir.clone(), plasma ? 'plasma' : 'fire');
@@ -2019,6 +2163,7 @@ renderer.setAnimationLoop(() => {
       ru.trackZ = ru.pos.z;
     }
     tracks.update(dt);
+    scorch.update(dt);
 
     updateLocalUnit(dt);
     updateAutoFire();
@@ -2027,6 +2172,8 @@ renderer.setAnimationLoop(() => {
     updateRailgun(dt);
     railBeam.update(dt);
     updateBolt(dt);
+    updateTally(dt);
+    updateStreamBlock(dt);
     if (phase === 'editor') {
       dummies.update(dt, local.alive ? playerModel.root.position : null, local.alive);
     }
@@ -2036,16 +2183,24 @@ renderer.setAnimationLoop(() => {
     bullets.update(
       dt,
       phase === 'playing' ? [local, ...remote.targets()] : [local, ...dummies.targets()],
-      (unit, pos, damage, kind) => {
+      (unit, pos, damage, kind, shooter) => {
         if (kind === 'plasma') fx.plasmaImpact(pos.clone());
         else fx.impact(pos.clone());
         if (unit === local) localDamage(damage, pos);
         else if (unit.model && unit.hp !== undefined && dummies.list.includes(unit)) {
           dummies.damage(unit, damage);
+          if (shooter === local) creditDamage(damage);
           audio.playAt('hit', pos, { volume: 0.6, rate: 0.92 + Math.random() * 0.16 });
-        } else audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
+        } else {
+          if (shooter === local) creditDamage(damage);
+          audio.playAt('hit', pos, { volume: 0.5, rate: 0.92 + Math.random() * 0.16 });
+        }
       },
       (pos, kind) => {
+        // burn mark on whatever it hit — the surface normal comes from a
+        // short ray back along the flight path
+        const back = physics.rayHit(pos.x, pos.y + 0.6, pos.z, pos.x, pos.y - 0.6, pos.z);
+        scorch.add(back || { x: pos.x, y: pos.y + 0.02, z: pos.z, nx: 0, ny: 1, nz: 0 }, kind);
         if (kind === 'plasma') fx.plasmaImpact(pos.clone());
         else fx.impact(pos.clone());
       },

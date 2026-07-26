@@ -52,6 +52,15 @@ export function createPlayerController(model, physics) {
   // seconds after a shot during which the drive controller keeps its hands
   // off the forward velocity, so recoil is something you feel
   const RECOIL_FREE = 0.42;
+  // Drift is a function of ACTUAL SPEED, in metres per second — not of how
+  // close a tank is to its own top speed. Measuring it as a fraction meant an
+  // Ironclad flat out at 7.3 m/s broke traction just as readily as a Falcon
+  // doing 14, which is backwards: a slow heavy tank should not be able to do
+  // this at all. Below DRIFT_FROM nothing happens, and a hull whose top speed
+  // never reaches it simply cannot drift.
+  const DRIFT_FROM = 7.6;   // m/s — above an Ironclad's 7.27 top speed
+  const DRIFT_FULL = 13.0;  // m/s — a Falcon at full chat
+  const DRIFT_LOSS = 0.62;
   // how much of a broadside shot's roll the suspension eats
   const ROLL_ABSORB = 0.82;
   const PITCH_CAP = 0.75;       // rad/s: rears up, doesn't take off

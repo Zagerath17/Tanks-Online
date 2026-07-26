@@ -126,8 +126,8 @@ void main() {
   float k = 1.0 - clamp((vAge - uHold) / uFade, 0.0, 1.0);
   if (k <= 0.001) discard;
   vec4 t = texture2D(uMap, vUv);
-  // 0.85 -> 0.6: the trail reads as pressed ground, not as paint
-  gl_FragColor = vec4(0.04, 0.035, 0.03, t.a * k * 0.6);
+  // 0.85 -> 0.6 -> 0.4: pressed ground, barely there, not paint
+  gl_FragColor = vec4(0.04, 0.035, 0.03, t.a * k * 0.4);
 }
 `;
 
@@ -216,27 +216,23 @@ export function createTreadMarks(scene) {
     // Airborne, or standing still: hold the anchors exactly where they are
     // and wait. Distance keeps accruing across the dropout, which is what
     // makes this survive the contact signal flickering.
-    // Off the ground: hold briefly, because the contact signal flickers over
-    // seams and crests and losing the anchor there starves the emitter. But
-    // past a fraction of a second the tank is genuinely airborne, and the
-    // anchor is moved so that landing does not paint a stripe through the air
-    // along everywhere it flew.
+    // GROUND ONLY, no grace period. There used to be a fraction of a second
+    // of coyote time here to ride out the contact signal flickering over
+    // seams and crests — but distance kept accruing across it, so a real jump
+    // banked its whole flight and painted it on landing. Losing contact now
+    // re-anchors immediately: the cost is the odd missed mark over a bump,
+    // which is invisible, instead of a stripe drawn through mid-air.
     if (!onGround) {
-      e.air = (e.air || 0) + (moved > 0 ? 0.016 : 0.016);
-      if (e.air > 0.15) {
-        for (let i = 0; i < 2; i++) {
-          const az = (i === 0 ? -1 : 1) * tread.z;
-          const r = e.rails[i];
-          if (r) {
-            r.x = model.root.position.x + rx * az;
-            r.z = model.root.position.z + rz * az;
-            r.y = groundY;
-          }
-        }
+      for (let i = 0; i < 2; i++) {
+        const r = e.rails[i];
+        if (!r) continue;
+        const az = (i === 0 ? -1 : 1) * tread.z;
+        r.x = model.root.position.x + rx * az;
+        r.z = model.root.position.z + rz * az;
+        r.y = groundY;
       }
       return;
     }
-    e.air = 0;
     if (moved <= 0) return;
 
     // EACH TRACK KEEPS ITS OWN ANCHOR.

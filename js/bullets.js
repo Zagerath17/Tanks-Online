@@ -11,6 +11,14 @@ export const PROJECTILES = {
     damage: 200,
     trail: 'smoke',
   },
+  pellet: {
+    // Flechette shot: short-lived and short-ranged, so the cone is only
+    // dangerous up close. 40 m and it is spent.
+    speed: 165,
+    range: 40,
+    damage: 20,
+    trail: 'none',
+  },
   bolt: {
     // The Thunderbolt's round: 35% quicker off the muzzle than a shell, so it
     // leads less at range and closes the gap on a moving target.
@@ -47,6 +55,11 @@ function makeCoronaTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+const _spreadRef = new THREE.Vector3();
+const _spreadA = new THREE.Vector3();
+const _spreadB = new THREE.Vector3();
+const _spreadDir = new THREE.Vector3();
 
 export function createBullets(scene, fx) {
   // ---- shell: a short matte-black dart --------------------------------------
@@ -124,6 +137,32 @@ export function createBullets(scene, fx) {
   // kind: 'shell' | 'plasma'
   // damageOverride lets a turret spend a charged shot without needing a whole
   // separate projectile kind for it
+  // Fires `spec.pellets` rounds in a cone about `dir`, or one straight round
+  // if the turret is not a scattergun. Kept here so the match and the garage
+  // cannot drift apart on how a shotgun behaves.
+  function fireSpread(owner, pos, dir, spec, damageOverride) {
+    const n = spec.pellets || 1;
+    if (n === 1) {
+      fire(owner, pos, dir, spec.projectile, damageOverride);
+      return;
+    }
+    // a stable frame about the shot line to scatter within
+    const up = Math.abs(dir.y) > 0.9 ? _spreadRef.set(1, 0, 0) : _spreadRef.set(0, 1, 0);
+    _spreadA.crossVectors(dir, up).normalize();
+    _spreadB.crossVectors(dir, _spreadA).normalize();
+    for (let i = 0; i < n; i++) {
+      // sqrt keeps the darts evenly spread over the disc rather than piling
+      // up in the middle
+      const r = Math.sqrt(Math.random()) * spec.spread;
+      const a = Math.random() * Math.PI * 2;
+      _spreadDir.copy(dir)
+        .addScaledVector(_spreadA, Math.cos(a) * r)
+        .addScaledVector(_spreadB, Math.sin(a) * r)
+        .normalize();
+      fire(owner, pos, _spreadDir.clone(), spec.projectile, damageOverride);
+    }
+  }
+
   function fire(owner, pos, dir, kind = 'shell', damageOverride) {
     const spec = PROJECTILES[kind] || PROJECTILES.shell;
     const m = getMesh(spec === PROJECTILES.plasma ? 'plasma' : 'shell');
@@ -185,7 +224,7 @@ export function createBullets(scene, fx) {
         for (const t of targets) {
           if (t === b.owner || !t.alive) continue;
           if (t.model.hitTest(p)) {
-            onHit(t, p, b.damage, b.kind);
+            onHit(t, p, b.damage, b.kind, b.owner);
             done = true;
             break;
           }
@@ -221,5 +260,5 @@ export function createBullets(scene, fx) {
     }, 400);
   }
 
-  return { fire, update, clear, prewarm };
+  return { fire, fireSpread, update, clear, prewarm };
 }

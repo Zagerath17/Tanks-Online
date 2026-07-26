@@ -51,7 +51,7 @@
 
     <div class="screen hidden" id="scr-main">
       <h1 class="menu-title">TANK REMAKE</h1>
-      <p class="menu-sub">prototype 0.44 &middot; not pay-to-win</p>
+      <p class="menu-sub">prototype 0.51 &middot; not pay-to-win</p>
       <button class="mbtn" id="btn-play">Play</button>
       <button class="mbtn" id="btn-custom">Custom</button>
       <button class="mbtn" id="btn-garage">Garage</button>
@@ -126,6 +126,7 @@
     <div class="hud controls" id="editorhud">
       <div class="row"><span class="keys"><kbd>F</kbd></span> drive / build cam</div>
       <div class="row"><span class="keys"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>5</kbd></span> wall / platform / slope / spawn / decal</div>
+      <div class="row"><span class="keys"><kbd>6</kbd><kbd>7</kbd><kbd>8</kbd></span> enemy / ally target &middot; clear</div>
       <div class="row"><span class="keys"><kbd>LMB</kbd></span> place &middot; <kbd>X</kbd> delete</div>
       <div class="row"><span class="keys"><kbd>Scroll</kbd></span> length &middot; <kbd>Shift</kbd> width &middot; <kbd>Ctrl</kbd> height / angle</div>
       <div class="row"><span class="keys"><kbd>R</kbd></span> rotate &middot; <kbd>Space</kbd>/<kbd>Shift</kbd> fly up / down</div>
@@ -146,6 +147,19 @@
       <button id="decal-circle" class="shape-btn">circle</button>
       <button id="decal-triangle" class="shape-btn">tri</button>
       <button id="decal-swatch" title="decal colour"></button>
+      <select id="decal-surface" title="decal surface">
+        <option value="matte">matte</option>
+        <option value="concrete">concrete</option>
+        <option value="plating">plating</option>
+        <option value="metal">metal</option>
+        <option value="tread">tread</option>
+        <option value="rust">rust</option>
+        <option value="tile">tile</option>
+      </select>
+      <label id="decal-metal-wrap" title="decal metalness">
+        <span>metal</span>
+        <input type="range" id="decal-metal" min="0" max="100" value="0" />
+      </label>
       <span id="map-status"></span>
       <input type="file" id="map-file" accept=".json,application/json" style="display:none" />
 
@@ -161,6 +175,16 @@
     </div>
 
     <div id="crosshair"></div>
+    <div id="hitnums">
+      <div id="hitheal"></div>
+      <div id="hitdmg"></div>
+    </div>
+
+    <div id="hpcorner">
+      <label>HULL</label>
+      <div id="hpcornerbar"><div id="hpcornerfill"></div></div>
+      <span id="hpcornernum">1000</span>
+    </div>
     <div id="reloadwrap"><div id="reload"></div></div>
 
     <div id="cryowrap"><div id="cryofill"></div></div>

@@ -307,3 +307,44 @@ export function createFx(scene) {
     impact, plasmaImpact, explosion, prewarm, update,
   };
 }
+
+// A small health bar that floats over a tank. Redrawn only when the number
+// actually changes, so it costs nothing while nobody is being shot.
+export function createHealthBar() {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 10;
+  const ctx = c.getContext('2d');
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false, depthTest: false,
+  }));
+  sprite.scale.set(2.0, 0.32, 1);
+  sprite.renderOrder = 6;
+  let shown = -1;
+
+  function draw(frac) {
+    ctx.clearRect(0, 0, 64, 10);
+    ctx.fillStyle = 'rgba(14,16,19,0.82)';
+    ctx.fillRect(0, 0, 64, 10);
+    ctx.strokeStyle = 'rgba(210,220,190,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, 63, 9);
+    const f = Math.max(0, Math.min(1, frac));
+    ctx.fillStyle = f > 0.55 ? '#9cc36e' : f > 0.25 ? '#d8b23a' : '#c4462f';
+    ctx.fillRect(2, 2, 60 * f, 6);
+    tex.needsUpdate = true;
+  }
+  draw(1);
+
+  return {
+    sprite,
+    set(frac) {
+      const q = Math.round(frac * 40) / 40; // only redraw on a real change
+      if (q === shown) return;
+      shown = q;
+      draw(frac);
+    },
+  };
+}

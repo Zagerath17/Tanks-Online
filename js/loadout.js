@@ -10,6 +10,7 @@ export const TURRETS = [
   // network state message already carry. Only the label changed.
   { id: 'cannon', name: 'Striker', locked: false },
   { id: 'thunder', name: 'Thunderbolt', locked: false },
+  { id: 'flechette', name: 'Flechette', locked: false },
   { id: 'arctic', name: 'Arctic Snap', locked: false },
   { id: 'inferno', name: 'Torrential Inferno', locked: false },
   { id: 'plasma', name: 'Dual Plasma', locked: false },

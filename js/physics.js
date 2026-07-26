@@ -203,6 +203,62 @@ export function createPhysics() {
 
   // Height of the first solid surface under a point, or null. Used by the
   // hull clamp so no part of the tank can ever end a step below the ground.
+  // A static convex solid. Slopes need this: approximating a wedge with a
+  // tilted slab plus a filler box leaves seams and steps between the two,
+  // which is what the invisible hump at the foot of a ramp was.
+  function addStaticConvex(vertices, faces, pos, quat) {
+    const shape = new CANNON.ConvexPolyhedron({
+      vertices: vertices.map((v) => new CANNON.Vec3(v[0], v[1], v[2])),
+      faces,
+    });
+    const body = new CANNON.Body({
+      mass: 0,
+      material: groundMat,
+      collisionFilterGroup: GROUP_STATIC,
+      collisionFilterMask: GROUP_LOCAL | GROUP_REMOTE,
+    });
+    body.addShape(shape);
+    body.position.copy(pos);
+    if (quat) body.quaternion.copy(quat);
+    world.addBody(body);
+    return body;
+  }
+
+  // First solid surface along a segment, or null. Everything that fires
+  // needs this: walls, slopes and platforms are physics bodies, so one query
+  // covers the arena and anything built in the editor alike.
+  const _losFrom = new CANNON.Vec3();
+  const _losTo = new CANNON.Vec3();
+  function rayHit(fx, fy, fz, tx, ty, tz) {
+    _losFrom.set(fx, fy, fz);
+    _losTo.set(tx, ty, tz);
+    _ray.from.copy(_losFrom);
+    _ray.to.copy(_losTo);
+    _rayResult.reset();
+    _ray.intersectWorld(world, {
+      mode: CANNON.Ray.CLOSEST,
+      result: _rayResult,
+      skipBackfaces: true,
+      collisionFilterMask: GROUP_STATIC,
+    });
+    if (!_rayResult.hasHit) return null;
+    const p = _rayResult.hitPointWorld;
+    const n = _rayResult.hitNormalWorld;
+    const dx = p.x - fx;
+    const dy = p.y - fy;
+    const dz = p.z - fz;
+    return {
+      x: p.x, y: p.y, z: p.z,
+      nx: n.x, ny: n.y, nz: n.z,
+      dist: Math.sqrt(dx * dx + dy * dy + dz * dz),
+    };
+  }
+
+  // is there anything solid between these two points?
+  function blocked(fx, fy, fz, tx, ty, tz) {
+    return rayHit(fx, fy, fz, tx, ty, tz) !== null;
+  }
+
   function surfaceY(x, y, z, drop) {
     _ray.from.set(x, y, z);
     _ray.to.set(x, y - drop, z);
@@ -250,6 +306,6 @@ export function createPhysics() {
 
   return {
     world, createChassis, createRemoteBody, reshapeBody, removeBody, addBody,
-    addStaticBox, setArenaActive, groundedAt, surfaceY, step,
+    addStaticBox, addStaticConvex, setArenaActive, rayHit, blocked, groundedAt, surfaceY, step,
   };
 }
