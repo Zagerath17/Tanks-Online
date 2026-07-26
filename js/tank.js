@@ -18,11 +18,17 @@ export const SPEC = {
   halfTrack: 1.18,
   // --- traction model (the controller is the only source of ground grip) ---
   gripRate: 14,   // how fast sideways slide is scrubbed off, 1/s
-  // Sideways load (turn rate x speed) the tracks hold before they let go, and
-  // the fraction of grip left once they have. Scaled per hull below: a light
-  // scout breaks away early and slides a long way, a heavy hull just ploughs.
-  breakAway: 6.0,
-  slideGrip: 0.16,
+  // Break-away is an ABSOLUTE sideways load (turn rate x ground speed), the
+  // same figure for every hull, plus a floor on speed below which the tracks
+  // simply never let go. Scaling it by each hull's own top speed — which is
+  // what the first attempt did — meant every hull broke away at the same
+  // fraction of its own maximum, so the slowest tank drifted as readily as
+  // the fastest. Absolute figures mean a heavy hull has to actually be moving
+  // quickly to lose grip, and mostly cannot reach it at all.
+  breakAway: 19.5,   // ~1.8 rad/s of lock at 10.8 u/s
+  driftFloor: 7.0,   // below this ground speed, no drift at any lock
+  slideGrip: 0.62,   // grip left once broken away — a slide, not an ice rink
+  slideScrub: 2.6,   // speed bled off per second while actually sliding
   slipRate: 3,    // how fast the commanded speed gives up when blocked, 1/s
   stabilize: 3,   // bleeds pitch/roll rate while tracks are down, 1/s
   scrub: 3.5,     // ground drag on a hull nobody is driving (husk, flipped)
@@ -177,6 +183,9 @@ const HULL_DEFS = {
 
 // Fill in every derived quantity for a hull: the tread loop, the hit boxes,
 // and the physics chassis that has to enclose all of it.
+// tonnes per cubic metre of chassis box, in the game's own units
+const HULL_DENSITY = 0.3884;
+
 function deriveHull(id, def) {
   const t = { ...def.tread };
   t.bottomY = t.centerY - t.arcR;
@@ -222,17 +231,22 @@ function deriveHull(id, def) {
     hz: halfWidth - 0.02,
     shapeOffY: hy * (1 - 2 * COM_FRAC),
   };
+  // Mass follows the hull's own volume rather than being one number shared by
+  // every tank in the game. The density is picked so the Vanguard lands where
+  // the old fixed mass sat, which keeps its handling as tuned while giving the
+  // Ironclad four times the Falcon's inertia — so it shrugs off recoil and
+  // shunts lighter tanks out of the way instead of everything weighing the same.
+  chassis.volume = 8 * chassis.hx * hy * chassis.hz;
+  chassis.mass = chassis.volume * HULL_DENSITY;
   // where the model's origin (its ground-contact plane) sits in body space
   chassis.modelOffY = chassis.shapeOffY - hy - treadBottom;
   chassis.groundReach = hy - chassis.shapeOffY + 0.38;
 
-  // Lighter, faster hulls break away sooner and keep sliding for longer;
-  // heavy ones hold on. speedMul is already the light-to-heavy axis.
-  const nimble = def.speedMul;
+  // Break-away figures are deliberately NOT scaled per hull — see SPEC. A
+  // light hull drifts because it can reach the speed to, not because it is
+  // given an easier threshold.
   const move = {
     ...SPEC,
-    breakAway: SPEC.breakAway / Math.pow(nimble, 1.6),
-    slideGrip: Math.max(0.08, Math.min(0.4, SPEC.slideGrip / Math.pow(nimble, 1.3))),
     accel: SPEC.accel * def.speedMul,
     brakeAccel: SPEC.brakeAccel * def.speedMul,
     maxForward: SPEC.maxForward * def.speedMul,
@@ -698,18 +712,34 @@ function buildHull(M, hull) {
 // Opens the end of a gun: the outer tube loses its end caps and a dark
 // sleeve is dropped inside it, so you are looking down an actual hole rather
 // than at a flat disc of barrel paint.
-function borePipe(gun, M, { r, len, x, y = 0.02 }) {
+// `capTo` closes the gap between the bore and a wider fitting at the muzzle
+// (a brake cuff, a choke flare) with a flat annular face. Without it you look
+// past the bore into the inside of the cuff and out the far side, which is the
+// nest-of-tubes effect. `frontX` is where that face sits.
+function borePipe(gun, M, { r, len, x, y = 0.02, capTo = 0, frontX = null }) {
   const bore = new THREE.Mesh(
-    new THREE.CylinderGeometry(r, r, len, 16, 1, true), M.bore
+    new THREE.CylinderGeometry(r, r, len, 20, 1, true), M.bore
   );
   bore.rotation.z = -Math.PI / 2;
   bore.position.set(x, y, 0);
   gun.add(bore);
   // a plug well down the tube, so it does not read straight through
-  const plug = new THREE.Mesh(new THREE.CircleGeometry(r, 16), M.bore);
+  const plug = new THREE.Mesh(new THREE.CircleGeometry(r, 20), M.bore);
   plug.rotation.y = -Math.PI / 2;
   plug.position.set(x - len / 2, y, 0);
   gun.add(plug);
+
+  if (capTo > r) {
+    const face = new THREE.Mesh(new THREE.RingGeometry(r, capTo, 24), M.metal);
+    face.rotation.y = Math.PI / 2;
+    face.position.set(frontX === null ? x + len / 2 : frontX, y, 0);
+    gun.add(face);
+    // and the same ring seen from behind, so it is solid from either side
+    const back = new THREE.Mesh(new THREE.RingGeometry(r, capTo, 24), M.metal);
+    back.rotation.y = -Math.PI / 2;
+    back.position.set(frontX === null ? x + len / 2 : frontX, y, 0);
+    gun.add(back);
+  }
   return bore;
 }
 
@@ -1308,8 +1338,9 @@ function buildRailgunTurret(M) {
   }
 
   // the channel the slug rides down, open at the muzzle
-  // runs the whole way out through the brake, so you are looking down a hole
-  borePipe(gun, M, { r: 0.088, len: 3.05, x: 2.06 });
+  // runs the whole way out through the brake, whose cuff is closed off at the
+  // front so you see a hole rather than the inside of the brake
+  borePipe(gun, M, { r: 0.088, len: 3.05, x: 2.06, capTo: 0.128, frontX: 3.55 });
 
   // accelerator rings threaded along the rails
   for (let i = 0; i < 9; i++) {
@@ -1411,9 +1442,9 @@ function buildFlechetteTurret(M) {
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.56, 0.02, 0);
   gun.add(barrel);
-  // carried on through the choke ahead of it, which is open-ended — the bore
-  // used to stop short and you saw daylight through the choke's wall
-  borePipe(gun, M, { r: 0.155, len: 1.22, x: 0.72 });
+  // Fills the barrel's 0.2 muzzle almost exactly and runs out through the
+  // choke, whose 0.26 flare is closed off by the ring at its front face.
+  borePipe(gun, M, { r: 0.182, len: 1.3, x: 0.72, capTo: 0.255, frontX: 1.215 });
 
   // a flared choke, slotted round the rim
   const choke = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.2, 16, 1, true), M.metalOpen);
@@ -1490,7 +1521,9 @@ function buildThunderTurret(M) {
   const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16, 1, true), M.barrelOpen);
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.9, 0.02, 0);
-  borePipe(gun, M, { r: 0.088, len: 2.0, x: 1.15 });
+  // r sits just inside the barrel's own muzzle radius (0.13) so there is no
+  // visible gap between the two, and the ring closes the brake's 0.2 cuff.
+  borePipe(gun, M, { r: 0.115, len: 2.05, x: 1.16, capTo: 0.2, frontX: 1.985 });
   gun.add(barrel);
 
   // heavy muzzle brake: a cuff with two vents cut either side. Open-ended,
@@ -1786,6 +1819,7 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
       updateTread(treadR, dt, sR);
     },
     get maxHp() { return hull.maxHp; },
+    get mass() { return hull.chassis.mass; },
     get move() { return hull.move; },
     get chassis() { return hull.chassis; },
     setCharred(flag) {

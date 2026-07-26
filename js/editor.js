@@ -923,7 +923,8 @@ export function createEditor({ scene, physics, onPlaceTarget }) {
     ghostPoint: () => (ghost.visible ? ghost.position.clone() : null),
     ghostYaw: () => ghost.rotation.y,
     updateGhost, hideGhost, place, deleteAtCursor, clearAll,
-    solidAt, surfaceAt, getSpawns, serialize, loadData,
+    solidAt, surfaceAt,
+    pickRoot: () => group, getSpawns, serialize, loadData,
     getTool: () => tool,
     boundsHalf: GROUND_HALF - 1,
   };

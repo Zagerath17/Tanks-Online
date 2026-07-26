@@ -13,6 +13,8 @@ export function createPlayerController(model, physics) {
   // every dimension and speed comes from whichever hull the model is wearing
   let hull = model.hull;
   const body = physics.createChassis(hull.chassis);
+  // watched for NaN, runaway velocity and falling out of the world
+  physics.guard(body);
   const gravity = physics.world.gravity;
 
   // called when the garage swaps hulls: new collision box, speeds, offsets
@@ -64,6 +66,9 @@ export function createPlayerController(model, physics) {
   const DRIFT_LOSS = 0.62;
   // how much of a broadside shot's roll the suspension eats
   const ROLL_ABSORB = 0.82;
+  // the hull the weapon kick figures were tuned against
+  const RECOIL_REFERENCE_MASS = 6.5;
+  const RECOIL_DV_CAP = 3.0;    // m/s of shove a shot may ever impart
   const PITCH_CAP = 0.75;       // rad/s: rears up, doesn't take off
   const RECOIL_LIFT_CAP = 0.6;  // m/s upward the kick may ever impart
   const RECOIL_DAMP = 0.45;     // how much of the damper survives the shot
@@ -111,7 +116,17 @@ export function createPlayerController(model, physics) {
   // perpendicular to the shot, so the whole tank visibly bucks.
   function applyRecoil(dir, scale = 1, worldPoint = null) {
     const dh = Math.hypot(dir.x, dir.z) || 1;
-    const kick = body.mass * scale;
+    // A gun delivers the same impulse whatever it is bolted to, so recoil is a
+    // fixed figure in the weapon's own terms rather than mass * scale — which
+    // cancelled the mass out and gave every hull an identical shove. Referenced
+    // to the Vanguard, so that hull feels exactly as it did.
+    //
+    // The resulting change in speed is capped, though: a light hull firing a
+    // heavy gun would otherwise be thrown most of its top speed backwards. The
+    // cap keeps the ordering (heavier really does resist more) while standing
+    // in for the crew and suspension soaking up the worst of it.
+    const wanted = (RECOIL_REFERENCE_MASS * scale) / body.mass;
+    const kick = Math.min(wanted, RECOIL_DV_CAP) * body.mass;
     _imp.set(-dir.x / dh * kick, 0, -dir.z / dh * kick);
     if (worldPoint) {
       // Apply it where the gun actually is. The muzzle sits forward of and
@@ -150,7 +165,14 @@ export function createPlayerController(model, physics) {
     // touches pitch, which is why only forward and back shots bucked.)
     _pitchAxis.set(0, 0, 1).applyQuaternion(_q);
     const pitch = av.x * _pitchAxis.x + av.y * _pitchAxis.y + av.z * _pitchAxis.z;
-    const over = Math.abs(pitch) - PITCH_CAP;
+    // The cap is a safety limit, not the effect. It scales with the hull — a
+    // lighter tank is allowed to rock further — but only on a square root and
+    // within hard bounds, or a Falcon's ceiling ends up high enough to let a
+    // shot flip it.
+    const cap = THREE.MathUtils.clamp(
+      PITCH_CAP * Math.sqrt(RECOIL_REFERENCE_MASS / body.mass), 0.4, 1.05
+    );
+    const over = Math.abs(pitch) - cap;
     if (over > 0) {
       const trim = Math.sign(pitch) * over;
       av.x -= _pitchAxis.x * trim;
@@ -159,7 +181,10 @@ export function createPlayerController(model, physics) {
     }
 
     // and never let a shot fling the hull upward off its tracks
-    if (body.velocity.y > RECOIL_LIFT_CAP) body.velocity.y = RECOIL_LIFT_CAP;
+    const liftCap = THREE.MathUtils.clamp(
+      RECOIL_LIFT_CAP * Math.sqrt(RECOIL_REFERENCE_MASS / body.mass), 0.35, 0.9
+    );
+    if (body.velocity.y > liftCap) body.velocity.y = liftCap;
 
     // let the shove actually land: the drive controller is suppressed for a
     // moment so it does not immediately cancel the recoil velocity
@@ -269,16 +294,33 @@ export function createPlayerController(model, physics) {
       const avUpNow = body.angularVelocity.x * _up.x
         + body.angularVelocity.y * _up.y
         + body.angularVelocity.z * _up.z;
-      const demand = Math.abs(avUpNow * measured);
-      const breakAway = hull.move.breakAway;
-      const over = demand / breakAway;
-      // 1 while planted, falling toward the hull's minimum grip once it goes
-      const slide = over <= 1 ? 1 : Math.max(hull.move.slideGrip, 1 / (over * over));
-      state.slip = Math.min(1, Math.abs(vLat) / 3.2);
+      const speed = Math.abs(measured);
+      // Absolute load, and a hard floor on speed: a tank pottering about can
+      // never break traction however hard it is turned.
+      const demand = speed < hull.move.driftFloor ? 0 : Math.abs(avUpNow * speed);
+      const over = demand / hull.move.breakAway;
+      // 1 while planted, easing to the hull's minimum grip once it lets go
+      const slide = over <= 1 ? 1 : Math.max(hull.move.slideGrip, 1 / over);
+      state.slip = Math.min(1, Math.abs(vLat) / 2.6);
       const dvR = -(vLat * Math.min(1, hull.move.gripRate * slide * dt) + gR * dt);
       vel.x += _right.x * dvR;
       vel.y += _right.y * dvR;
       vel.z += _right.z * dvR;
+
+      // A slide COSTS speed. Sideways motion used to simply persist, so the
+      // total velocity grew and drifting read as a boost; and nothing bled it
+      // off, so a slide never settled. Scrubbing the commanded speed while
+      // the tracks are sideways is what makes a drift a compromise rather
+      // than a shortcut.
+      if (state.slip > 0.02) {
+        const scrub = hull.move.slideScrub * state.slip * dt;
+        drive -= Math.sign(drive || 1) * Math.min(Math.abs(drive), scrub);
+        // and take it out of what the hull is really doing, so the tank
+        // genuinely washes off speed through the corner
+        const bleed = Math.min(1, 0.9 * state.slip * dt);
+        vel.x -= vel.x * bleed;
+        vel.z -= vel.z * bleed;
+      }
 
       // pivot: steer angular velocity about the hull's own up axis
       const av = body.angularVelocity;

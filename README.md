@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.53
+# Tank Remake — prototype 0.55
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 
@@ -38,13 +38,13 @@ The bar along the bottom has three tabs. **Turrets** lists nine slots — Cannon
 
 The five working hulls span 1.8x in length, 2.3x in health and 1.8x in speed:
 
-| hull | hull points | top speed | size (L x W x H) |
-| --- | --- | --- | --- |
-| Ironclad | 1500 | 7.27 | 6.30 x 3.84 x 1.48 |
-| Paladin | 1250 | 8.55 | 5.36 x 3.34 x 1.28 |
-| Vanguard | 1000 | 9.50 | 4.90 x 3.02 x 1.16 |
-| Pioneer | 800 | 11.40 | 4.20 x 2.74 x 1.02 |
-| Falcon | 650 | 14.04 | 3.50 x 2.56 x 0.90 | A hull carries its own silhouette, tread layout, hit boxes, collision body, health pool and top speed, all derived from its own model so they can never disagree. **Skins** are all live: sixteen repaints — eight military finishes plus a full ROYGBIV set and black, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
+| hull | hull points | mass | top speed | size (L x W x H) |
+| --- | --- | --- | --- | --- |
+| Ironclad | 1500 | 13.5 t | 7.27 | 6.30 x 3.84 x 1.48 |
+| Paladin | 1250 | 8.6 t | 8.55 | 5.36 x 3.34 x 1.28 |
+| Vanguard | 1000 | 6.5 t | 9.50 | 4.90 x 3.02 x 1.16 |
+| Pioneer | 800 | 4.5 t | 11.40 | 4.20 x 2.74 x 1.02 |
+| Falcon | 650 | 3.1 t | 14.04 | 3.50 x 2.56 x 0.90 | A hull carries its own silhouette, tread layout, hit boxes, collision body, health pool and top speed, all derived from its own model so they can never disagree. **Skins** are all live: sixteen repaints — eight military finishes plus a full ROYGBIV set and black, each with its own colour scheme and grid pattern. Everything you pick applies instantly to the tank on the stand, carries into matches and the editor, is visible to other players online, and is remembered between sessions.
 
 ## Arctic Snap
 

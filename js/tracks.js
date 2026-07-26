@@ -318,7 +318,7 @@ export function createTreadMarks(scene) {
         const cx = a.x + ux * walked;
         const cz = a.z + uz * walked;
         const cy = a.y + climb * t;
-        stampSupported(cx, cy, cz, segHeading, width, span * 1.14, tilt, rx, rz);
+        stampSupported(cx, cy, cz, segHeading, width, span * 1.14, tilt, rx, rz, ux, uz);
       }
       // carry the remainder, so the next mark lands exactly one span on
       a.y += (groundY - a.y) * (walked / total);
@@ -337,7 +337,7 @@ export function createTreadMarks(scene) {
   // leaving a gap exactly at the transition. Now they land on the floor, so
   // the trail runs unbroken onto the ramp. Past this the tank really is in the
   // air and nothing is drawn.
-  const SNAP_REACH = 1.1;
+  const SNAP_REACH = 2.4;
 
   // Lay a mark only where there is actually ground under it. The width is
   // sampled in slices: unsupported slices are skipped entirely, and runs of
@@ -345,11 +345,43 @@ export function createTreadMarks(scene) {
   // the three cases at once — a mark that would float draws nothing, a track
   // hanging off a platform edge draws only its inner part, and a track
   // straddling an edge draws only the part that is carried.
-  function stampSupported(cx, cy, cz, segHeading, width, length, tilt, rx, rz) {
+  function stampSupported(cx, cy, cz, segHeading, width, length, tiltIn, rx, rz, ux, uz) {
     if (!probe) {
-      stamp(cx, cy + 0.015, cz, segHeading, width, length, tilt);
+      stamp(cx, cy + 0.015, cz, segHeading, width, length, tiltIn);
       return;
     }
+
+    // Lie the mark ON the ground it covers. The tilt used to come from how far
+    // the ANCHOR had climbed over the whole span, which is an average — so a
+    // mark laid right at the foot of a ramp sat at the wrong angle with one end
+    // buried and the other in the air. Sampling the surface at this stamp's own
+    // front and back gives the local gradient instead.
+    let tilt = tiltIn;
+    if (ux !== undefined) {
+      const half = length * 0.5;
+      const gf = probe(cx + ux * half, cz + uz * half);
+      const gb = probe(cx - ux * half, cz - uz * half);
+      if (gf !== null && gf !== undefined && gb !== null && gb !== undefined) {
+        tilt = Math.atan2(gf - gb, length);
+      }
+    }
+    // Which surface is this track actually riding? The highest one at or below
+    // it that is within reach. Slices whose ground is far below THAT are over a
+    // drop and get nothing — otherwise a track hanging off a platform edge
+    // would press its overhanging half onto the floor two metres down, and the
+    // averaged height would put the mark in mid-air between the two.
+    let ref = null;
+    for (let s = 0; s < SLICES; s++) {
+      const f = (s + 0.5) / SLICES - 0.5;
+      const g = probe(cx + rx * f * width, cz + rz * f * width);
+      if (g === null || g === undefined) continue;
+      if (g > cy + CONTACT_TOL) continue;      // above the track: not ours
+      if (cy - g > SNAP_REACH) continue;       // too far below to press onto
+      if (ref === null || g > ref) ref = g;
+    }
+    if (ref === null) return;                  // genuinely nothing underneath
+    const BAND = 0.35;                         // one surface per mark
+
     let runStart = -1;
     let runY = 0;   // surface height the current run of slices rests on
     let runN = 0;
@@ -382,15 +414,11 @@ export function createTreadMarks(scene) {
         const sx = cx + rx * f * width;
         const sz = cz + rz * f * width;
         const g = probe(sx, sz);
-        if (g !== null && g !== undefined) {
-          const gap = cy - g;
-          if (Math.abs(gap) <= CONTACT_TOL) {
-            ok = true;          // in contact: press it on where it is
-            surface = cy;
-          } else if (gap > 0 && gap <= SNAP_REACH) {
-            ok = true;          // lifted, but close: push it down onto the floor
-            surface = g;
-          }
+        // only the surface this track is riding counts; anything a step below
+        // it is a drop the track is hanging over
+        if (g !== null && g !== undefined && Math.abs(g - ref) <= BAND) {
+          ok = true;
+          surface = g;
         }
       }
       if (ok) {

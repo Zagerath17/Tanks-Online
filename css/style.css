@@ -1050,3 +1050,14 @@ body.menuopen #hpcorner, body.menuopen #hitnums { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+
+/* per-hull mass on the garage hull cards */
+.gsub {
+  display: block;
+  margin-top: -2px;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(232, 228, 216, 0.5);
+}

@@ -21,10 +21,32 @@ export const CHASSIS = {
 };
 export const MODEL_OFF_Y = CHASSIS.shapeOffY - CHASSIS.hy;
 
+// Fixed simulation step. Everything below is tuned for this rate; running the
+// solver at whatever the display happens to manage makes contact behaviour
+// frame-rate dependent, which is the usual reason a tank that rests quietly at
+// 144 fps jitters at 30.
+const FIXED_STEP = 1 / 60;
+const MAX_SUBSTEPS = 8;
+
 export function createPhysics() {
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
   world.broadphase = new CANNON.SAPBroadphase(world);
   world.allowSleep = true;
+
+  // Solver quality. The default 10 iterations leaves a hull resting on several
+  // contacts visibly working against itself; 18 with a tighter tolerance
+  // settles it. This is cheap here because there are only ever a handful of
+  // dynamic bodies in the world.
+  world.solver.iterations = 18;
+  world.solver.tolerance = 0.0005;
+
+  // Contact softness. Stiff-but-relaxed keeps a tank sitting still on a slope
+  // without the shivering that a stiffer, less relaxed contact produces, and
+  // stops shallow penetrations being answered with a shove.
+  world.defaultContactMaterial.contactEquationStiffness = 5e6;
+  world.defaultContactMaterial.contactEquationRelaxation = 4;
+  world.defaultContactMaterial.frictionEquationStiffness = 5e6;
+  world.defaultContactMaterial.frictionEquationRelaxation = 4;
 
   const groundMat = new CANNON.Material('ground');
   const chassisMat = new CANNON.Material('chassis');
@@ -50,6 +72,22 @@ export function createPhysics() {
     new CANNON.ContactMaterial(groundMat, chassisMat, {
       friction: 0,
       restitution: 0.0,
+      contactEquationStiffness: 5e6,
+      contactEquationRelaxation: 4,
+    })
+  );
+
+  // Tank against tank is a different problem from tank against ground: here
+  // friction SHOULD exist, or hulls slide off each other like wet soap, and
+  // there must be no bounce at all. Without an explicit pairing these contacts
+  // fell through to the world default, which is neither of those things.
+  const remoteMat = new CANNON.Material('remote');
+  world.addContactMaterial(
+    new CANNON.ContactMaterial(chassisMat, remoteMat, {
+      friction: 0.45,
+      restitution: 0.0,
+      contactEquationStiffness: 4e6,
+      contactEquationRelaxation: 4,
     })
   );
 
@@ -129,13 +167,17 @@ export function createPhysics() {
 
   function createChassis(dims) {
     const body = new CANNON.Body({
-      mass: 6,
+      // The hull's own mass, derived from its chassis volume — see tank.js.
+      // Every tank used to weigh exactly 6 regardless of size.
+      mass: (dims && dims.mass) || 6,
       material: chassisMat,
       collisionFilterGroup: GROUP_LOCAL,
       collisionFilterMask: GROUP_STATIC | GROUP_REMOTE,
-      linearDamping: 0.03,
-      angularDamping: 0.35,
+      linearDamping: 0.02,
+      angularDamping: 0.32,
       allowSleep: false,
+      // stops a resting hull creeping on a slope from solver noise
+      sleepSpeedLimit: 0.08,
     });
     const b = boxFor(dims);
     body.addShape(b.shape, new CANNON.Vec3(0, b.offY, 0));
@@ -147,6 +189,7 @@ export function createPhysics() {
     const body = new CANNON.Body({
       mass: 0,
       type: CANNON.Body.KINEMATIC,
+      material: remoteMat,
       collisionFilterGroup: GROUP_REMOTE,
       collisionFilterMask: GROUP_LOCAL,
     });
@@ -157,10 +200,13 @@ export function createPhysics() {
   }
 
   // Replace a body's collision box in place — used when a hull is swapped.
+  // Swapping a hull changes its mass as well as its size; setting the shape
+  // alone left an Ironclad with a Falcon's weight.
   function reshapeBody(body, dims) {
     while (body.shapes.length) body.removeShape(body.shapes[0]);
     const b = boxFor(dims);
     body.addShape(b.shape, new CANNON.Vec3(0, b.offY, 0));
+    if (body.mass > 0 && dims && dims.mass) body.mass = dims.mass;
     body.updateMassProperties();
   }
 
@@ -300,12 +346,93 @@ export function createPhysics() {
     world.addBody(body);
   }
 
+  // ---- robustness ----------------------------------------------------------
+  // A rigid-body sim has a small number of ways it goes wrong, and all of them
+  // end with the tank somewhere it should never be. Watch the dynamic bodies
+  // every step and pull them back before any of it becomes visible.
+  const guarded = [];
+  const MAX_SPEED = 90;      // nothing here should ever move this fast
+  const MAX_SPIN = 14;       // rad/s; past this a hull is in a solver spiral
+  const FLOOR_Y = -60;       // below this it has left the world entirely
+
+  function guard(body) {
+    guarded.push({ body, lastGood: body.position.clone(), lastQuat: body.quaternion.clone() });
+  }
+
+  function unguard(body) {
+    const i = guarded.findIndex((g) => g.body === body);
+    if (i >= 0) guarded.splice(i, 1);
+  }
+
+  function finite(v) {
+    return Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+  }
+
+  function sanitise() {
+    for (const g of guarded) {
+      const b = g.body;
+
+      // 1. NaN. One bad contact can poison position, velocity and quaternion in
+      //    a single step, and once any of them is NaN the body is gone for good
+      //    — every later step propagates it. Restore the last sane pose.
+      if (!finite(b.position) || !finite(b.velocity) || !finite(b.angularVelocity)
+        || !Number.isFinite(b.quaternion.x) || !Number.isFinite(b.quaternion.w)) {
+        b.position.copy(g.lastGood);
+        b.quaternion.copy(g.lastQuat);
+        b.velocity.setZero();
+        b.angularVelocity.setZero();
+        continue;
+      }
+
+      // 2. Runaway speed. Deep penetration recovery can hand a body an enormous
+      //    impulse; clamping keeps that as a shove rather than a launch.
+      const sp = b.velocity.length();
+      if (sp > MAX_SPEED) b.velocity.scale(MAX_SPEED / sp, b.velocity);
+      const sq = b.angularVelocity.length();
+      if (sq > MAX_SPIN) b.angularVelocity.scale(MAX_SPIN / sq, b.angularVelocity);
+
+      // 3. Left the world. Falling through a seam used to mean falling forever.
+      if (b.position.y < FLOOR_Y) {
+        b.position.copy(g.lastGood);
+        b.position.y += 2;
+        b.velocity.setZero();
+        b.angularVelocity.setZero();
+        continue;
+      }
+
+      // 4. Drifting quaternion. Repeated integration denormalises it, which
+      //    shears the collision box a little more every second.
+      b.quaternion.normalize();
+
+      // this pose is sane, so it becomes the one we fall back to
+      g.lastGood.copy(b.position);
+      g.lastQuat.copy(b.quaternion);
+    }
+  }
+
+  // Fixed-step integration with an accumulator, so the simulation advances by
+  // the same amount of time per second of real time regardless of frame rate.
+  // cannon-es does this internally, but only up to its substep cap; feeding it
+  // a clamped dt keeps a long stall (a tab switch, a shader compile) from
+  // trying to catch up in one enormous jump.
+  let accumulator = 0;
   function step(dt) {
-    world.step(1 / 60, dt, 6);
+    accumulator += Math.min(dt, FIXED_STEP * MAX_SUBSTEPS);
+    let steps = 0;
+    while (accumulator >= FIXED_STEP && steps < MAX_SUBSTEPS) {
+      world.step(FIXED_STEP);
+      sanitise();
+      accumulator -= FIXED_STEP;
+      steps++;
+    }
+    // whatever is left over is dropped rather than banked, so a stall cannot
+    // accumulate into a burst of catch-up steps later
+    if (steps === MAX_SUBSTEPS) accumulator = 0;
   }
 
   return {
     world, createChassis, createRemoteBody, reshapeBody, removeBody, addBody,
+    guard, unguard,
     addStaticBox, addStaticConvex, setArenaActive, rayHit, blocked, groundedAt, surfaceY, step,
   };
 }

@@ -91,6 +91,40 @@ const bullets = createBullets(scene, fx);
 const remote = createRemoteManager({ scene, fx, audio, physics });
 const tracks = createTreadMarks(scene);
 const scorch = createScorchMarks(scene);
+
+// Burn marks want the mesh they landed on, not just a point and a normal — a
+// mark clipped to its surface can't hang over the edge of a wall or a slope.
+// physics.rayHit knows nothing about meshes, so probe the scene as well.
+const scorchRay = new THREE.Raycaster();
+scorchRay.far = 3;
+const _srO = new THREE.Vector3();
+const _srD = new THREE.Vector3();
+const _srN = new THREE.Vector3();
+const _srM = new THREE.Matrix3();
+
+function surfaceHit(pos, dir) {
+  if (!dir) return null;
+  _srD.copy(dir).normalize();
+  _srO.copy(pos).addScaledVector(_srD, -1.2);
+  scorchRay.set(_srO, _srD);
+  const pickable = [];
+  if (arenaGroup.visible) pickable.push(arenaGroup);
+  const eg = editor.pickRoot && editor.pickRoot();
+  if (eg && eg.visible) pickable.push(eg);
+  if (!pickable.length) return null;
+  const hits = scorchRay.intersectObjects(pickable, true);
+  for (const h of hits) {
+    if (!h.face || !h.object.isMesh) continue;
+    _srM.getNormalMatrix(h.object.matrixWorld);
+    _srN.copy(h.face.normal).applyMatrix3(_srM).normalize();
+    return {
+      x: h.point.x, y: h.point.y, z: h.point.z,
+      nx: _srN.x, ny: _srN.y, nz: _srN.z,
+      object: h.object,
+    };
+  }
+  return null;
+}
 const arcBeam = createArcBeam(scene);
 const railBeam = createRailBeam(scene);
 const editor = createEditor({
@@ -560,6 +594,7 @@ function renderGarageItems() {
         ? `<span class="gchip" style="background:${item.hull[0]};border-color:${item.hull[1]}"></span>`
         : spec && !locked
           ? `<span class="gstat">${spec.maxHp}<em>hp</em></span>`
+            + `<span class="gsub">${spec.chassis.mass.toFixed(1)} t</span>`
           : `<span class="gnum">${String(i + 1).padStart(2, '0')}</span>`;
       return `<button class="gitem${i === sel ? ' on' : ''}${locked ? ' locked' : ''}" data-i="${i}">
         ${chip}<span class="gname">${item.name}</span>
@@ -1548,6 +1583,8 @@ function updateRailgun(dt) {
       playerModel.muzzle.getWorldPosition(_rp);
       playerModel.muzzle.getWorldQuaternion(_rq);
       _rd.set(1, 0, 0).applyQuaternion(_rq);
+      // a lance fired from a buried barrel starts at the cover, not beyond it
+      clampMuzzleToCover(local, _rp, _rd);
       railBeam.fire(_rp, _rd, clearRange(_rp, _rd, spec.range).range);
       fx.muzzleFlash(_rp.clone(), _rd.clone(), 'plasma');
       audio.playAt('rail', _rp, { volume: 1, rate: 0.97 + Math.random() * 0.07 });
@@ -1825,6 +1862,29 @@ function muzzleWorld(unit, outPos, outDir, node) {
   outDir.set(1, 0, 0).applyQuaternion(_fq);
 }
 
+// A barrel poked through a wall used to fire from its tip — on the far side of
+// the wall — so backing a turret into cover let you shoot straight through it.
+// Walk from the turret ring out to the muzzle: if anything solid is in the way,
+// the gun is buried and the shot starts at the obstruction instead, which puts
+// the round (and its burn mark) on the wall where it belongs.
+const _mzRoot = new THREE.Vector3();
+function clampMuzzleToCover(unit, pos, dir) {
+  const pivot = unit.model.pitchGroup || unit.model.turret;
+  if (!pivot) return false;
+  pivot.getWorldPosition(_mzRoot);
+  const hit = physics.rayHit(
+    _mzRoot.x, _mzRoot.y, _mzRoot.z, pos.x, pos.y, pos.z
+  );
+  if (!hit) return false;
+  // pull back a touch from the surface so the round is not born inside it
+  pos.set(
+    hit.x - dir.x * 0.12,
+    hit.y - dir.y * 0.12,
+    hit.z - dir.z * 0.12
+  );
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Thunderbolt hold-to-charge
 // ---------------------------------------------------------------------------
@@ -1902,6 +1962,8 @@ function tryPlayerFire() {
     : -1;
 
   muzzleWorld(local, _fpos, _fdir, node);
+  // if the barrel is inside cover, the shot starts at the cover, not past it
+  clampMuzzleToCover(local, _fpos, _fdir);
   bullets.fireSpread(
     local, _fpos.clone().addScaledVector(_fdir, 0.15), _fdir.clone(), spec,
     charged ? spec.chargedDamage : spec.damage
@@ -2271,8 +2333,9 @@ function frame(dt) {
         // back along the FLIGHT PATH — this used to ray straight down from
         // above the impact, so a shot into a wall was handed the floor's
         // normal and the mark ended up lying flat instead of on the wall.
-        let back = null;
-        if (dir) {
+        // ask the scene first, so the mark can be clipped to the actual face
+        let back = surfaceHit(pos, dir);
+        if (!back && dir) {
           back = physics.rayHit(
             pos.x - dir.x * 0.7, pos.y - dir.y * 0.7, pos.z - dir.z * 0.7,
             pos.x + dir.x * 0.5, pos.y + dir.y * 0.5, pos.z + dir.z * 0.5
