@@ -499,32 +499,61 @@ function pathPoint(T, t) {
 // ---------------------------------------------------------------------------
 // Materials
 // ---------------------------------------------------------------------------
-function buildMaterials(p) {
-  // A skin's old grid settings now drive how the steel is finished: finer
-  // cells mean a tighter brush grain, heavier lines mean a more beaten plate.
+// A skin means half a dozen 512x512 procedural plates, each thousands of
+// canvas draws. Regenerating them on every click is what made switching skins
+// stall, and switching back rebuilt paint that had just been thrown away.
+//
+// The TEXTURES are cached and shared; the MATERIALS are not. That split
+// matters: the freeze and burn overlays work by mutating material colours, so
+// if two tanks shared a material set, chilling one would turn the other blue
+// as well. Sharing only the maps keeps switching instant and keeps every
+// tank's tint its own.
+const textureCache = new Map();
+
+function texturesFor(p) {
+  const key = p && p.id ? p.id : 'custom';
+  let set = textureCache.get(key);
+  if (set) return set;
+
+  // A skin's old grid settings drive how the steel is finished: finer cells
+  // mean a tighter brush grain, heavier lines a more beaten plate.
   const pat = p.pattern || {};
   const grain = Math.min(2, Math.max(0.5, (pat.cells || 6) / 6));
   const wear = Math.min(2, Math.max(0.5, (pat.lineWidth || 3) / 3));
 
-  // One designed sheet per surface at repeat [1, 1] — no tiling, so the same
-  // smudge never shows up in four places on the same plate.
-  const hullTex = makeArmourTexture({
-    base: p.hull[0], shade: p.hull[1], wear, seed: 3,
-  });
-  const turretTex = makeArmourTexture({
-    base: p.turret[0], shade: p.turret[1], wear, seed: 11,
-  });
-  const barrelTex = makeMetalTexture({
-    base: p.barrel[0], shade: p.barrel[1], grain: grain * 1.4, wear, repeat: [3, 1],
-  });
-  // Tracks stay rubber: near-black, fine grain, glossy clearcoat sheen
-  const trackTex = makeMetalTexture({
-    base: '#1d1f24', shade: '#141619', grain: 1.6, wear: 0.6, repeat: [3, 3],
-  });
-  const tyreTex = makeMetalTexture({
-    base: '#1a1c20', shade: '#121417', grain: 1.8, wear: 0.5, repeat: [5, 1],
-  });
-  const hubTex = makeHubTexture();
+  set = {
+    // One designed sheet per surface at repeat [1, 1] — no tiling, so the
+    // same smudge never shows up in four places on the same plate.
+    hull: makeArmourTexture({ base: p.hull[0], shade: p.hull[1], wear, seed: 3 }),
+    turret: makeArmourTexture({ base: p.turret[0], shade: p.turret[1], wear, seed: 11 }),
+    barrel: makeMetalTexture({
+      base: p.barrel[0], shade: p.barrel[1], grain: grain * 1.4, wear, repeat: [3, 1],
+    }),
+    // Tracks stay rubber: near-black, fine grain, glossy clearcoat sheen
+    track: makeMetalTexture({
+      base: '#1d1f24', shade: '#141619', grain: 1.6, wear: 0.6, repeat: [3, 3],
+    }),
+    tyre: makeMetalTexture({
+      base: '#1a1c20', shade: '#121417', grain: 1.8, wear: 0.5, repeat: [5, 1],
+    }),
+    hub: makeHubTexture(),
+  };
+  textureCache.set(key, set);
+  return set;
+}
+
+function materialsFor(p) {
+  return rememberBaseColors(buildMaterials(p));
+}
+
+function buildMaterials(p) {
+  const T = texturesFor(p);
+  const hullTex = T.hull;
+  const turretTex = T.turret;
+  const barrelTex = T.barrel;
+  const trackTex = T.track;
+  const tyreTex = T.tyre;
+  const hubTex = T.hub;
 
   return {
     hull: new THREE.MeshStandardMaterial({ map: hullTex, roughness: 0.62, metalness: 0.55 }),
@@ -550,6 +579,16 @@ function buildMaterials(p) {
     // ...and the inside of a gun barrel, which is darker still
     bore: new THREE.MeshStandardMaterial({
       color: '#08090b', roughness: 0.42, metalness: 0.9, side: THREE.DoubleSide,
+    }),
+    // An open-ended cylinder has no end caps and, with the default
+    // single-sided material, no inner wall either — so looking into a muzzle
+    // showed the world straight through the barrel. These two are the same
+    // paint drawn on both faces, for exactly those tubes.
+    barrelOpen: new THREE.MeshStandardMaterial({
+      map: barrelTex, roughness: 0.48, metalness: 0.68, side: THREE.DoubleSide,
+    }),
+    metalOpen: new THREE.MeshStandardMaterial({
+      color: '#2c3138', roughness: 0.55, metalness: 0.6, side: THREE.DoubleSide,
     }),
     // cryo hardware keeps its own colour across every skin
     cryo: new THREE.MeshStandardMaterial({
@@ -705,7 +744,7 @@ function buildCannonTurret(M) {
 
   const barrelGeo = new THREE.CylinderGeometry(0.09, 0.085, 1.9, 16, 1, true);
   barrelGeo.rotateZ(Math.PI / 2);
-  const barrel = new THREE.Mesh(barrelGeo, M.barrel);
+  const barrel = new THREE.Mesh(barrelGeo, M.barrelOpen);
   barrel.position.set(1.83, 0.02, 0);
   borePipe(gun, M, { r: 0.058, len: 1.6, x: 1.93 });
   gun.add(barrel);
@@ -1009,7 +1048,7 @@ function buildPlasmaTurret(M) {
     // barrel
     const barrelGeo = new THREE.CylinderGeometry(0.088, 0.082, 1.26, 12, 1, true);
     barrelGeo.rotateZ(Math.PI / 2);
-    const barrel = new THREE.Mesh(barrelGeo, M.barrel);
+    const barrel = new THREE.Mesh(barrelGeo, M.barrelOpen);
     barrel.position.set(0.68, 0.02, z);
     borePipe(gun, M, { r: 0.052, len: 1.05, x: 0.78, y: 0.02 }).position.z = z;
     gun.add(barrel);
@@ -1350,7 +1389,7 @@ function buildFlechetteTurret(M) {
 
   // short and fat, opening out toward the muzzle
   const barrel = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.2, 0.15, 1.0, 16, 1, true), M.barrel
+    new THREE.CylinderGeometry(0.2, 0.15, 1.0, 16, 1, true), M.barrelOpen
   );
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.56, 0.02, 0);
@@ -1358,7 +1397,7 @@ function buildFlechetteTurret(M) {
   borePipe(gun, M, { r: 0.155, len: 0.9, x: 0.62 });
 
   // a flared choke, slotted round the rim
-  const choke = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.2, 16, 1, true), M.metal);
+  const choke = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.2, 16, 1, true), M.metalOpen);
   choke.rotation.z = -Math.PI / 2;
   choke.position.set(1.12, 0.02, 0);
   gun.add(choke);
@@ -1429,7 +1468,7 @@ function buildThunderTurret(M) {
   const gun = new THREE.Group();
   pitchGroup.add(gun);
 
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16, 1, true), M.barrel);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.72, 16, 1, true), M.barrelOpen);
   barrel.rotation.z = -Math.PI / 2;
   barrel.position.set(0.9, 0.02, 0);
   borePipe(gun, M, { r: 0.088, len: 1.55, x: 1.02 });
@@ -1577,7 +1616,8 @@ function updateTread(tread, dt, speed) {
 // Assembly
 // ---------------------------------------------------------------------------
 export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId = DEFAULT_HULL) {
-  let M = rememberBaseColors(buildMaterials(palette));
+  let M = materialsFor(palette);
+  let skinId = palette && palette.id ? palette.id : 'custom';
   const root = new THREE.Group();
   let hull = hullSpec(hullId);
   let hullMesh = null;
@@ -1655,11 +1695,11 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
     return role === 'wheel' ? [M.tyre, M.hub, M.hub] : M[role];
   }
 
+  // Drop the material objects but NOT their maps: those live in the shared
+  // texture cache and other tanks are still drawing with them. Disposing a
+  // cached map here would blank every tank wearing that skin.
   function disposeMaterials(set) {
-    for (const mat of Object.values(set)) {
-      if (mat.map) mat.map.dispose();
-      mat.dispose();
-    }
+    for (const mat of Object.values(set)) mat.dispose();
   }
 
   let charred = false;
@@ -1742,8 +1782,17 @@ export function createTankModel(palette = SKINS[0], turretId = 'cannon', hullId 
     },
     // Repaint the whole tank from a skin definition, in place
     setSkin(skin) {
+      // Re-applying the skin already on the tank rebuilt every material for
+      // nothing — and the garage did exactly that on every entry.
+      const key = skin && skin.id ? skin.id : 'custom';
+      if (key === skinId) return;
+      skinId = key;
+      // Textures are cached, so this is a pointer swap rather than paint.
+      // Nothing is disposed: the set stays in the cache for the next time
+      // this skin is chosen, which is what makes flicking through them
+      // instant after the first look at each.
       const old = M;
-      M = rememberBaseColors(buildMaterials(skin));
+      M = materialsFor(skin);
       if (!charred) {
         for (const [mesh, role] of meshes) mesh.material = materialFor(role);
       }

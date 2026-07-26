@@ -751,6 +751,29 @@ export function createEditor({ scene, physics, onPlaceTarget }) {
 
   // ---- exact solid test (bullets + aim ray) --------------------------------
   const _lp = new THREE.Vector3();
+  // Height of the highest placed surface over a world column, or null if the
+  // column is over bare ground. The tread-mark system uses this to decide
+  // whether a mark would be resting on something or floating in the air.
+  const _sp = new THREE.Vector3();
+  function surfaceAt(x, z) {
+    let top = null;
+    for (const o of objects) {
+      if (o.type === 'spawn') continue;
+      _sp.set(x, o.pos.y, z).applyMatrix4(o.inv);
+      const d = o.dims;
+      if (Math.abs(_sp.z) > d.W / 2 || Math.abs(_sp.x) > d.L / 2) continue;
+      let h;
+      if (o.type === 'slope') {
+        // the incline falls from the tall face to the toe
+        h = o.pos.y + slopeHeight(d) * ((d.L / 2 - _sp.x) / d.L);
+      } else {
+        h = o.pos.y + d.H;
+      }
+      if (top === null || h > top) top = h;
+    }
+    return top;
+  }
+
   function solidAt(p) {
     for (const o of objects) {
       if (o.type === 'spawn') continue;
@@ -891,7 +914,7 @@ export function createEditor({ scene, physics, onPlaceTarget }) {
     ghostPoint: () => (ghost.visible ? ghost.position.clone() : null),
     ghostYaw: () => ghost.rotation.y,
     updateGhost, hideGhost, place, deleteAtCursor, clearAll,
-    solidAt, getSpawns, serialize, loadData,
+    solidAt, surfaceAt, getSpawns, serialize, loadData,
     getTool: () => tool,
     boundsHalf: GROUND_HALF - 1,
   };

@@ -1029,3 +1029,24 @@ body.menuopen #hpcorner, body.menuopen #hitnums { display: none; }
   color: rgba(200, 217, 174, 0.7);
 }
 #decal-metal { width: 74px; accent-color: #9cc36e; }
+
+
+/* a frame error used to freeze everything silently; now it says so */
+#faultmsg {
+  position: fixed;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: 92vw;
+  padding: 6px 12px;
+  background: rgba(60, 20, 18, 0.92);
+  border: 1px solid rgba(224, 144, 138, 0.6);
+  color: #ffd9d4;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

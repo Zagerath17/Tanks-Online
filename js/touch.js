@@ -13,12 +13,21 @@ function clamp(v, a, b) {
   return v < a ? a : v > b ? b : v;
 }
 
-// Treat anything with a touchscreen and no fine pointer as a touch device.
+// Only assume touch-only when there is NO fine pointer at all.
+//
+// The old test was `maxTouchPoints > 0 && (pointer: coarse)`, which a laptop
+// with a touchscreen can satisfy. That turned the on-screen sticks on and,
+// far worse, made the canvas skip requestPointerLock — so the mouse stopped
+// aiming with no way to get it back. Requiring the absence of a fine pointer
+// keeps hybrids on mouse and keyboard where they belong.
 export function touchDeviceLikely() {
   if (typeof window === 'undefined') return false;
   const points = navigator.maxTouchPoints || 0;
-  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-  return points > 0 && !!coarse;
+  if (points <= 0) return false;
+  if (!window.matchMedia) return false;
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  const anyFine = window.matchMedia('(any-pointer: fine)').matches;
+  return coarse && !anyFine;
 }
 
 function createStick(root, side) {

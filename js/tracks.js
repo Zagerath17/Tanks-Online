@@ -106,10 +106,12 @@ function makeTreadTexture() {
 
 const VERT = `
 attribute float aAge;
+attribute vec2 aUv;   // x: u offset, y: u scale — the slice of the track this
+                      // instance represents, for partial-width marks
 varying vec2 vUv;
 varying float vAge;
 void main() {
-  vUv = uv;
+  vUv = vec2(uv.x * aUv.y + aUv.x, uv.y);
   vAge = aAge;
   gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
 }
@@ -141,6 +143,13 @@ export function createTreadMarks(scene) {
 
   const ages = new Float32Array(MAX).fill(-1);
   geo.setAttribute('aAge', new THREE.InstancedBufferAttribute(ages, 1));
+  // default u window is the whole track width
+  const uvs = new Float32Array(MAX * 2);
+  for (let i = 0; i < MAX; i++) {
+    uvs[i * 2] = 0;
+    uvs[i * 2 + 1] = 1;
+  }
+  geo.setAttribute('aUv', new THREE.InstancedBufferAttribute(uvs, 2));
 
   const mat = new THREE.ShaderMaterial({
     vertexShader: VERT,
@@ -172,7 +181,10 @@ export function createTreadMarks(scene) {
   const _scale = new THREE.Vector3();
   const _euler = new THREE.Euler();
 
-  function stamp(x, y, z, heading, width, length, tilt = 0) {
+  // uFrom/uTo select which part of the track's width this instance draws, so
+  // a track hanging half off a platform prints only the half that is carrying
+  // weight instead of a full-width mark or nothing at all.
+  function stamp(x, y, z, heading, width, length, tilt = 0, uFrom = 0, uTo = 1) {
     const i = next % MAX;
     next++;
     _pos.set(x, y, z);
@@ -180,12 +192,15 @@ export function createTreadMarks(scene) {
     // slope rather than hovering flat over it
     _euler.set(0, heading, tilt, 'YZX');
     _quat.setFromEuler(_euler);
-    _scale.set(length, 1, width);
+    _scale.set(length, 1, width * (uTo - uFrom));
     _m.compose(_pos, _quat, _scale);
     mesh.setMatrixAt(i, _m);
     ages[i] = 0;
+    uvs[i * 2] = uFrom;
+    uvs[i * 2 + 1] = uTo - uFrom;
     mesh.instanceMatrix.needsUpdate = true;
     geo.attributes.aAge.needsUpdate = true;
+    geo.attributes.aUv.needsUpdate = true;
   }
 
   // Lay marks under both tracks of a tank that's actually on the ground.
@@ -288,21 +303,67 @@ export function createTreadMarks(scene) {
       while (total - walked >= span) {
         walked += span;
         const t = walked / total;
-        stamp(
-          a.x + ux * walked,
-          a.y + climb * t + 0.015,
-          a.z + uz * walked,
-          segHeading,
-          width,
-          span * 1.14, // short stamps need more overlap to hide the joins
-          tilt
-        );
+        const cx = a.x + ux * walked;
+        const cz = a.z + uz * walked;
+        const cy = a.y + climb * t;
+        stampSupported(cx, cy, cz, segHeading, width, span * 1.14, tilt, rx, rz);
       }
       // carry the remainder, so the next mark lands exactly one span on
       a.y += (groundY - a.y) * (walked / total);
       a.x += ux * walked;
       a.z += uz * walked;
     }
+  }
+
+  // How many slices across the track width get tested for ground support.
+  const SLICES = 6;
+  // How far the ground may sit from the track before the mark is considered
+  // to be hanging in the air rather than pressed into anything.
+  const CONTACT_TOL = 0.22;
+
+  // Lay a mark only where there is actually ground under it. The width is
+  // sampled in slices: unsupported slices are skipped entirely, and runs of
+  // supported ones are merged into as few instances as possible. That covers
+  // the three cases at once — a mark that would float draws nothing, a track
+  // hanging off a platform edge draws only its inner part, and a track
+  // straddling an edge draws only the part that is carried.
+  function stampSupported(cx, cy, cz, segHeading, width, length, tilt, rx, rz) {
+    if (!probe) {
+      stamp(cx, cy + 0.015, cz, segHeading, width, length, tilt);
+      return;
+    }
+    let runStart = -1;
+    for (let s = 0; s <= SLICES; s++) {
+      let ok = false;
+      if (s < SLICES) {
+        // centre of this slice, measured out from the track's own centreline
+        const f = (s + 0.5) / SLICES - 0.5;
+        const sx = cx + rx * f * width;
+        const sz = cz + rz * f * width;
+        const g = probe(sx, sz);
+        ok = g !== null && g !== undefined && Math.abs(g - cy) <= CONTACT_TOL;
+      }
+      if (ok && runStart < 0) runStart = s;
+      if (!ok && runStart >= 0) {
+        const uFrom = runStart / SLICES;
+        const uTo = s / SLICES;
+        const mid = (uFrom + uTo) / 2 - 0.5;
+        stamp(
+          cx + rx * mid * width,
+          cy + 0.015,
+          cz + rz * mid * width,
+          segHeading, width, length, tilt, uFrom, uTo
+        );
+        runStart = -1;
+      }
+    }
+  }
+
+  // main.js supplies this: the height of whatever solid surface is under a
+  // world column, or null if there is nothing there at all.
+  let probe = null;
+  function setProbe(fn) {
+    probe = fn;
   }
 
   function forget(key) {
@@ -326,5 +387,5 @@ export function createTreadMarks(scene) {
     geo.attributes.aAge.needsUpdate = true;
   }
 
-  return { trail, update, clear, forget, mesh };
+  return { trail, update, clear, forget, setProbe, mesh };
 }

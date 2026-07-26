@@ -1,4 +1,4 @@
-# Tank Remake — prototype 0.51
+# Tank Remake — prototype 0.52
 
 A from-scratch remake of classic Tanki Online with one core rule: not pay-to-win. Vanilla JS ES modules plus three.js, cannon-es (physics), and the Firebase SDK loaded from CDNs — no build step, no dependencies to install. The whole thing deploys as static files.
 

@@ -161,6 +161,23 @@ function groundYAt(x, z) {
   return phase === 'editor' ? 0 : heightAt(x, z);
 }
 
+// Height of whatever a tank would be resting on at this column — the arena's
+// own terrain in a match, the editor's flat floor plus anything placed on it
+// in the editor. Returns null where there is nothing at all, which is how the
+// tread-mark system knows not to print into thin air.
+function surfaceHeightAt(x, z) {
+  if (phase === 'editor') {
+    const placed = editor.surfaceAt(x, z);
+    if (Math.abs(x) > editor.boundsHalf || Math.abs(z) > editor.boundsHalf) {
+      return placed === null ? null : placed;
+    }
+    return placed === null ? 0 : Math.max(0, placed);
+  }
+  if (Math.abs(x) > ARENA.half || Math.abs(z) > ARENA.half) return null;
+  return heightAt(x, z);
+}
+tracks.setProbe(surfaceHeightAt);
+
 // bullet environments: the arena vs the editor's flat build ground
 const ENV_ARENA = { groundAt: heightAt, half: ARENA.half - 0.4, solidAt: null };
 const ENV_EDITOR = {
@@ -986,10 +1003,28 @@ function pickFarSlot() {
   return best;
 }
 
+// Never drop the tank inside something. A spawn pad placed before a platform
+// was built over it — or an editor spawn that happens to sit under a piece —
+// used to bury the tank in the geometry with no way out.
+function safeEditorSpawn(spawn) {
+  const surface = editor.surfaceAt(spawn.x, spawn.z);
+  if (surface === null || surface === undefined) return spawn;
+  // sitting below the top of whatever is here: put it on top instead
+  const y = spawn.y === undefined ? 0 : spawn.y;
+  if (surface > y + 0.1) return { ...spawn, y: surface };
+  return spawn;
+}
+
 function editorSpawnPoint() {
   const spawns = editor.getSpawns();
-  if (!spawns.length) return EDITOR_SPAWN;
-  return spawns[Math.floor(Math.random() * spawns.length)];
+  if (!spawns.length) return safeEditorSpawn(EDITOR_SPAWN);
+  // prefer a pad that isn't buried; fall back to lifting one onto the surface
+  const clear = spawns.filter((s) => {
+    const surface = editor.surfaceAt(s.x, s.z);
+    return surface === null || surface <= (s.y === undefined ? 0 : s.y) + 0.1;
+  });
+  const pool = clear.length ? clear : spawns;
+  return safeEditorSpawn(pool[Math.floor(Math.random() * pool.length)]);
 }
 
 function spawnLocal(slot) {
@@ -1127,12 +1162,28 @@ function refreshTouchUi() {
   }
 }
 
-// A stylus or a mouse arriving means this probably isn't a touch-only device
+// Touch mode has to be reversible. It used to latch on the first touch event
+// and never turn off, which on a touchscreen laptop meant one stray tap
+// permanently disabled mouse aiming.
+function setTouchMode(on) {
+  if (touchForced || touchMode === on) return;
+  touchMode = on;
+  refreshTouchUi();
+  if (!on) {
+    // hand aiming back to the mouse: the prompt has to come back too
+    elHint.style.display = document.pointerLockElement === canvas ? 'none' : '';
+  }
+}
+
 window.addEventListener('pointerdown', (e) => {
-  if (touchForced) return;
-  if (e.pointerType === 'touch' && !touchMode) {
-    touchMode = true;
-    refreshTouchUi();
+  if (e.pointerType === 'touch') setTouchMode(true);
+  else if (e.pointerType === 'mouse') setTouchMode(false);
+}, true);
+
+// a real mouse moving is the clearest signal there is
+window.addEventListener('mousemove', (e) => {
+  if ((e.movementX || e.movementY) && !e.sourceCapabilities?.firesTouchEvents) {
+    setTouchMode(false);
   }
 }, true);
 
@@ -2081,8 +2132,27 @@ function aimRaycast(out) {
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
 
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+// three.js requests the next frame AFTER the callback returns, so a single
+// thrown exception stops the loop dead — the game and even the fps counter
+// freeze, with the cause buried in the console. Wrap the frame so one bad
+// frame can never do that again, and say so on screen once.
+let frameFault = 0;
+const elFault = document.getElementById('faultmsg');
+
+function reportFault(err) {
+  frameFault++;
+  if (frameFault === 1) {
+    console.error('[frame error] the game kept running; please report this:', err);
+    if (elFault) {
+      elFault.textContent = `frame error: ${err && err.message ? err.message : err}`;
+      elFault.style.display = '';
+    }
+  } else if (frameFault === 120) {
+    console.error('[frame error] still failing every frame:', err);
+  }
+}
+
+function frame(dt) {
   const inGame = phase === 'playing' || phase === 'editor';
 
   if (inGame) {
@@ -2283,6 +2353,17 @@ renderer.setAnimationLoop(() => {
   }
 
   renderer.render(scene, camera);
+}
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  try {
+    frame(dt);
+  } catch (err) {
+    reportFault(err);
+    // keep the picture alive even if the update threw part-way through
+    try { renderer.render(scene, camera); } catch { /* nothing more to do */ }
+  }
 });
 
 window.addEventListener('resize', () => {

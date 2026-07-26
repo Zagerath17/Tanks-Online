@@ -680,11 +680,21 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       collar.position.set(0.9, BAY.h - 1.0, bz);
       group.add(collar);
     }
+    // Sprinkler heads. These were bare downward cones, which read as a row of
+    // spikes driven through the pipe rather than plumbing. A real head is a
+    // short threaded boss with a flat deflector under it, so build that: a
+    // stub off the main, a hex body, and a disc.
     for (let i = -5; i <= 5; i++) {
-      const head = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 8), steel);
-      head.position.set(0.9, BAY.h - 1.17, i * 3);
-      head.rotation.x = Math.PI;
-      group.add(head);
+      const z = i * 3;
+      const stub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.1, 8), steel);
+      stub.position.set(0.9, BAY.h - 1.14, z);
+      group.add(stub);
+      const boss = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.07, 6), steel);
+      boss.position.set(0.9, BAY.h - 1.22, z);
+      group.add(boss);
+      const deflector = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.012, 10), steel);
+      deflector.position.set(0.9, BAY.h - 1.27, z);
+      group.add(deflector);
     }
 
     // a painted service strip down the centre of the roof, so the ceiling
@@ -905,7 +915,13 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
   // not the mesh, so whichever run set it last won and every other lane got
   // its grousers stretched into a few long dashes.
   {
+    // 25 lanes were each generating their own canvas on entry, which is a
+    // large slice of the pause when the garage opens. Lanes of similar length
+    // want the same texture, so bucket by grouser count and reuse.
+    const markCache = new Map();
     function makeMarkTexture(grousers) {
+      const cached = markCache.get(grousers);
+      if (cached) return cached;
       const c = document.createElement('canvas');
       c.width = 64;
       c.height = 128;
@@ -945,6 +961,7 @@ export function createGarage({ scene, fx, audio, bullets, railBeam }) {
       tex.wrapS = THREE.ClampToEdgeWrapping;
       tex.wrapT = THREE.RepeatWrapping;
       tex.anisotropy = 16;
+      markCache.set(grousers, tex);
       return tex;
     }
 
